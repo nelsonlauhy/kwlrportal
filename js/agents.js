@@ -12,7 +12,7 @@
   let allRows = [];   // raw data from Firestore
   let filtered = [];  // after filters/search
   let currentPage = 1;
-  const pageSize = 25; // change if you want 50/100
+  const pageSize = 15; // change if you want 50/100
 
   // ---------- utils ----------
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, m =>
