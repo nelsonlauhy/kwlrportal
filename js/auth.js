@@ -1,7 +1,7 @@
 // --- MSAL CONFIG (yours) ---
 const msalConfig = {
   auth: {
-    clientId: "17f20b04-4113-4a8a-baaf-5dc56b284dac",
+    clientId: "7b8fff80-564a-40cd-a295-557ebb2c9a11",
     authority: "https://login.microsoftonline.com/9f6c51b3-4040-49cf-a898-30bb9f2cfc92",
     redirectUri: window.location.origin
   },
