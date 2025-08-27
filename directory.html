@@ -102,7 +102,7 @@
       </h3>
 
       <!-- Controls (one row) -->
-      <div class="control-row">
+        <div class="control-row">
         <!-- PDF icon button -->
         <button id="btnReport"
                 class="btn btn-primary btn-icon shrink"
@@ -112,32 +112,29 @@
                 data-bs-toggle="tooltip"
                 data-bs-placement="bottom"
                 title="Preview & download PDF">
-          <i class="bi bi-file-earmark-pdf"></i>
+            <i class="bi bi-file-earmark-pdf"></i>
         </button>
 
-        <!-- Office dropdown -->
-        <select id="officeFilter" class="form-select filter-control shrink" style="min-width: 170px;">
-          <option value="ALL">Office: All</option>
-          <option value="LRI HO">LRI HO</option>
-          <option value="LRI NM">LRI NM</option>
-          <option value="LRI MS">LRI MS</option>
-          <option value="LRI WB">LRI WB</option>
-          <option value="LRI YE">LRI YE</option>
-          <option value="ICI">ICI</option>
-          <option value="LPI HO">LPI HO</option>
-          <option value="LPI CT">LPI CT</option>
-          <option value="LPI EQ1">LPI EQ1</option>
-          <option value="LPI AT">LPI AT</option>
-          <option value="IHMG">IHMG</option>
-          <option value="ORG">ORG</option>
+        <!-- Office dropdown (reduced width) -->
+        <select id="officeFilter" class="form-select filter-control shrink" style="width: 130px;">
+            <option value="ALL">All</option>
+            <option value="LRI HO">LRI HO</option>
+            <option value="LRI NM">LRI NM</option>
+            <option value="LRI MS">LRI MS</option>
+            <option value="LRI WB">LRI WB</option>
+            <option value="LRI YE">LRI YE</option>
+            <option value="ICI">ICI</option>
+            <option value="LPI HO">LPI HO</option>
+            <option value="LPI CT">LPI CT</option>
+            <option value="LPI EQ1">LPI EQ1</option>
+            <option value="LPI AT">LPI AT</option>
+            <option value="IHMG">IHMG</option>
+            <option value="ORG">ORG</option>
         </select>
 
-        <!-- Search (grows) -->
-        <input id="searchInput" class="form-control filter-control grow" placeholder="Search name, office, title, phone, email…"/>
-
-        <!-- Row count -->
-        <span id="rowCount" class="text-muted small align-self-center shrink">0 records</span>
-      </div>
+        <!-- Search field (slimmer width) -->
+        <input id="searchInput" class="form-control filter-control shrink" style="width: 220px;" placeholder="Search…"/>
+        </div>
     </div>
 
     <!-- Table -->
