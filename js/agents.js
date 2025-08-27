@@ -1,10 +1,10 @@
-// js/agents.js — Agent List with compact pagination (ellipses)
+// js/agents.js — Agent List with compact pagination + mobile-friendly Excel export
 // Requires: firebase v8 + firebaseConfig.js (window.db), SheetJS (xlsx), MSAL handled upstream
 
 (function () {
   // ---- CONFIG ----
-  const COLLECTION_NAME = "agentlist"; // your collection name
-  const pageSize = 15;                  // rows per page
+  const COLLECTION_NAME = "agentlist"; // Firestore collection name
+  const pageSize = 15;                 // rows per page
 
   // DOM
   const tbody        = document.getElementById("agentBody");
@@ -186,11 +186,12 @@
       });
   }
 
-  // ---------- export ----------
-  function exportToExcel() {
+  // ---------- export (mobile-aware) ----------
+  async function exportToExcel() {
     const rows = (filtered.length ? filtered : allRows);
     if (!rows.length) { alert("No data to export."); return; }
 
+    // Build workbook
     const data = [
       ["Agent","Mobile","Email","JoinDate","Type","Branch"],
       ...rows.map(r => [
@@ -202,11 +203,65 @@
         r.Branch || ""
       ])
     ];
-
     const wb = XLSX.utils.book_new();
     const ws = XLSX.utils.aoa_to_sheet(data);
     XLSX.utils.book_append_sheet(wb, ws, "Agents");
-    XLSX.writeFile(wb, "AgentList.xlsx");
+
+    const filename = "AgentList.xlsx";
+    const mimeXlsx = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+
+    // Blob for sharing/downloading
+    const arrayBuffer = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+    const blob = new Blob([arrayBuffer], { type: mimeXlsx });
+
+    // Can we use Web Share API with files? (best for iOS/Android)
+    const canShareFiles = () => {
+      try {
+        const f = new File([blob], filename, { type: mimeXlsx });
+        return !!(navigator.canShare && navigator.canShare({ files: [f] }));
+      } catch { return false; }
+    };
+
+    if (canShareFiles()) {
+      try {
+        const file = new File([blob], filename, { type: mimeXlsx });
+        await navigator.share({
+          title: "Agent List",
+          text: "Exported from KW Living Portal",
+          files: [file]
+        });
+        return;
+      } catch (err) {
+        console.warn("Share canceled/failed, falling back:", err);
+      }
+    }
+
+    // Standard download (desktop/Android)
+    try {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => {
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }, 0);
+      return;
+    } catch (err) {
+      console.warn("Direct download failed, trying preview:", err);
+    }
+
+    // Fallback: open preview in current tab (iOS users can Share -> Save to Files)
+    try {
+      const url = URL.createObjectURL(blob);
+      window.location.href = url;
+      return;
+    } catch (err) {
+      console.error("Preview fallback failed:", err);
+      alert("Sorry, export failed on this device.");
+    }
   }
 
   // ---------- init ----------
