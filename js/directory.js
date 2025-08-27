@@ -5,12 +5,12 @@
   const searchInput = document.getElementById("searchInput");
   const rowCount = document.getElementById("rowCount");
 
-  let allRows = [];   // raw data array for client-side search
-  let filtered = [];  // current filtered view
+  let allRows = [];   // 原始資料
+  let filtered = [];  // 篩選後
 
-  function htmlEscape(s) {
-    return String(s ?? "").replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
-  }
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+  const telLink = (v) => v ? `<a href="tel:${esc(v)}">${esc(v)}</a>` : "";
+  const mailLink = (v) => v ? `<a href="mailto:${esc(v)}">${esc(v)}</a>` : "";
 
   function renderRows(rows) {
     if (!rows.length) {
@@ -21,13 +21,16 @@
 
     const html = rows.map(r => `
       <tr>
-        <td>${htmlEscape(r.DisplayName)}</td>
-        <td>${htmlEscape(r.OfficeName)}</td>
-        <td>${htmlEscape(r.Title)}</td>
-        <td>${htmlEscape(r.Ext)}</td>
-        <td>${htmlEscape(r.PersonalTel)}</td>
-        <td>${htmlEscape(r.DirectTel)}</td>
-        <td><a href="mailto:${htmlEscape(r.Email)}">${htmlEscape(r.Email)}</a></td>
+        <td class="col-name">
+          ${esc(r.DisplayName)}
+          ${r.DisplayOrder !== undefined ? `<span class="badge badge-soft ms-2">#${esc(r.DisplayOrder)}</span>` : ""}
+        </td>
+        <td>${r.OfficeName ? `<span class="badge badge-soft">${esc(r.OfficeName)}</span>` : ""}</td>
+        <td>${esc(r.Title)}</td>
+        <td>${esc(r.Ext)}</td>
+        <td>${telLink(r.PersonalTel)}</td>
+        <td>${telLink(r.DirectTel)}</td>
+        <td>${mailLink(r.Email)}</td>
       </tr>
     `).join("");
 
@@ -40,17 +43,16 @@
     if (!q) {
       filtered = allRows.slice();
     } else {
-      filtered = allRows.filter(r => {
-        return [
+      filtered = allRows.filter(r =>
+        [
           r.DisplayName, r.OfficeName, r.Title, r.Ext,
           r.PersonalTel, r.DirectTel, r.Email
-        ].some(v => (v || "").toString().toLowerCase().includes(q));
-      });
+        ].some(v => (v || "").toString().toLowerCase().includes(q))
+      );
     }
     renderRows(filtered);
   }
 
-  // Load data from Firestore (order by DisplayName for readability)
   function loadDirectory() {
     if (!window.db) {
       console.error("Firestore not initialized: check firebaseConfig.js load order.");
@@ -58,9 +60,11 @@
       return;
     }
 
-    // Real-time updates; change to .get() if you only need one-time load
+    // << 用 DisplayOrder 由細到大排序；如想同名再以 DisplayName 次序，可加第二個 orderBy >>
+    // 注意：加多個 orderBy 可能會要求建立 Composite Index（Firestore 會在 console 給你快速連結）
     window.db.collection("companydirectory")
-      .orderBy("DisplayName")
+      .orderBy("DisplayOrder", "asc")
+      .orderBy("DisplayName", "asc")
       .onSnapshot((snap) => {
         allRows = snap.docs.map(d => ({ id: d.id, ...d.data() }));
         applyFilter();
@@ -70,13 +74,11 @@
       });
   }
 
-  // Wire up search
+  // 搜尋框 debounce
   searchInput.addEventListener("input", () => {
-    // small debounce
-    window.clearTimeout(searchInput._t);
-    searchInput._t = window.setTimeout(applyFilter, 120);
+    clearTimeout(searchInput._t);
+    searchInput._t = setTimeout(applyFilter, 120);
   });
 
-  // Start after DOM ready
   document.addEventListener("DOMContentLoaded", loadDirectory);
 })();
