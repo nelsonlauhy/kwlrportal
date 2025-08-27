@@ -139,7 +139,7 @@
     }
 
     // Server-side sort - by Agent (alpha). Add more orderBy if you prefer.
-    window.db.collection("agent list")
+    window.db.collection("agentlist")
       .orderBy("Agent","asc")
       .onSnapshot((snap) => {
         allRows = snap.docs.map(d => ({ id: d.id, ...d.data() }));
