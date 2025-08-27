@@ -31,9 +31,12 @@
       border-color: #86b7fe;
     }
 
-    /* control row */
+    /* control row: force single line on desktop; allow wrap on mobile */
     .control-row {
+      display: flex;
+      align-items: center;
       gap: .5rem;
+      flex-wrap: nowrap; /* keep one row by default */
     }
     .btn-icon {
       width: 38px;
@@ -43,6 +46,8 @@
       justify-content: center;
       border-radius: 0.5rem;
     }
+    .grow { flex: 1 1 auto; min-width: 220px; }  /* search stretches */
+    .shrink { flex: 0 0 auto; }                  /* others keep size */
     #rowCount { min-width: 88px; text-align: right; white-space: nowrap; }
 
     /* PDF modal preview frame */
@@ -54,11 +59,10 @@
       background: #f8f9fa;
     }
 
-    /* mobile handling: let controls wrap and use full width for inputs */
+    /* mobile handling */
     @media (max-width: 576px) {
-      .control-row { gap: .5rem; }
-      .control-row .grow-sm { flex: 1 1 100%; }
-      .control-row .shrink-sm { flex: 0 0 auto; }
+      .control-row { flex-wrap: wrap !important; }
+      .grow { flex: 1 1 100%; min-width: 0; }     /* search full width */
       #rowCount { text-align: left; min-width: 0; }
     }
   </style>
@@ -91,18 +95,17 @@
   <!-- CONTENT -->
   <main class="container py-4">
 
-    <!-- Header row: title on left, controls row on right -->
+    <!-- Header row: title left, controls right (single line on desktop) -->
     <div class="d-flex align-items-center justify-content-between flex-wrap mb-3" style="row-gap:.5rem;">
       <h3 class="page-title mb-0 d-flex align-items-center">
         <i class="bi bi-people me-2"></i>Company Directory
       </h3>
 
       <!-- Controls (one row) -->
-      <div class="d-flex align-items-center control-row flex-wrap">
-
-        <!-- PDF modal button (icon only) -->
+      <div class="control-row">
+        <!-- PDF icon button -->
         <button id="btnReport"
-                class="btn btn-primary btn-icon shrink-sm"
+                class="btn btn-primary btn-icon shrink"
                 type="button"
                 data-bs-toggle="modal"
                 data-bs-target="#reportModal"
@@ -113,7 +116,7 @@
         </button>
 
         <!-- Office dropdown -->
-        <select id="officeFilter" class="form-select filter-control shrink-sm" style="min-width: 170px;">
+        <select id="officeFilter" class="form-select filter-control shrink" style="min-width: 170px;">
           <option value="ALL">Office: All</option>
           <option value="LRI HO">LRI HO</option>
           <option value="LRI NM">LRI NM</option>
@@ -129,11 +132,11 @@
           <option value="ORG">ORG</option>
         </select>
 
-        <!-- Search (flex grow) -->
-        <input id="searchInput" class="form-control filter-control grow-sm" placeholder="Search name, office, title, phone, email…"/>
+        <!-- Search (grows) -->
+        <input id="searchInput" class="form-control filter-control grow" placeholder="Search name, office, title, phone, email…"/>
 
-        <!-- Row count (right aligned on desktop) -->
-        <span id="rowCount" class="text-muted small align-self-center shrink-sm">0 records</span>
+        <!-- Row count -->
+        <span id="rowCount" class="text-muted small align-self-center shrink">0 records</span>
       </div>
     </div>
 
@@ -204,7 +207,7 @@
   <!-- Your MSAL wrapper -->
   <script src="./js/auth.js" defer></script>
 
-  <!-- Firebase v8 (namespaced SDK to match firebase.initializeApp style) -->
+  <!-- Firebase v8 -->
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
   <!-- Your Firebase config (must set window.db) -->
@@ -235,8 +238,7 @@
       btnLogout.addEventListener("click", () => window._auth?.signOut?.());
 
       // Enable tooltips (for the icon button)
-      const tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
-      tooltipTriggerList.map(el => new bootstrap.Tooltip(el));
+      [...document.querySelectorAll('[data-bs-toggle="tooltip"]')].forEach(el => new bootstrap.Tooltip(el));
 
       // ---- Report modal wiring ----
       const reportSize   = document.getElementById("reportSize");

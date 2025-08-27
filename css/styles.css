@@ -69,3 +69,19 @@ td.col-name {
   font-weight: 700;
   padding-left: 1.5rem;   /* match indent with cells */
 }
+
+/* On desktop: keep in one row */
+.control-row {
+  gap: .5rem;
+  flex-wrap: nowrap;    /* force single row by default */
+}
+
+/* On mobile (<576px): allow wrapping */
+@media (max-width: 576px) {
+  .control-row {
+    flex-wrap: wrap !important;
+  }
+  .control-row .grow-sm { flex: 1 1 100%; }
+  .control-row .shrink-sm { flex: 0 0 auto; }
+  #rowCount { text-align: left; min-width: 0; }
+}
