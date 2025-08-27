@@ -7,16 +7,39 @@
 
   <!-- Bootstrap CSS -->
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-  <!-- Bootstrap Icons (for the title icon) -->
+  <!-- Bootstrap Icons -->
   <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
-  <!-- Your shared styles -->
+  <!-- Shared styles -->
   <link href="./css/styles.css" rel="stylesheet">
 
   <style>
     /* page-specific tweaks */
-    #dirTable { font-size: 0.9rem; }           /* slightly smaller table text */
+    #dirTable { font-size: 0.9rem; }
     #dirTable td.col-name { padding-left: 1.5rem; }
     #dirTable th:first-child { font-size: 1rem; font-weight: 700; padding-left: 1.5rem; }
+
+    /* unified look for select + input */
+    .filter-control {
+      height: 38px;
+      padding: 0.375rem 0.75rem;
+      font-size: 0.95rem;
+      line-height: 1.5;
+      border-radius: 0.5rem;
+    }
+    .filter-control:focus {
+      box-shadow: 0 0 0 0.2rem rgba(13,110,253,.15);
+      border-color: #86b7fe;
+    }
+    #rowCount { min-width: 90px; text-align: right; }
+
+    /* Modal preview area */
+    .pdf-frame {
+      width: 100%;
+      height: 70vh; /* good default; adjusts to screen */
+      border: 1px solid #e9ecef;
+      border-radius: .5rem;
+      background: #f8f9fa;
+    }
   </style>
 </head>
 <body class="bg-light">
@@ -46,13 +69,11 @@
 
   <!-- CONTENT -->
   <main class="container py-4">
-    <div class="d-flex flex-wrap justify-content-between align-items-end mb-3 toolbar" style="gap:.75rem;">
-      <div>
-        <h3 class="page-title mb-1"><i class="bi bi-people me-2"></i>Company Directory</h3>
-      </div>
+    <div class="d-flex flex-wrap justify-content-between align-items-center mb-3" style="gap:.75rem;">
+      <h3 class="page-title mb-0 d-flex align-items-center"><i class="bi bi-people me-2"></i>Company Directory</h3>
 
-      <!-- Filters -->
-      <div class="d-flex align-items-center gap-2">
+      <!-- Right-side controls -->
+      <div class="d-flex align-items-center gap-2 flex-wrap">
         <!-- Office dropdown -->
         <select id="officeFilter" class="form-select filter-control" style="min-width: 180px;">
           <option value="ALL">Office: All</option>
@@ -65,14 +86,19 @@
           <option value="LPI HO">LPI HO</option>
           <option value="LPI CT">LPI CT</option>
           <option value="LPI EQ1">LPI EQ1</option>
-          <option value="LPI EQ2">LPI EQ2</option>
           <option value="LPI AT">LPI AT</option>
           <option value="IHMG">IHMG</option>
-          <option value="OGR">OGR</option>
+          <option value="ORG">ORG</option>
         </select>
 
         <!-- Search -->
         <input id="searchInput" class="form-control filter-control" placeholder="Search name, office, title, phone, email…" />
+
+        <!-- Report / Download -->
+        <button id="btnReport" class="btn btn-primary d-flex align-items-center" type="button" data-bs-toggle="modal" data-bs-target="#reportModal">
+          <i class="bi bi-file-earmark-pdf me-2"></i> Download
+        </button>
+
         <span id="rowCount" class="text-muted small align-self-center"></span>
       </div>
     </div>
@@ -102,6 +128,40 @@
     </div>
   </main>
 
+  <!-- REPORT PREVIEW MODAL -->
+  <div class="modal fade" id="reportModal" tabindex="-1" aria-labelledby="reportModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+      <div class="modal-content">
+        <div class="modal-header align-items-center">
+          <h5 class="modal-title d-flex align-items-center" id="reportModalLabel">
+            <i class="bi bi-file-earmark-pdf me-2"></i> Company Directory Report
+          </h5>
+
+          <div class="d-flex align-items-center gap-2 ms-auto">
+            <!-- Size selector -->
+            <label for="reportSize" class="small text-muted mb-0">Size</label>
+            <select id="reportSize" class="form-select form-select-sm" style="min-width:120px">
+              <option value="Letter" selected>Letter</option>
+              <option value="Legal">Legal</option>
+            </select>
+
+            <!-- Download current -->
+            <a id="downloadLink" class="btn btn-outline-primary btn-sm" href="/companydirectorypdf/CompanyDirectoryLetterSize.pdf" target="_blank" download>
+              <i class="bi bi-download me-1"></i> Download PDF
+            </a>
+
+            <button type="button" class="btn btn-light btn-sm" data-bs-dismiss="modal">Close</button>
+          </div>
+        </div>
+
+        <div class="modal-body">
+          <!-- PDF preview -->
+          <iframe id="pdfFrame" class="pdf-frame" src="/companydirectorypdf/CompanyDirectoryLetterSize.pdf" title="Company Directory PDF"></iframe>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Bootstrap JS -->
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 
@@ -119,9 +179,10 @@
   <!-- Directory page logic -->
   <script src="./js/directory.js" defer></script>
 
-  <!-- Navbar auth guard & wiring -->
+  <!-- Navbar auth guard & wiring + Report modal logic -->
   <script>
     document.addEventListener("DOMContentLoaded", () => {
+      // ---- Auth navbar ----
       const navEl = document.getElementById("appNav");
       const navUserEl = document.getElementById("navUser");
       const btnLogout = document.getElementById("btnLogout");
@@ -132,16 +193,41 @@
           navEl.classList.remove("d-none");
           navUserEl.textContent = `${acct.name || ""} · ${acct.username || ""}`;
         } else {
-          // If not signed in, send them back to the landing page
           location.href = "/index.html";
         }
       }
-
       refreshNav();
-      // Allow auth.js to notify this page after redirect handling
       window.updateAuthUI = refreshNav;
-
       btnLogout.addEventListener("click", () => window._auth?.signOut?.());
+
+      // ---- Report modal wiring ----
+      const reportSize  = document.getElementById("reportSize");
+      const pdfFrame    = document.getElementById("pdfFrame");
+      const downloadLink = document.getElementById("downloadLink");
+      const modalEl = document.getElementById("reportModal");
+
+      // Helper to compute path
+      function getPdfPath(size) {
+        const base = "/companydirectorypdf/";
+        return size === "Legal"
+          ? base + "CompanyDirectoryLegalSize.pdf"
+          : base + "CompanyDirectoryLetterSize.pdf"; // default Letter
+      }
+
+      // When modal opens, reset to default (Letter)
+      modalEl.addEventListener("show.bs.modal", () => {
+        reportSize.value = "Letter";
+        const path = getPdfPath("Letter");
+        pdfFrame.src = path;
+        downloadLink.href = path;
+      });
+
+      // When user changes size, update preview + download link
+      reportSize.addEventListener("change", () => {
+        const path = getPdfPath(reportSize.value);
+        pdfFrame.src = path;
+        downloadLink.href = path;
+      });
     });
   </script>
 </body>
