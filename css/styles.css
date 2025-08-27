@@ -62,3 +62,10 @@ td.col-name {
 #dirTable td.col-name {
   padding-left: 1.5rem;   /* default is ~0.75rem; increase as needed */
 }
+
+/* Emphasize DisplayName column header */
+#dirTable th:first-child {
+  font-size: 1rem;        /* default is ~0.875rem in .table-sm */
+  font-weight: 700;
+  padding-left: 1.5rem;   /* match indent with cells */
+}
