@@ -1,25 +1,29 @@
-// js/agents.js — Agent List (Firestore collection: "agent list")
-// Features: branch filter, search, striped table, pagination, Excel export
-// Requires: firebase v8 + firebaseConfig.js (window.db), SheetJS, MSAL handled upstream
+// js/agents.js — Agent List with compact pagination (ellipses)
+// Requires: firebase v8 + firebaseConfig.js (window.db), SheetJS (xlsx), MSAL handled upstream
 
 (function () {
+  // ---- CONFIG ----
+  const COLLECTION_NAME = "agentlist"; // your collection name
+  const pageSize = 15;                  // rows per page
+
+  // DOM
   const tbody        = document.getElementById("agentBody");
   const searchInput  = document.getElementById("agentSearch");
   const branchFilter = document.getElementById("branchFilter");
   const btnExport    = document.getElementById("btnExport");
   const pagination   = document.getElementById("pagination");
 
-  let allRows = [];   // raw data from Firestore
-  let filtered = [];  // after filters/search
+  // State
+  let allRows = [];
+  let filtered = [];
   let currentPage = 1;
-  const pageSize = 15; // change if you want 50/100
 
   // ---------- utils ----------
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, m =>
     ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])
   );
 
-  // Format US/CA numbers: 10 digits -> (XXX) XXX-XXXX ; 11 with leading 1 -> +1 (...)
+  // Format US/CA: 10 digits -> (XXX) XXX-XXXX; 11 starting with 1 -> +1 (XXX) XXX-XXXX
   function formatPhone(v) {
     const digits = (v || "").toString().replace(/\D+/g, "");
     if (digits.length === 10) return `(${digits.slice(0,3)}) ${digits.slice(3,6)}-${digits.slice(6)}`;
@@ -28,7 +32,7 @@
     return v || "";
   }
 
-  // Accept Firestore Timestamp/Date/string -> return YYYY-MM-DD
+  // Accept Firestore Timestamp/Date/string -> YYYY-MM-DD
   function formatDate(d) {
     try {
       if (!d) return "";
@@ -39,8 +43,8 @@
       else dt = new Date(d);
       if (isNaN(dt)) return String(d);
       const y = dt.getFullYear();
-      const m = String(dt.getMonth()+1).padStart(2,"0");
-      const day = String(dt.getDate()).padStart(2,"0");
+      const m = String(dt.getMonth() + 1).padStart(2, "0");
+      const day = String(dt.getDate()).padStart(2, "0");
       return `${y}-${m}-${day}`;
     } catch { return String(d || ""); }
   }
@@ -52,7 +56,7 @@
 
     if (!pageRows.length) {
       tbody.innerHTML = `<tr><td colspan="6" class="text-center py-4 text-muted">No records.</td></tr>`;
-      renderPagination(); // still update bar
+      renderPagination();
       return;
     }
 
@@ -70,25 +74,54 @@
     renderPagination();
   }
 
+  // ---------- compact pagination with ellipses ----------
   function renderPagination() {
     const totalPages = Math.ceil(filtered.length / pageSize);
     if (totalPages <= 1) { pagination.innerHTML = ""; return; }
 
+    const maxButtons = 7; // total numeric buttons (incl. current)
+    let pages = [];
+    const add = (p) => { if (!pages.includes(p) && p >= 1 && p <= totalPages) pages.push(p); };
+
+    if (totalPages <= maxButtons) {
+      for (let i = 1; i <= totalPages; i++) add(i);
+    } else {
+      add(1);
+      const windowSize = maxButtons - 2; // keep slots for first & last
+      let start = Math.max(2, currentPage - Math.floor(windowSize / 2));
+      let end   = Math.min(totalPages - 1, start + windowSize - 1);
+      start = Math.max(2, Math.min(start, totalPages - 1 - windowSize + 1)); // shift if near end
+      for (let i = start; i <= end; i++) add(i);
+      add(totalPages);
+    }
+
     let html = `
-      <li class="page-item ${currentPage===1?"disabled":""}">
+      <li class="page-item ${currentPage===1?'disabled':''}">
+        <a class="page-link" href="#" data-page="first">First</a>
+      </li>
+      <li class="page-item ${currentPage===1?'disabled':''}">
         <a class="page-link" href="#" data-page="${currentPage-1}">Previous</a>
       </li>
     `;
-    // For very large pages, you might want to compress; here we show all for simplicity.
-    for (let i = 1; i <= totalPages; i++) {
+
+    for (let i = 0; i < pages.length; i++) {
+      const p = pages[i];
+      const prev = pages[i - 1];
+      if (i > 0 && p - prev > 1) {
+        html += `<li class="page-item disabled"><span class="page-link">…</span></li>`;
+      }
       html += `
-        <li class="page-item ${i===currentPage?"active":""}">
-          <a class="page-link" href="#" data-page="${i}">${i}</a>
+        <li class="page-item ${p===currentPage?'active':''}">
+          <a class="page-link" href="#" data-page="${p}">${p}</a>
         </li>`;
     }
+
     html += `
-      <li class="page-item ${currentPage===totalPages?"disabled":""}">
+      <li class="page-item ${currentPage===totalPages?'disabled':''}">
         <a class="page-link" href="#" data-page="${currentPage+1}">Next</a>
+      </li>
+      <li class="page-item ${currentPage===totalPages?'disabled':''}">
+        <a class="page-link" href="#" data-page="last">Last</a>
       </li>
     `;
 
@@ -98,11 +131,15 @@
     [...pagination.querySelectorAll("a.page-link")].forEach(a => {
       a.addEventListener("click", e => {
         e.preventDefault();
-        const page = parseInt(a.dataset.page, 10);
-        if (!isNaN(page) && page >= 1 && page <= totalPages) {
-          currentPage = page;
-          renderRows();
+        const dp = a.dataset.page;
+        const total = Math.ceil(filtered.length / pageSize);
+        if (dp === "first") currentPage = 1;
+        else if (dp === "last") currentPage = total;
+        else {
+          const page = parseInt(dp, 10);
+          if (!isNaN(page)) currentPage = Math.min(Math.max(1, page), total);
         }
+        renderRows();
       });
     });
   }
@@ -126,7 +163,7 @@
       return haystack.some(v => v.includes(q));
     });
 
-    currentPage = 1;  // reset to first page on new filter
+    currentPage = 1;  // reset to first page when filters change
     renderRows();
   }
 
@@ -138,9 +175,8 @@
       return;
     }
 
-    // Server-side sort - by Agent (alpha). Add more orderBy if you prefer.
-    window.db.collection("agentlist")
-      .orderBy("Agent","asc")
+    window.db.collection(COLLECTION_NAME)
+      .orderBy("Agent", "asc")
       .onSnapshot((snap) => {
         allRows = snap.docs.map(d => ({ id: d.id, ...d.data() }));
         applyFilter();
@@ -153,10 +189,7 @@
   // ---------- export ----------
   function exportToExcel() {
     const rows = (filtered.length ? filtered : allRows);
-    if (!rows.length) {
-      alert("No data to export.");
-      return;
-    }
+    if (!rows.length) { alert("No data to export."); return; }
 
     const data = [
       ["Agent","Mobile","Email","JoinDate","Type","Branch"],
@@ -178,12 +211,14 @@
 
   // ---------- init ----------
   document.addEventListener("DOMContentLoaded", () => {
-    searchInput.addEventListener("input", () => {
-      clearTimeout(searchInput._t);
-      searchInput._t = setTimeout(applyFilter, 120);
-    });
-    branchFilter.addEventListener("change", applyFilter);
-    btnExport.addEventListener("click", exportToExcel);
+    if (searchInput) {
+      searchInput.addEventListener("input", () => {
+        clearTimeout(searchInput._t);
+        searchInput._t = setTimeout(applyFilter, 120);
+      });
+    }
+    if (branchFilter) branchFilter.addEventListener("change", applyFilter);
+    if (btnExport)    btnExport.addEventListener("click", exportToExcel);
 
     loadAgents();
   });
