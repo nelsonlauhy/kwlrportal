@@ -50,3 +50,11 @@ td.col-name {
   }
 }
 
+/* Reduce font size just a little in directory tables */
+#dirTable {
+  font-size: 0.9rem;   /* Bootstrap default is 1rem */
+}
+
+#dirTable th {
+  font-weight: 600;
+}
