@@ -31,14 +31,7 @@
       .map(
         (r) => `
       <tr>
-        <td class="col-name">
-          ${esc(r.DisplayName)}
-          ${
-            r.DisplayOrder !== undefined && r.DisplayOrder !== null
-              ? `<span class="badge badge-soft ms-2">#${esc(r.DisplayOrder)}</span>`
-              : ""
-          }
-        </td>
+        <td class="col-name">${esc(r.DisplayName)}</td>
         <td>${r.OfficeName ? `<span class="badge badge-soft">${esc(r.OfficeName)}</span>` : ""}</td>
         <td>${esc(r.Title)}</td>
         <td>${esc(r.Ext)}</td>
