@@ -34,8 +34,8 @@
         <td>${r.OfficeName ? `<span class="badge badge-soft">${esc(r.OfficeName)}</span>` : ""}</td>
         <td>${esc(r.Title)}</td>
         <td>${esc(r.Ext)}</td>
-        <td>${telLink(r.PersonalTel)}</td>
-        <td>${telLink(r.DirectTel)}</td>
+        <td>${esc(r.PersonalTel)}</td>
+        <td>${esc(r.DirectTel)}</td>
         <td>${mailLink(r.Email)}</td>
       </tr>
     `).join("");
