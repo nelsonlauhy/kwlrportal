@@ -19,7 +19,7 @@
     #branchFilter { width:130px; } #resourceFilter { width:180px; } #searchInput { width:240px; }
     @media (max-width:576px){ .control-row{flex-wrap:wrap!important;} #branchFilter,#resourceFilter,#searchInput{width:100%;flex:1 1 100%;} }
 
-    /* Event list */
+    /* List view */
     .month-header { font-weight:700; font-size:1.1rem; margin:1.25rem 0 .5rem; color:#334155; }
     .event-card { border:1px solid #e9ecef; border-radius:.75rem; padding:1rem; background:#fff; }
     .event-title { font-weight:700; }
@@ -27,6 +27,32 @@
     .badge-branch { background:#eef2ff; color:#3730a3; }
     .badge-room { background:#ecfeff; color:#155e75; }
     .btn-register { white-space:nowrap; }
+
+    /* Calendar shell */
+    .cal-toolbar{ display:flex; align-items:center; gap:.5rem; flex-wrap:wrap; }
+    .cal-label{ font-weight:600; min-width: 180px; }
+
+    /* Month grid */
+    .month-grid{ display:grid; grid-template-columns:repeat(7,1fr); border:1px solid #e9ecef; border-radius:.75rem; overflow:hidden; }
+    .month-head{ background:#f8fafc; font-weight:600; font-size:.9rem; padding:.5rem; border-right:1px solid #e9ecef; }
+    .month-head:last-child{ border-right:0; }
+    .month-cell{ min-height:120px; border-right:1px solid #f1f5f9; border-top:1px solid #f1f5f9; padding:.35rem; background:#fff; }
+    .month-cell.other{ background:#fafafa; color:#94a3b8; }
+    .month-day{ font-size:.85rem; font-weight:600; }
+    .month-evt{ display:block; font-size:.8rem; padding:.2rem .35rem; margin:.25rem 0; border-radius:.35rem; border:1px solid #e2e8f0; background:#ffffff; text-align:left; }
+    .month-evt.full{ opacity:.6; }
+
+    /* Week/Day */
+    .time-grid{ display:grid; grid-template-columns:80px repeat(7,1fr); border:1px solid #e9ecef; border-radius:.75rem; overflow:hidden;}
+    .time-head{ background:#f8fafc; font-weight:600; font-size:.9rem; padding:.5rem; border-right:1px solid #e9ecef; text-align:center;}
+    .time-col{ border-right:1px solid #f1f5f9; }
+    .time-slot{ border-top:1px dashed #f1f5f9; height:44px; position:relative; }
+    .slot-label{ font-size:.8rem; color:#64748b; padding:.25rem .5rem; border-top:1px dashed #e2e8f0; height:44px; }
+    .evt-pill{ position:absolute; left:6px; right:6px; top:2px; padding:.25rem .35rem; font-size:.8rem; border-radius:.4rem; background:#e6f4ff; border:1px solid #bfdbfe; overflow:hidden; white-space:nowrap; text-overflow:ellipsis;}
+    .evt-pill.full{ background:#f1f5f9; border-color:#e2e8f0; }
+
+    /* Tiny helpers */
+    .muted{ color:#94a3b8; }
   </style>
 </head>
 <body class="bg-light">
@@ -54,9 +80,30 @@
       </div>
     </div>
 
-    <!-- List container -->
+    <!-- View Switch + Date Nav -->
+    <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap" style="row-gap:.5rem;">
+      <div class="btn-group" role="group" aria-label="View">
+        <button class="btn btn-outline-secondary btn-sm" id="btnMonth">Month</button>
+        <button class="btn btn-outline-secondary btn-sm" id="btnWeek">Week</button>
+        <button class="btn btn-outline-secondary btn-sm" id="btnDay">Day</button>
+        <button class="btn btn-outline-secondary btn-sm active" id="btnList">List</button>
+      </div>
+
+      <div class="cal-toolbar">
+        <div class="btn-group btn-group-sm" role="group">
+          <button class="btn btn-outline-secondary" id="btnPrev"><i class="bi bi-chevron-left"></i></button>
+          <button class="btn btn-outline-secondary" id="btnToday">Today</button>
+          <button class="btn btn-outline-secondary" id="btnNext"><i class="bi bi-chevron-right"></i></button>
+        </div>
+        <span class="cal-label" id="calLabel">Upcoming</span>
+      </div>
+    </div>
+
+    <!-- Calendar/List container -->
+    <div id="calendarContainer" class="mb-4"></div>
+
+    <!-- (Legacy) List container kept for progressive rendering -->
     <div id="eventsContainer" class="d-grid" style="gap:1rem;">
-      <!-- month groups + cards go here -->
       <div class="text-center text-muted py-4">
         <div class="spinner-border spinner-border-sm me-2"></div> Loading upcoming events…
       </div>
@@ -113,3 +160,4 @@
   <script src="./js/events_public.js" defer></script>
 </body>
 </html>
+

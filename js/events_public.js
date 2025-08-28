@@ -1,34 +1,47 @@
-// Public Events list + Registration (Firestore v8)
-// Collections:
-//  - events (published, visibility=public, upcoming)
-//  - resources (for filter menu)
-//  - eventRegistrations (composite id: `${eventId}_${emailLower}`)
+// Public Events list + Registration (Firestore v8) with index fallbacks
+// Includes Month / Week / Day / List views + date navigation
 
 (function() {
   // --- DOM
-  const container = document.getElementById("eventsContainer");
-  const branchFilter = document.getElementById("branchFilter");
+  const containerList = document.getElementById("eventsContainer");
+  const containerCal  = document.getElementById("calendarContainer");
+  const branchFilter  = document.getElementById("branchFilter");
   const resourceFilter = document.getElementById("resourceFilter");
-  const searchInput = document.getElementById("searchInput");
+  const searchInput   = document.getElementById("searchInput");
+
+  // View controls
+  const btnMonth = document.getElementById("btnMonth");
+  const btnWeek  = document.getElementById("btnWeek");
+  const btnDay   = document.getElementById("btnDay");
+  const btnList  = document.getElementById("btnList");
+  const btnPrev  = document.getElementById("btnPrev");
+  const btnNext  = document.getElementById("btnNext");
+  const btnToday = document.getElementById("btnToday");
+  const calLabel = document.getElementById("calLabel");
 
   // Registration modal
   const regModalEl = document.getElementById("regModal");
-  const regModal = new bootstrap.Modal(regModalEl);
-  const regForm = document.getElementById("regForm");
+  const regModal   = new bootstrap.Modal(regModalEl);
+  const regForm    = document.getElementById("regForm");
   const regEventSummary = document.getElementById("regEventSummary");
-  const attendeeName = document.getElementById("attendeeName");
+  const attendeeName  = document.getElementById("attendeeName");
   const attendeeEmail = document.getElementById("attendeeEmail");
   const regWarn = document.getElementById("regWarn");
-  const regErr = document.getElementById("regErr");
-  const regOk = document.getElementById("regOk");
+  const regErr  = document.getElementById("regErr");
+  const regOk   = document.getElementById("regOk");
   const regBusy = document.getElementById("regBusy");
   const btnSubmitReg = document.getElementById("btnSubmitReg");
 
   // --- State
-  let allEvents = [];   // raw from firestore
-  let filtered = [];    // after applying filters/search
+  let allEvents = [];   // raw from firestore (upcoming only)
+  let filtered  = [];   // after applying top filters/search
   let resources = [];   // [{id,name,branch,type}]
   let regTarget = null; // event object being registered
+  let unsubscribeEvents = null;
+
+  // calendar state
+  let currentView = "list";    // 'month' | 'week' | 'day' | 'list'
+  let cursorDate  = truncateToDay(new Date()); // reference date for calendar
 
   // --- Utils
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, m => (
@@ -43,31 +56,84 @@
   }
 
   function fmtDateTime(d) {
-    // YYYY-MM-DD HH:mm (local)
     if (!d) return "";
     const pad = (n) => String(n).padStart(2, "0");
     return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
   }
+  function fmtDate(d) {
+    if (!d) return "";
+    return d.toLocaleDateString(undefined, { weekday:"short", month:"short", day:"numeric", year:"numeric" });
+  }
+  function truncateToDay(d) { const x=new Date(d); x.setHours(0,0,0,0); return x; }
 
   function monthKey(d) { return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`; }
-  function monthLabel(d) {
-    return d.toLocaleString(undefined, { month: "long", year: "numeric" });
-  }
+  function monthLabel(d) { return d.toLocaleString(undefined, { month: "long", year: "numeric" }); }
 
   function clearAlerts() {
     [regWarn, regErr, regOk].forEach(el => { el.classList.add("d-none"); el.textContent=""; });
   }
 
-  // --- Render
+  // ----------------------------------------------------
+  // Filters/Search (for LIST view base; calendar uses filtered + range)
+  function applyFilter() {
+    const q = (searchInput.value || "").toLowerCase().trim();
+    const brSel = (branchFilter.value || "ALL").toUpperCase();
+    const resSel = (resourceFilter.value || "ALL");
+
+    filtered = allEvents.filter(ev => {
+      // branch
+      const br = (ev.branch || "").toUpperCase();
+      if (brSel !== "ALL" && br !== brSel) return false;
+      // resource
+      if (resSel !== "ALL" && ev.resourceId !== resSel) return false;
+      // text
+      if (!q) return true;
+      const hay = [ev.title, ev.description, ev.resourceName, ev.branch]
+        .map(v => (v || "").toString().toLowerCase());
+      return hay.some(v => v.includes(q));
+    });
+
+    render(); // switch based on currentView
+  }
+
+  // ----------------------------------------------------
+  // RENDER DISPATCH
   function render() {
+    // Set view buttons active state
+    [btnMonth,btnWeek,btnDay,btnList].forEach(b=>b.classList.remove("active"));
+    if (currentView==="month") btnMonth.classList.add("active");
+    else if (currentView==="week") btnWeek.classList.add("active");
+    else if (currentView==="day") btnDay.classList.add("active");
+    else btnList.classList.add("active");
+
+    if (currentView === "list") {
+      renderList();
+      calLabel.textContent = "Upcoming";
+      containerCal.innerHTML = "";
+      return;
+    }
+
+    // calendar views
+    containerList.innerHTML = ""; // hide list
+    if (currentView === "month") {
+      renderMonth();
+    } else if (currentView === "week") {
+      renderWeek();
+    } else {
+      renderDay();
+    }
+  }
+
+  // ----------------------------------------------------
+  // LIST VIEW
+  function renderList() {
     if (!filtered.length) {
-      container.innerHTML = `
+      containerList.innerHTML = `
         <div class="text-center text-muted py-5">
           <i class="bi bi-calendar-x me-2"></i>No upcoming events match your filters.
         </div>`;
       return;
     }
-
     // Group by month of start
     const groups = {};
     for (const e of filtered) {
@@ -76,15 +142,13 @@
       const key = monthKey(d);
       (groups[key] ||= { label: monthLabel(d), events: [] }).events.push(e);
     }
-
     const parts = [];
     Object.keys(groups).sort().forEach(key => {
       const g = groups[key];
       parts.push(`<div class="month-header">${esc(g.label)}</div>`);
       for (const e of g.events) parts.push(renderEventCard(e));
     });
-
-    container.innerHTML = parts.join("");
+    containerList.innerHTML = parts.join("");
     wireRegisterButtons();
   }
 
@@ -92,13 +156,11 @@
     const start = toDate(e.start);
     const end   = toDate(e.end);
     const dateLine = `${fmtDateTime(start)} – ${fmtDateTime(end)}`;
-
     const remaining = (typeof e.remaining === "number") ? e.remaining : null;
     const capacity  = (typeof e.capacity === "number") ? e.capacity : null;
     const remainTxt = (remaining != null && capacity != null)
       ? `${remaining}/${capacity} seats left`
       : (remaining != null ? `${remaining} seats left` : "");
-
     const disableReg = !canRegister(e);
     const btnClass = disableReg ? "btn-secondary" : "btn-primary";
     const btnTitle = disableReg ? "Registration closed or full" : "Register";
@@ -128,15 +190,247 @@
     `;
   }
 
+  // ----------------------------------------------------
+  // CALENDAR: helpers
+  function canRegister(ev) {
+    const now = new Date();
+    if (ev.status !== "published" || ev.visibility !== "public") return false;
+    if (ev.allowRegistration === false) return false;
+    const opens = toDate(ev.regOpensAt);
+    const closes = toDate(ev.regClosesAt);
+    if (opens && now < opens) return false;
+    if (closes && now > closes) return false;
+    if (typeof ev.remaining === "number" && ev.remaining <= 0) return false;
+    const start = toDate(ev.start);
+    if (start && now > start) return false;
+    return true;
+  }
+
+  // overlap check (event intersects [a,b))
+  function overlaps(evStart, evEnd, a, b) {
+    return evStart < b && evEnd > a;
+  }
+
+  // Filter already by top filters/search, then take range
+  function eventsInRange(rangeStart, rangeEnd) {
+    return filtered.filter(ev => {
+      const s = toDate(ev.start); const e = toDate(ev.end);
+      if (!s || !e) return false;
+      return overlaps(s, e, rangeStart, rangeEnd);
+    });
+  }
+
+  // ----------------------------------------------------
+  // MONTH VIEW
+  function renderMonth() {
+    const year = cursorDate.getFullYear();
+    const month = cursorDate.getMonth(); // 0-based
+
+    // label
+    calLabel.textContent = cursorDate.toLocaleString(undefined,{month:"long", year:"numeric"});
+
+    // First day of grid = Sunday of the week containing the 1st
+    const firstOfMonth = new Date(year, month, 1);
+    const startDow = firstOfMonth.getDay(); // 0 Sun
+    const gridStart = new Date(firstOfMonth);
+    gridStart.setDate(firstOfMonth.getDate() - startDow);
+    const gridEnd = new Date(gridStart); gridEnd.setDate(gridStart.getDate() + 42); // 6 weeks
+
+    const evs = eventsInRange(gridStart, gridEnd);
+
+    // Build a map day -> events (place on start day for simplicity)
+    const dayMap = {};
+    for (const ev of evs) {
+      const d = truncateToDay(toDate(ev.start));
+      const key = d.toISOString();
+      (dayMap[key] ||= []).push(ev);
+    }
+
+    // Weekday headers
+    const weekdays = [];
+    for (let i=0;i<7;i++) {
+      const d = new Date(gridStart); d.setDate(gridStart.getDate()+i);
+      weekdays.push(`<div class="month-head">${d.toLocaleDateString(undefined,{weekday:"short"})}</div>`);
+    }
+
+    // Cells
+    const cells = [];
+    let iter = new Date(gridStart);
+    for (let i=0;i<42;i++) {
+      const isOtherMonth = iter.getMonth() !== month;
+      const key = truncateToDay(iter).toISOString();
+      const items = (dayMap[key] || []).sort((a,b)=> toDate(a.start)-toDate(b.start));
+      const dayNum = iter.getDate();
+
+      const evHtml = items.map(e=>{
+        const disable = !canRegister(e) ? "full" : "";
+        return `<button class="month-evt ${disable}" data-id="${esc(e._id)}" title="${esc(e.title || "")}">
+                  ${esc(e.title || "Event")}
+                </button>`;
+      }).join("");
+
+      cells.push(`
+        <div class="month-cell ${isOtherMonth?'other':''}">
+          <div class="month-day">${dayNum}</div>
+          ${evHtml}
+        </div>
+      `);
+      iter.setDate(iter.getDate()+1);
+    }
+
+    containerCal.innerHTML = `
+      <div class="month-grid">
+        ${weekdays.join("")}
+        ${cells.join("")}
+      </div>
+    `;
+
+    wireRegisterButtons();
+    containerList.innerHTML = "";
+  }
+
+  // ----------------------------------------------------
+  // WEEK VIEW
+  function renderWeek() {
+    // Start of week (Sunday)
+    const start = new Date(cursorDate);
+    start.setDate(start.getDate() - start.getDay());
+    start.setHours(0,0,0,0);
+    const end = new Date(start); end.setDate(start.getDate()+7);
+
+    calLabel.textContent =
+      `${start.toLocaleDateString(undefined,{month:"short",day:"numeric"})} – ${new Date(end-1).toLocaleDateString(undefined,{month:"short",day:"numeric",year:"numeric"})}`;
+
+    const evs = eventsInRange(start, end);
+
+    // Hours to show
+    const hours = Array.from({length:13}, (_,i)=> i+7); // 07:00 - 19:00
+
+    // Build columns for each day
+    const cols = [];
+    for (let d=0; d<7; d++) {
+      const dayDate = new Date(start); dayDate.setDate(start.getDate()+d);
+      const dayStart = new Date(dayDate); // 00:00
+      const dayEnd = new Date(dayDate); dayEnd.setDate(dayEnd.getDate()+1);
+
+      const dayEvents = evs.filter(e => {
+        const s = toDate(e.start), ee = toDate(e.end);
+        return overlaps(s, ee, dayStart, dayEnd);
+      }).sort((a,b)=> toDate(a.start)-toDate(b.start));
+
+      const slots = hours.map(()=>`<div class="time-slot"></div>`).join("");
+
+      // events as pills positioned by hour (simple approximation)
+      const pills = dayEvents.map(e=>{
+        const s = toDate(e.start), ee = toDate(e.end);
+        const startHour = Math.max(0, (s.getHours() - hours[0]) + s.getMinutes()/60);
+        const durHours = Math.max(0.7, ((ee - s) / (1000*60*60)));
+        const top = Math.min(hours.length-0.7, startHour) * 44; // 44px per slot
+        const height = Math.min(hours.length*44 - top - 4, Math.max(20, durHours*44 - 6));
+        const full = !canRegister(e) ? "full" : "";
+        return `<button class="evt-pill ${full}" data-id="${esc(e._id)}"
+                       style="top:${top+2}px;height:${height}px"
+                       title="${esc(e.title || "")}">
+                  ${esc(e.title || "Event")}
+                </button>`;
+      }).join("");
+
+      cols.push(`
+        <div class="time-col position-relative">
+          ${slots}
+          ${pills}
+        </div>
+      `);
+    }
+
+    // Header row
+    const heads = ['','Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map((name,idx)=>{
+      if (idx===0) return `<div class="time-head"></div>`;
+      const d = new Date(start); d.setDate(start.getDate()+idx-1);
+      return `<div class="time-head">${name}<br><span class="muted">${d.getMonth()+1}/${d.getDate()}</span></div>`;
+    }).join("");
+
+    // Hour labels
+    const labels = hours.map(h=>`<div class="slot-label">${String(h).padStart(2,"0")}:00</div>`).join("");
+
+    containerCal.innerHTML = `
+      <div class="time-grid">
+        ${heads}
+        <div class="time-col">
+          ${labels}
+        </div>
+        ${cols.join("")}
+      </div>
+    `;
+
+    wireRegisterButtons();
+    containerList.innerHTML = "";
+  }
+
+  // ----------------------------------------------------
+  // DAY VIEW
+  function renderDay() {
+    const start = truncateToDay(cursorDate);
+    const end = new Date(start); end.setDate(start.getDate()+1);
+
+    calLabel.textContent = fmtDate(start);
+
+    const evs = eventsInRange(start, end).sort((a,b)=> toDate(a.start)-toDate(b.start));
+    const hours = Array.from({length:13}, (_,i)=> i+7); // 07:00 - 19:00
+
+    const slots = hours.map(()=>`<div class="time-slot"></div>`).join("");
+    const pills = evs.map(e=>{
+      const s = toDate(e.start), ee = toDate(e.end);
+      const startHour = Math.max(0, (s.getHours() - hours[0]) + s.getMinutes()/60);
+      const durHours = Math.max(0.7, ((ee - s) / (1000*60*60)));
+      const top = Math.min(hours.length-0.7, startHour) * 44;
+      const height = Math.min(hours.length*44 - top - 4, Math.max(20, durHours*44 - 6));
+      const full = !canRegister(e) ? "full" : "";
+      return `<button class="evt-pill ${full}" data-id="${esc(e._id)}"
+                     style="top:${top+2}px;height:${height}px"
+                     title="${esc(e.title || "")}">
+                ${esc(e.title || "Event")}
+              </button>`;
+    }).join("");
+
+    // Header
+    const head = `
+      <div class="time-head"></div>
+      <div class="time-head" style="grid-column: span 7; text-align:left;">
+        ${fmtDate(start)}
+      </div>`;
+
+    // Hour labels
+    const labels = hours.map(h=>`<div class="slot-label">${String(h).padStart(2,"0")}:00</div>`).join("");
+
+    containerCal.innerHTML = `
+      <div class="time-grid">
+        ${head}
+        <div class="time-col">
+          ${labels}
+        </div>
+        <div class="time-col position-relative" style="grid-column: span 7;">
+          ${slots}
+          ${pills}
+        </div>
+      </div>
+    `;
+
+    wireRegisterButtons();
+    containerList.innerHTML = "";
+  }
+
+  // ----------------------------------------------------
+  // Shared: wire clicks for register from any view (list or calendar)
   function wireRegisterButtons() {
-    document.querySelectorAll(".btn-register").forEach(btn => {
+    const selector = ".btn-register, .month-evt, .evt-pill";
+    document.querySelectorAll(selector).forEach(btn => {
       btn.addEventListener("click", () => {
         const id = btn.getAttribute("data-id");
         const ev = allEvents.find(x => x._id === id);
         if (!ev) return;
         regTarget = ev;
 
-        // Summary
         const s = toDate(ev.start), e = toDate(ev.end);
         regEventSummary.innerHTML = `
           <div><strong>${esc(ev.title || "")}</strong></div>
@@ -151,84 +445,89 @@
         regBusy.classList.add("d-none");
 
         regModal.show();
-      });
+      }, { once: true }); // guard from double-binding after re-render
     });
   }
 
-  // Can this event accept registrations now?
-  function canRegister(ev) {
+  // ----------------------------------------------------
+  // Data load with index fallbacks
+  async function loadResources() {
+    const col = window.db.collection("resources");
+    try {
+      // Preferred (needs composite index: branch asc, name asc)
+      const snap = await col.orderBy("branch","asc").orderBy("name","asc").get();
+      resources = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    } catch (err) {
+      console.warn("resources index missing; falling back to client sort:", err);
+      const snap = await col.get(); // no order; client sort
+      resources = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+        .sort((a,b) => (String(a.branch||"").localeCompare(String(b.branch||"")) ||
+                        String(a.name||"").localeCompare(String(b.name||""))));
+    }
+
+    // fill dropdown
+    const opts = [`<option value="ALL">All Resources</option>`]
+      .concat(resources.map(r => `<option value="${esc(r.id)}">${esc(r.name)}</option>`));
+    resourceFilter.innerHTML = opts.join("");
+  }
+
+  function attachEventsListener() {
+    if (typeof unsubscribeEvents === "function") { unsubscribeEvents(); unsubscribeEvents = null; }
+
     const now = new Date();
-    if (ev.status !== "published" || ev.visibility !== "public") return false;
-    if (ev.allowRegistration === false) return false;
-    const opens = toDate(ev.regOpensAt);
-    const closes = toDate(ev.regClosesAt);
-    if (opens && now < opens) return false;
-    if (closes && now > closes) return false;
-    if (typeof ev.remaining === "number" && ev.remaining <= 0) return false;
-    // Prevent registering for past events
-    const start = toDate(ev.start);
-    if (start && now > start) return false;
-    return true;
+    const col = window.db.collection("events");
+
+    try {
+      // Preferred (needs composite index: visibility asc, status asc, start asc)
+      unsubscribeEvents = col
+        .where("visibility","==","public")
+        .where("status","==","published")
+        .where("start",">=", now)
+        .orderBy("start","asc")
+        .onSnapshot(snap => {
+          allEvents = snap.docs.map(d => ({ _id: d.id, ...d.data() }));
+          applyFilter();
+        }, err => {
+          console.warn("events preferred query error; falling back:", err);
+          fallbackEventsListener();
+        });
+    } catch (err) {
+      console.warn("events preferred query threw; falling back:", err);
+      fallbackEventsListener();
+    }
   }
 
-  // --- Filters/Search
-  function applyFilter() {
-    const q = (searchInput.value || "").toLowerCase().trim();
-    const brSel = (branchFilter.value || "ALL").toUpperCase();
-    const resSel = (resourceFilter.value || "ALL");
-
-    filtered = allEvents.filter(ev => {
-      // branch
-      const br = (ev.branch || "").toUpperCase();
-      if (brSel !== "ALL" && br !== brSel) return false;
-      // resource
-      if (resSel !== "ALL" && ev.resourceId !== resSel) return false;
-
-      // text search
-      if (!q) return true;
-      const hay = [
-        ev.title, ev.description, ev.resourceName, ev.branch
-      ].map(v => (v || "").toString().toLowerCase());
-      return hay.some(v => v.includes(q));
-    });
-
-    render();
-  }
-
-  // --- Data load
-  function loadResources() {
-    return window.db.collection("resources")
-      .orderBy("branch", "asc").orderBy("name", "asc")
-      .get()
-      .then(snap => {
-        resources = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-        // fill dropdown
-        const opts = [`<option value="ALL">All Resources</option>`]
-          .concat(resources.map(r => `<option value="${esc(r.id)}">${esc(r.name)}</option>`));
-        resourceFilter.innerHTML = opts.join("");
-      })
-      .catch(err => console.error("resources load error:", err));
-  }
-
-  function loadEvents() {
+  function fallbackEventsListener() {
     const now = new Date();
-    // upcoming, public, published
-    // NOTE: requires composite index on visibility/status/start asc
-    return window.db.collection("events")
-      .where("visibility", "==", "public")
-      .where("status", "==", "published")
-      .where("start", ">=", now)
-      .orderBy("start", "asc")
-      .onSnapshot(snap => {
-        allEvents = snap.docs.map(d => ({ _id: d.id, ...d.data() }));
-        applyFilter();
-      }, err => {
-        console.error("events snapshot error:", err);
-        container.innerHTML = `<div class="text-danger py-4 text-center">Failed to load events.</div>`;
-      });
+    const col = window.db.collection("events");
+
+    try {
+      unsubscribeEvents = col
+        .where("start", ">=", now)
+        .orderBy("start", "asc")
+        .onSnapshot(snap => {
+          const rows = snap.docs.map(d => ({ _id: d.id, ...d.data() }));
+          allEvents = rows.filter(ev => ev.visibility === "public" && ev.status === "published");
+          applyFilter();
+        }, err => {
+          console.error("events fallback listener failed; trying one-time get:", err);
+          col.where("start", ">=", now).orderBy("start","asc").get().then(snap2 => {
+            const rows2 = snap2.docs.map(d => ({ _id: d.id, ...d.data() }));
+            allEvents = rows2.filter(ev => ev.visibility === "public" && ev.status === "published");
+            applyFilter();
+          }).catch(err2 => {
+            console.error("events one-time fallback failed:", err2);
+            containerList.innerHTML = `<div class="text-danger py-4 text-center">Failed to load events.</div>`;
+          });
+        });
+    } catch (err) {
+      console.error("events fallback threw:", err);
+      containerList.innerHTML = `<div class="text-danger py-4 text-center">Failed to load events.</div>`;
+    }
   }
 
-  // --- Registration submit: transaction w/ dedupe and capacity check
+  // ----------------------------------------------------
+  // Registration submit: transaction w/ dedupe and capacity check
   regForm.addEventListener("submit", async (e) => {
     e.preventDefault();
     clearAlerts();
@@ -295,7 +594,6 @@
       regWarn.classList.add("d-none");
       regErr.classList.add("d-none");
 
-      // Close after short delay
       setTimeout(() => regModal.hide(), 1200);
 
     } catch (err) {
@@ -308,15 +606,47 @@
     }
   });
 
-  // --- Init
+  // ----------------------------------------------------
+  // View switching & date navigation
+  function gotoToday() {
+    cursorDate = truncateToDay(new Date());
+    render();
+  }
+  function prevPeriod() {
+    if (currentView === "month") {
+      const d = new Date(cursorDate); d.setMonth(d.getMonth()-1); cursorDate = truncateToDay(d);
+    } else if (currentView === "week") {
+      const d = new Date(cursorDate); d.setDate(d.getDate()-7); cursorDate = truncateToDay(d);
+    } else if (currentView === "day") {
+      const d = new Date(cursorDate); d.setDate(d.getDate()-1); cursorDate = truncateToDay(d);
+    } else {
+      // list view ignores prev/next (optional: implement month paging for list)
+    }
+    render();
+  }
+  function nextPeriod() {
+    if (currentView === "month") {
+      const d = new Date(cursorDate); d.setMonth(d.getMonth()+1); cursorDate = truncateToDay(d);
+    } else if (currentView === "week") {
+      const d = new Date(cursorDate); d.setDate(d.getDate()+7); cursorDate = truncateToDay(d);
+    } else if (currentView === "day") {
+      const d = new Date(cursorDate); d.setDate(d.getDate()+1); cursorDate = truncateToDay(d);
+    } else {
+      // list view ignores prev/next
+    }
+    render();
+  }
+
+  // ----------------------------------------------------
+  // Init
   document.addEventListener("DOMContentLoaded", async () => {
     if (!window.db) {
-      container.innerHTML = `<div class="text-danger py-4 text-center">Firestore not initialized.</div>`;
+      containerList.innerHTML = `<div class="text-danger py-4 text-center">Firestore not initialized.</div>`;
       return;
     }
 
-    await loadResources();
-    loadEvents(); // live updates
+    await loadResources();          // uses fallback if index missing
+    attachEventsListener();         // sets live listener with fallback
 
     // Wire filters/search
     branchFilter.addEventListener("change", applyFilter);
@@ -325,5 +655,16 @@
       clearTimeout(searchInput._t);
       searchInput._t = setTimeout(applyFilter, 120);
     });
+
+    // View switch
+    btnMonth.addEventListener("click", () => { currentView="month"; render(); });
+    btnWeek.addEventListener("click",  () => { currentView="week";  render(); });
+    btnDay.addEventListener("click",   () => { currentView="day";   render(); });
+    btnList.addEventListener("click",  () => { currentView="list";  render(); });
+
+    // Date nav
+    btnToday.addEventListener("click", gotoToday);
+    btnPrev.addEventListener("click", prevPeriod);
+    btnNext.addEventListener("click", nextPeriod);
   });
 })();
