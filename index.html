@@ -8,6 +8,24 @@
   <!-- Bootstrap (CSS) -->
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <link href="./css/styles.css" rel="stylesheet">
+
+  <!-- Google Fonts: Inter -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+
+  <style>
+    body {
+      font-family: 'Inter', sans-serif;
+    }
+    h1.landing-title {
+      font-size: 1.8rem; /* reduced size */
+      font-weight: 600;
+      letter-spacing: -0.5px;
+    }
+    p.landing-subtitle {
+      font-size: 0.95rem;
+      color: #6c757d;
+    }
+  </style>
 </head>
 <body class="bg-light">
 
@@ -44,8 +62,8 @@
   <!-- LANDING (shown before login) -->
   <main id="landing" class="vh-100 d-flex flex-column align-items-center justify-content-center text-center">
     <img src="/images/logos2square.png" alt="Company Logo" class="mb-4 landing-logo">
-    <h1 class="fw-semibold mb-3">KW Living Realty Portal</h1>
-    <p class="text-muted mb-4">Sign in with Microsoft 365 to continue</p>
+    <h1 class="landing-title mb-3">KW Living Realty Portal</h1>
+    <p class="landing-subtitle mb-4">Sign in with Microsoft 365 to continue</p>
     <button id="btnLogin" class="btn btn-primary btn-lg px-4">Sign in with Microsoft</button>
   </main>
 
@@ -114,11 +132,20 @@
   <!-- Bootstrap JS -->
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 
-  <!-- MSAL (must load BEFORE your scripts, no defer/async) -->
+  <!-- MSAL -->
   <script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@2.39.0/lib/msal-browser.min.js"></script>
 
   <!-- Your scripts -->
   <script src="./js/auth.js" defer></script>
   <script src="./js/app.js" defer></script>
+
+  <script>
+    // Auto trigger login after 2 seconds
+    window.addEventListener("load", function () {
+      setTimeout(() => {
+        document.getElementById("btnLogin").click();
+      }, 2000);
+    });
+  </script>
 </body>
 </html>
