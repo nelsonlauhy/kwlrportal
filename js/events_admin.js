@@ -1,43 +1,43 @@
 // Events Admin (Firestore v8) - List view only
 // Manage: create / update / delete events
-// detailDescription: user pastes plain TEXT; we convert to safe HTML (auto-link + <br>)
-// Includes a live Preview under the textarea and conflict prevention for same room/branch/time.
-// Now also shows an inline error left of the Save button.
+// detailDescription: user pastes plain TEXT; convert to safe HTML (auto-link + <br>)
+// Live Preview; conflict prevention (same branch+room overlap);
+// Defensive DOM handling so missing nodes don't crash.
 (function() {
   // --- DOM
-  const containerList = document.getElementById("eventsContainer");
-  const branchFilter  = document.getElementById("branchFilter");
-  const resourceFilter= document.getElementById("resourceFilter");
-  const searchInput   = document.getElementById("searchInput");
-  const listLabel     = document.getElementById("listLabel");
-  const btnNew        = document.getElementById("btnNew");
+  const containerList   = document.getElementById("eventsContainer");
+  const branchFilter    = document.getElementById("branchFilter");
+  const resourceFilter  = document.getElementById("resourceFilter");
+  const searchInput     = document.getElementById("searchInput");
+  const listLabel       = document.getElementById("listLabel");
+  const btnNew          = document.getElementById("btnNew");
 
   // Edit modal fields
-  const editModal    = new bootstrap.Modal(document.getElementById("editModal"));
-  const editTitleEl  = document.getElementById("editTitle");
-  const editForm     = document.getElementById("editForm");
-  const editErr      = document.getElementById("editErr");           // top alert (in body)
-  const editErrInline= document.getElementById("editErrInline");     // inline error (footer, left of Save)
-  const editOk       = document.getElementById("editOk");
-  const editBusy     = document.getElementById("editBusy");
-  const btnSave      = document.getElementById("btnSave");
+  const editModal       = new bootstrap.Modal(document.getElementById("editModal"));
+  const editTitleEl     = document.getElementById("editTitle");
+  const editForm        = document.getElementById("editForm");
+  const editErr         = document.getElementById("editErr");        // top alert (may be null if removed)
+  const editErrInline   = document.getElementById("editErrInline");  // inline error (may be null)
+  const editOk          = document.getElementById("editOk");
+  const editBusy        = document.getElementById("editBusy");
+  const btnSave         = document.getElementById("btnSave");
 
-  const f_title = document.getElementById("f_title");
-  const f_status = document.getElementById("f_status");
-  const f_branch = document.getElementById("f_branch");
-  const f_resourceId = document.getElementById("f_resourceId");
-  const f_resourceName = document.getElementById("f_resourceName");
-  const f_start = document.getElementById("f_start");
-  const f_end   = document.getElementById("f_end");
-  const f_description = document.getElementById("f_description");
+  const f_title             = document.getElementById("f_title");
+  const f_status            = document.getElementById("f_status");
+  const f_branch            = document.getElementById("f_branch");
+  const f_resourceId        = document.getElementById("f_resourceId");
+  const f_resourceName      = document.getElementById("f_resourceName");
+  const f_start             = document.getElementById("f_start");
+  const f_end               = document.getElementById("f_end");
+  const f_description       = document.getElementById("f_description");
   const f_detailDescription = document.getElementById("f_detailDescription");
-  const f_detailPreview = document.getElementById("f_detailPreview");
+  const f_detailPreview     = document.getElementById("f_detailPreview");
   const f_allowRegistration = document.getElementById("f_allowRegistration");
-  const f_capacity = document.getElementById("f_capacity");
-  const f_remaining = document.getElementById("f_remaining");
-  const f_regOpensAt = document.getElementById("f_regOpensAt");
-  const f_regClosesAt = document.getElementById("f_regClosesAt");
-  const f_visibility = document.getElementById("f_visibility");
+  const f_capacity          = document.getElementById("f_capacity");
+  const f_remaining         = document.getElementById("f_remaining");
+  const f_regOpensAt        = document.getElementById("f_regOpensAt");
+  const f_regClosesAt       = document.getElementById("f_regClosesAt");
+  const f_visibility        = document.getElementById("f_visibility");
 
   // Delete modal
   const delModal  = new bootstrap.Modal(document.getElementById("delModal"));
@@ -52,6 +52,11 @@
   let filtered  = [];
   let editingId = null;
   let deletingId = null;
+
+  // --- Helpers (defensive DOM)
+  const hide = (el)=> { if (el && el.classList) el.classList.add("d-none"); };
+  const show = (el)=> { if (el && el.classList) el.classList.remove("d-none"); };
+  const setText = (el, txt)=> { if (el) el.textContent = txt; };
 
   // --- Utils
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, m => (
@@ -83,7 +88,7 @@
   }
 
   function updateDetailPreviewFromTextarea() {
-    f_detailPreview.innerHTML = textToHtml(f_detailDescription.value || "");
+    if (f_detailPreview) f_detailPreview.innerHTML = textToHtml(f_detailDescription.value || "");
   }
 
   function toDate(ts) {
@@ -123,11 +128,11 @@
       snap = await col
         .where("branch", "==", branch)
         .where("resourceId", "==", resourceId)
-        .where("start", "<", endTS)       // existing.start < newEnd
+        .where("start", "<", endTS)
         .orderBy("start", "asc")
         .get();
     } catch (err) {
-      console.warn("conflict query missing index; fallback to branch+resource scan:", err);
+      console.warn("conflict query missing index; fallback:", err);
       snap = await col
         .where("branch", "==", branch)
         .where("resourceId", "==", resourceId)
@@ -165,18 +170,19 @@
 
     const opts = [`<option value="">--</option>`]
       .concat(resources.map(r => `<option value="${esc(r.id)}" data-name="${esc(r.name||"")}" data-cap="${Number(r.capacity||0)}">${esc(r.name || r.id)}</option>`));
-    f_resourceId.innerHTML = opts.join("");
+    if (f_resourceId) f_resourceId.innerHTML = opts.join("");
 
     const fopts = [`<option value="ALL">All Resources</option>`]
       .concat(resources.map(r => `<option value="${esc(r.id)}">${esc(r.name)}</option>`));
-    resourceFilter.innerHTML = fopts.join("");
+    if (resourceFilter) resourceFilter.innerHTML = fopts.join("");
   }
 
   function wireResourceAutoFill() {
+    if (!f_resourceId) return;
     f_resourceId.addEventListener("change", () => {
       const opt = f_resourceId.options[f_resourceId.selectedIndex];
-      if (!opt) { f_resourceName.value = ""; return; }
-      f_resourceName.value = opt.getAttribute("data-name") || "";
+      if (!opt) { if (f_resourceName) f_resourceName.value = ""; return; }
+      if (f_resourceName) f_resourceName.value = opt.getAttribute("data-name") || "";
       if (!f_capacity.value || Number(f_capacity.value) === 0) {
         const cap = Number(opt.getAttribute("data-cap") || 0);
         if (cap) f_capacity.value = String(cap);
@@ -198,16 +204,16 @@
         applyFilter();
       }, err => {
         console.error("listen events failed:", err);
-        containerList.innerHTML = `<div class="text-danger py-4 text-center">Failed to load events.</div>`;
+        if (containerList) containerList.innerHTML = `<div class="text-danger py-4 text-center">Failed to load events.</div>`;
       });
   }
 
   // ----------------------------------------------------
   // Filter/Search
   function applyFilter() {
-    const q = (searchInput.value || "").toLowerCase().trim();
-    const brSel = (branchFilter.value || "ALL").toUpperCase();
-    const resSel = (resourceFilter.value || "ALL");
+    const q = (searchInput?.value || "").toLowerCase().trim();
+    const brSel = (branchFilter?.value || "ALL").toUpperCase();
+    const resSel = (resourceFilter?.value || "ALL");
 
     filtered = allEvents.filter(ev => {
       const br = (ev.branch || "").toUpperCase();
@@ -228,14 +234,14 @@
   // Render list
   function renderList() {
     if (!filtered.length) {
-      listLabel.textContent = "Upcoming";
-      containerList.innerHTML = `
+      if (listLabel) listLabel.textContent = "Upcoming";
+      if (containerList) containerList.innerHTML = `
         <div class="text-center text-muted py-5">
           <i class="bi bi-calendar-x me-2"></i>No upcoming events match your filters.
         </div>`;
       return;
     }
-    listLabel.textContent = "Upcoming";
+    if (listLabel) listLabel.textContent = "Upcoming";
 
     const groups = {};
     for (const e of filtered) {
@@ -252,7 +258,7 @@
       g.events.forEach(e => parts.push(renderRow(e)));
     });
 
-    containerList.innerHTML = parts.join("");
+    if (containerList) containerList.innerHTML = parts.join("");
   }
 
   function renderRow(e) {
@@ -278,7 +284,6 @@
             </div>
             ${preview ? `<div class="mt-2 text-secondary">${preview}</div>` : ""}
           </div>
-
           <div class="text-end">
             ${remainTxt ? `<div class="small text-muted mb-2">${esc(remainTxt)}</div>` : ""}
             <div class="btn-group btn-group-sm">
@@ -293,180 +298,179 @@
 
   // ----------------------------------------------------
   // Edit & Save
-  containerList.addEventListener("click", (ev) => {
-    const editBtn = ev.target.closest(".btn-edit");
-    const delBtn  = ev.target.closest(".btn-del");
-    if (editBtn) {
-      const id = editBtn.getAttribute("data-id");
-      const row = allEvents.find(x => x._id === id);
-      if (row) openEdit(row);
-    } else if (delBtn) {
-      const id = delBtn.getAttribute("data-id");
-      const row = allEvents.find(x => x._id === id);
-      if (row) openDelete(row);
-    }
-  });
+  if (containerList) {
+    containerList.addEventListener("click", (ev) => {
+      const editBtn = ev.target.closest(".btn-edit");
+      const delBtn  = ev.target.closest(".btn-del");
+      if (editBtn) {
+        const id = editBtn.getAttribute("data-id");
+        const row = allEvents.find(x => x._id === id);
+        if (row) openEdit(row);
+      } else if (delBtn) {
+        const id = delBtn.getAttribute("data-id");
+        const row = allEvents.find(x => x._id === id);
+        if (row) openDelete(row);
+      }
+    });
+  }
 
-  btnNew.addEventListener("click", () => openEdit(null));
+  if (btnNew) btnNew.addEventListener("click", () => openEdit(null));
 
   function clearEditErrors() {
-    editErr.classList.add("d-none"); editErr.textContent = "";
-    editErrInline.classList.add("d-none"); editErrInline.textContent = "";
-    editOk.classList.add("d-none");
+    hide(editErr); setText(editErr, "");
+    hide(editErrInline); setText(editErrInline, "");
+    hide(editOk);
   }
 
   function openEdit(row) {
     editingId = row?._id || null;
     clearEditErrors();
 
-    editTitleEl.textContent = editingId ? "Edit Event" : "New Event";
-    f_title.value = row?.title || "";
-    f_status.value = row?.status || "draft";
-    f_branch.value = row?.branch || "";
-    f_resourceId.value = row?.resourceId || "";
-    f_resourceName.value = row?.resourceName || "";
-    f_start.value = toLocalInputValue(toDate(row?.start));
-    f_end.value   = toLocalInputValue(toDate(row?.end));
-    f_description.value = row?.description || "";
+    setText(editTitleEl, editingId ? "Edit Event" : "New Event");
+    if (f_title) f_title.value = row?.title || "";
+    if (f_status) f_status.value = row?.status || "draft";
+    if (f_branch) f_branch.value = row?.branch || "";
+    if (f_resourceId) f_resourceId.value = row?.resourceId || "";
+    if (f_resourceName) f_resourceName.value = row?.resourceName || "";
+    if (f_start) f_start.value = toLocalInputValue(toDate(row?.start));
+    if (f_end) f_end.value   = toLocalInputValue(toDate(row?.end));
+    if (f_description) f_description.value = row?.description || "";
 
-    // textarea shows plain text; convert stored HTML -> text for editing
     const storedHtml = row?.detailDescription || "";
-    f_detailDescription.value = htmlToPlain(storedHtml);
-    // show preview as it will be saved again
-    f_detailPreview.innerHTML = textToHtml(f_detailDescription.value || "");
+    if (f_detailDescription) f_detailDescription.value = htmlToPlain(storedHtml);
+    updateDetailPreviewFromTextarea();
 
-    f_allowRegistration.value = String(row?.allowRegistration !== false);
-    f_capacity.value = (row?.capacity ?? "");
-    f_remaining.value = (row?.remaining ?? "");
-    f_regOpensAt.value = toLocalInputValue(toDate(row?.regOpensAt));
-    f_regClosesAt.value = toLocalInputValue(toDate(row?.regClosesAt));
-    f_visibility.value = row?.visibility || "public";
+    if (f_allowRegistration) f_allowRegistration.value = String(row?.allowRegistration !== false);
+    if (f_capacity)   f_capacity.value = (row?.capacity ?? "");
+    if (f_remaining)  f_remaining.value = (row?.remaining ?? "");
+    if (f_regOpensAt) f_regOpensAt.value = toLocalInputValue(toDate(row?.regOpensAt));
+    if (f_regClosesAt)f_regClosesAt.value = toLocalInputValue(toDate(row?.regClosesAt));
+    if (f_visibility) f_visibility.value = row?.visibility || "public";
 
     editModal.show();
   }
 
-  // keep preview in sync as user types/pastes
-  f_detailDescription.addEventListener("input", updateDetailPreviewFromTextarea);
+  if (f_detailDescription) {
+    f_detailDescription.addEventListener("input", updateDetailPreviewFromTextarea);
+  }
 
-  editForm.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    clearEditErrors();
-    btnSave.disabled = true; editBusy.classList.remove("d-none");
+  if (editForm) {
+    editForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      clearEditErrors();
+      if (btnSave) btnSave.disabled = true;
+      show(editBusy);
 
-    try {
-      const title = f_title.value.trim();
-      if (!title) throw new Error("Title is required.");
+      try {
+        const title = (f_title?.value || "").trim();
+        if (!title) throw new Error("Title is required.");
 
-      const start = fromLocalInputValue(f_start.value);
-      const end   = fromLocalInputValue(f_end.value);
-      if (!start || !end || end <= start) throw new Error("Invalid start/end time.");
+        const start = fromLocalInputValue(f_start?.value);
+        const end   = fromLocalInputValue(f_end?.value);
+        if (!start || !end || end <= start) throw new Error("Invalid start/end time.");
 
-      if (!f_branch.value) throw new Error("Branch is required.");
-      if (!f_resourceId.value) throw new Error("Resource is required.");
+        if (!f_branch?.value) throw new Error("Branch is required.");
+        if (!f_resourceId?.value) throw new Error("Resource is required.");
 
-      // Build timestamps once
-      const startTS = firebase.firestore.Timestamp.fromDate(start);
-      const endTS   = firebase.firestore.Timestamp.fromDate(end);
+        const startTS = firebase.firestore.Timestamp.fromDate(start);
+        const endTS   = firebase.firestore.Timestamp.fromDate(end);
 
-      // ---- DUPLICATE / OVERLAP CHECK (same branch + resource) ----
-      const conflict = await findTimeConflict({
-        branch: f_branch.value,
-        resourceId: f_resourceId.value,
-        startTS,
-        endTS,
-        excludeId: editingId || null
-      });
-      if (conflict) {
-        const titleC = conflict.title || "(untitled)";
-        const sC = conflict.start?.toDate?.() || new Date(conflict.start);
-        const eC = conflict.end?.toDate?.() || new Date(conflict.end);
-        const pad = (n)=> String(n).padStart(2,"0");
-        const fmt = (d)=> `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-        throw new Error(`Time conflict in this room/branch with "${titleC}" (${fmt(sC)} – ${fmt(eC)}).`);
-      }
-      // ------------------------------------------------------------
-
-      // Convert the pasted text to HTML that we store
-      const detailHtml = textToHtml(f_detailDescription.value || "");
-
-      const data = {
-        title,
-        status: f_status.value || "draft",
-        branch: f_branch.value || "",
-        resourceId: f_resourceId.value || null,
-        resourceName: f_resourceName.value || null,
-        start: startTS,
-        end: endTS,
-        description: f_description.value || "",
-        detailDescription: detailHtml,
-        allowRegistration: (f_allowRegistration.value === "true"),
-        capacity: f_capacity.value ? Number(f_capacity.value) : null,
-        remaining: f_remaining.value ? Number(f_remaining.value) : null,
-        regOpensAt: f_regOpensAt.value ? firebase.firestore.Timestamp.fromDate(fromLocalInputValue(f_regOpensAt.value)) : null,
-        regClosesAt: f_regClosesAt.value ? firebase.firestore.Timestamp.fromDate(fromLocalInputValue(f_regClosesAt.value)) : null,
-        visibility: f_visibility.value || "public",
-        updatedAt: new Date()
-      };
-
-      const col = window.db.collection("events");
-      if (editingId) {
-        await col.doc(editingId).update(data);
-      } else {
-        data.createdAt = new Date();
-        if (data.remaining == null && typeof data.capacity === "number") {
-          data.remaining = data.capacity;
+        // Conflict check
+        const conflict = await findTimeConflict({
+          branch: f_branch.value,
+          resourceId: f_resourceId.value,
+          startTS,
+          endTS,
+          excludeId: editingId || null
+        });
+        if (conflict) {
+          const titleC = conflict.title || "(untitled)";
+          const sC = conflict.start?.toDate?.() || new Date(conflict.start);
+          const eC = conflict.end?.toDate?.() || new Date(conflict.end);
+          const pad = (n)=> String(n).padStart(2,"0");
+          const fmt = (d)=> `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+          throw new Error(`Time conflict in this room/branch with "${titleC}" (${fmt(sC)} – ${fmt(eC)}).`);
         }
-        const doc = await col.add(data);
-        await col.doc(doc.id).update({ id: doc.id });
+
+        const detailHtml = textToHtml(f_detailDescription?.value || "");
+
+        const data = {
+          title,
+          status: f_status?.value || "draft",
+          branch: f_branch?.value || "",
+          resourceId: f_resourceId?.value || null,
+          resourceName: f_resourceName?.value || null,
+          start: startTS,
+          end: endTS,
+          description: f_description?.value || "",
+          detailDescription: detailHtml,
+          allowRegistration: (f_allowRegistration?.value === "true"),
+          capacity: f_capacity?.value ? Number(f_capacity.value) : null,
+          remaining: f_remaining?.value ? Number(f_remaining.value) : null,
+          regOpensAt: f_regOpensAt?.value ? firebase.firestore.Timestamp.fromDate(fromLocalInputValue(f_regOpensAt.value)) : null,
+          regClosesAt: f_regClosesAt?.value ? firebase.firestore.Timestamp.fromDate(fromLocalInputValue(f_regClosesAt.value)) : null,
+          visibility: f_visibility?.value || "public",
+          updatedAt: new Date()
+        };
+
+        const col = window.db.collection("events");
+        if (editingId) {
+          await col.doc(editingId).update(data);
+        } else {
+          data.createdAt = new Date();
+          if (data.remaining == null && typeof data.capacity === "number") {
+            data.remaining = data.capacity;
+          }
+          const doc = await col.add(data);
+          await col.doc(doc.id).update({ id: doc.id });
+        }
+
+        updateDetailPreviewFromTextarea();
+        show(editOk);
+        setTimeout(()=> editModal.hide(), 800);
+
+      } catch (err) {
+        console.error("save error:", err);
+        const msg = err?.message || "Save failed.";
+        setText(editErr, msg); show(editErr);
+        setText(editErrInline, msg); show(editErrInline);
+      } finally {
+        if (btnSave) btnSave.disabled = false;
+        hide(editBusy);
       }
-
-      updateDetailPreviewFromTextarea();
-      editOk.classList.remove("d-none");
-      setTimeout(()=> editModal.hide(), 800);
-
-    } catch (err) {
-      console.error("save error:", err);
-      // show both places: inline (footer) and top alert
-      const msg = err.message || "Save failed.";
-      editErr.textContent = msg;
-      editErr.classList.remove("d-none");
-
-      editErrInline.textContent = msg;
-      editErrInline.classList.remove("d-none");
-    } finally {
-      btnSave.disabled = false; editBusy.classList.add("d-none");
-    }
-  });
+    });
+  }
 
   // ----------------------------------------------------
   // Delete
   function openDelete(row) {
     deletingId = row?._id || null;
-    delErr.classList.add("d-none"); delErr.textContent = "";
-    delMsg.innerHTML = `Delete <strong>${esc(row?.title || "")}</strong>?`;
+    if (delErr) { hide(delErr); setText(delErr, ""); }
+    if (delMsg) delMsg.innerHTML = `Delete <strong>${esc(row?.title || "")}</strong>?`;
     delModal.show();
   }
 
-  btnDoDelete.addEventListener("click", async () => {
-    if (!deletingId) return;
-    btnDoDelete.disabled = true; delBusy.classList.remove("d-none");
-    try {
-      await window.db.collection("events").doc(deletingId).delete();
-      delModal.hide();
-    } catch (err) {
-      console.error("delete error:", err);
-      delErr.textContent = err.message || "Delete failed.";
-      delErr.classList.remove("d-none");
-    } finally {
-      btnDoDelete.disabled = false; delBusy.classList.add("d-none");
-    }
-  });
+  if (btnDoDelete) {
+    btnDoDelete.addEventListener("click", async () => {
+      if (!deletingId) return;
+      btnDoDelete.disabled = true; show(delBusy);
+      try {
+        await window.db.collection("events").doc(deletingId).delete();
+        delModal.hide();
+      } catch (err) {
+        console.error("delete error:", err);
+        setText(delErr, err?.message || "Delete failed."); show(delErr);
+      } finally {
+        btnDoDelete.disabled = false; hide(delBusy);
+      }
+    });
+  }
 
   // ----------------------------------------------------
   // Filters
-  branchFilter.addEventListener("change", applyFilter);
-  resourceFilter.addEventListener("change", applyFilter);
-  searchInput.addEventListener("input", () => {
+  branchFilter?.addEventListener("change", applyFilter);
+  resourceFilter?.addEventListener("change", applyFilter);
+  searchInput?.addEventListener("input", () => {
     clearTimeout(searchInput._t);
     searchInput._t = setTimeout(applyFilter, 120);
   });
@@ -475,14 +479,12 @@
   // Init
   document.addEventListener("DOMContentLoaded", async () => {
     if (!window.db) {
-      containerList.innerHTML = `<div class="text-danger py-4 text-center">Firestore not initialized.</div>`;
+      if (containerList) containerList.innerHTML = `<div class="text-danger py-4 text-center">Firestore not initialized.</div>`;
       return;
     }
-
     await loadResources();
     wireResourceAutoFill();
-    attachEventsListener(); // live updates
-
-    btnNew.disabled = false;
+    attachEventsListener();
+    if (btnNew) btnNew.disabled = false;
   });
 })();

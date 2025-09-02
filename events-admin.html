@@ -23,7 +23,6 @@
     .event-meta { color:#6c757d; font-size:.9rem; }
     .badge-branch { background:#eef2ff; color:#3730a3; }
     .badge-room { background:#ecfeff; color:#155e75; }
-
     .muted{ color:#94a3b8; }
     .form-hint { font-size:.85rem; color:#64748b; }
   </style>
@@ -36,7 +35,6 @@
       <h3 class="page-title mb-0">
         <i class="bi bi-calendar2-week me-1"></i>Events Admin
       </h3>
-
       <div class="d-flex align-items-center gap-2">
         <button class="btn btn-primary btn-sm" id="btnNew">
           <i class="bi bi-plus-lg me-1"></i> New Event
@@ -44,7 +42,7 @@
       </div>
     </div>
 
-    <!-- Filters (List only) -->
+    <!-- Filters -->
     <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap" style="row-gap:.5rem;">
       <div class="control-row">
         <select id="branchFilter" class="form-select filter-control">
@@ -182,11 +180,14 @@
             </div>
           </div>
 
+          <!-- top error (body) -->
           <div class="alert alert-danger mt-3 d-none" id="editErr"></div>
           <div class="alert alert-success mt-3 d-none" id="editOk">Saved.</div>
         </div>
 
-        <div class="modal-footer">
+        <!-- footer with inline error (left) -->
+        <div class="modal-footer d-flex align-items-center justify-content-end gap-2">
+          <div id="editErrInline" class="text-danger small me-auto d-none"></div>
           <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Close</button>
           <button type="submit" class="btn btn-primary btn-sm" id="btnSave">
             <span class="spinner-border spinner-border-sm me-1 d-none" id="editBusy"></span>
