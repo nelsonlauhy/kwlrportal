@@ -1,5 +1,6 @@
 // Public Events list + Registration (Firestore v8) with index fallbacks
-// Includes Month / Week / Day / List views + date navigation
+// Views: Month / Week / Day / List.  Clicking an event opens Event Details modal,
+// which shows rich `detailDescription` (HTML) and a Register button.
 
 (function() {
   // --- DOM
@@ -19,6 +20,17 @@
   const btnToday = document.getElementById("btnToday");
   const calLabel = document.getElementById("calLabel");
 
+  // Event Details modal
+  const eventModalEl = document.getElementById("eventModal");
+  const eventModal   = new bootstrap.Modal(eventModalEl);
+  const evTitleEl    = document.getElementById("evTitle");
+  const evMetaEl     = document.getElementById("evMeta");
+  const evDateLineEl = document.getElementById("evDateLine");
+  const evShortDesc  = document.getElementById("evShortDesc");
+  const evDetailDesc = document.getElementById("evDetailDesc");
+  const evCapacityEl = document.getElementById("evCapacity");
+  const btnOpenRegister = document.getElementById("btnOpenRegister");
+
   // Registration modal
   const regModalEl = document.getElementById("regModal");
   const regModal   = new bootstrap.Modal(regModalEl);
@@ -37,6 +49,7 @@
   let filtered  = [];   // after applying top filters/search
   let resources = [];   // [{id,name,branch,type}]
   let regTarget = null; // event object being registered
+  let detailTarget = null; // event object being viewed
   let unsubscribeEvents = null;
 
   // calendar state
@@ -73,33 +86,66 @@
     [regWarn, regErr, regOk].forEach(el => { el.classList.add("d-none"); el.textContent=""; });
   }
 
+  // Strip HTML to plain text (for search indexing/preview)
+  function stripHtmlToText(html) {
+    const tmp = document.createElement("div");
+    tmp.innerHTML = html || "";
+    return (tmp.textContent || tmp.innerText || "").trim();
+  }
+
+  // Very basic sanitizer: remove <script> and inline on* handlers. Trust content is admin-authored.
+  function sanitizeTrustedHtml(html) {
+    if (!html) return "";
+    const tmp = document.createElement("div");
+    tmp.innerHTML = html;
+
+    // remove script/style
+    tmp.querySelectorAll("script, style").forEach(n => n.remove());
+
+    // remove on* attrs; allow target/href on <a>
+    tmp.querySelectorAll("*").forEach(el => {
+      [...el.attributes].forEach(attr => {
+        const name = attr.name.toLowerCase();
+        if (name.startsWith("on")) el.removeAttribute(attr.name);
+        if (el.tagName === "A" && name === "href") {
+          // noop
+        }
+      });
+      if (el.tagName === "A") {
+        // force safe target
+        if (!el.getAttribute("target")) el.setAttribute("target","_blank");
+        el.setAttribute("rel","noopener noreferrer");
+      }
+    });
+    return tmp.innerHTML;
+  }
+
   // ----------------------------------------------------
-  // Filters/Search (for LIST view base; calendar uses filtered + range)
+  // Filters/Search (include title, description, resourceName, branch, detailDescription)
   function applyFilter() {
     const q = (searchInput.value || "").toLowerCase().trim();
     const brSel = (branchFilter.value || "ALL").toUpperCase();
     const resSel = (resourceFilter.value || "ALL");
 
     filtered = allEvents.filter(ev => {
-      // branch
       const br = (ev.branch || "").toUpperCase();
       if (brSel !== "ALL" && br !== brSel) return false;
-      // resource
       if (resSel !== "ALL" && ev.resourceId !== resSel) return false;
-      // text
+
       if (!q) return true;
-      const hay = [ev.title, ev.description, ev.resourceName, ev.branch]
+
+      const detailTxt = stripHtmlToText(ev.detailDescription || "");
+      const hay = [ev.title, ev.description, ev.resourceName, ev.branch, detailTxt]
         .map(v => (v || "").toString().toLowerCase());
       return hay.some(v => v.includes(q));
     });
 
-    render(); // switch based on currentView
+    render();
   }
 
   // ----------------------------------------------------
   // RENDER DISPATCH
   function render() {
-    // Set view buttons active state
     [btnMonth,btnWeek,btnDay,btnList].forEach(b=>b.classList.remove("active"));
     if (currentView==="month") btnMonth.classList.add("active");
     else if (currentView==="week") btnWeek.classList.add("active");
@@ -113,15 +159,10 @@
       return;
     }
 
-    // calendar views
-    containerList.innerHTML = ""; // hide list
-    if (currentView === "month") {
-      renderMonth();
-    } else if (currentView === "week") {
-      renderWeek();
-    } else {
-      renderDay();
-    }
+    containerList.innerHTML = "";
+    if (currentView === "month") renderMonth();
+    else if (currentView === "week") renderWeek();
+    else renderDay();
   }
 
   // ----------------------------------------------------
@@ -149,9 +190,10 @@
       for (const e of g.events) parts.push(renderEventCard(e));
     });
     containerList.innerHTML = parts.join("");
-    wireRegisterButtons();
+    wireEventOpeners();
   }
 
+  // Card no longer shows Register button; click opens Event Details modal
   function renderEventCard(e) {
     const start = toDate(e.start);
     const end   = toDate(e.end);
@@ -161,12 +203,13 @@
     const remainTxt = (remaining != null && capacity != null)
       ? `${remaining}/${capacity} seats left`
       : (remaining != null ? `${remaining} seats left` : "");
-    const disableReg = !canRegister(e);
-    const btnClass = disableReg ? "btn-secondary" : "btn-primary";
-    const btnTitle = disableReg ? "Registration closed or full" : "Register";
+
+    // short preview from description or detailDescription
+    const previewSrc = e.description || stripHtmlToText(e.detailDescription || "");
+    const preview = previewSrc ? esc(previewSrc).slice(0,180) + (previewSrc.length>180 ? "…" : "") : "";
 
     return `
-      <div class="event-card">
+      <div class="event-card" data-id="${esc(e._id)}" role="button" tabindex="0">
         <div class="d-flex justify-content-between align-items-start">
           <div class="me-3">
             <div class="event-title">${esc(e.title || "Untitled Event")}</div>
@@ -175,15 +218,11 @@
               ${e.resourceName ? `<span class="badge badge-room me-2"><i class="bi bi-building me-1"></i>${esc(e.resourceName)}</span>` : ""}
               ${e.branch ? `<span class="badge badge-branch me-2">${esc(e.branch)}</span>` : ""}
             </div>
-            ${e.description ? `<div class="mt-2 text-secondary">${esc(e.description)}</div>` : ""}
+            ${preview ? `<div class="mt-2 text-secondary">${preview}</div>` : ""}
           </div>
-
           <div class="text-end">
             ${remainTxt ? `<div class="small text-muted mb-2">${esc(remainTxt)}</div>` : ""}
-            <button class="btn ${btnClass} btn-sm btn-register"
-                    data-id="${esc(e._id)}" ${disableReg ? "disabled": ""} title="${esc(btnTitle)}">
-              <i class="bi bi-pencil-square me-1"></i> Register
-            </button>
+            <span class="text-primary small"><i class="bi bi-box-arrow-up-right me-1"></i>View</span>
           </div>
         </div>
       </div>
@@ -191,7 +230,7 @@
   }
 
   // ----------------------------------------------------
-  // CALENDAR: helpers
+  // CALENDAR HELPERS
   function canRegister(ev) {
     const now = new Date();
     if (ev.status !== "published" || ev.visibility !== "public") return false;
@@ -206,12 +245,8 @@
     return true;
   }
 
-  // overlap check (event intersects [a,b))
-  function overlaps(evStart, evEnd, a, b) {
-    return evStart < b && evEnd > a;
-  }
+  function overlaps(evStart, evEnd, a, b) { return evStart < b && evEnd > a; }
 
-  // Filter already by top filters/search, then take range
   function eventsInRange(rangeStart, rangeEnd) {
     return filtered.filter(ev => {
       const s = toDate(ev.start); const e = toDate(ev.end);
@@ -224,12 +259,10 @@
   // MONTH VIEW
   function renderMonth() {
     const year = cursorDate.getFullYear();
-    const month = cursorDate.getMonth(); // 0-based
+    const month = cursorDate.getMonth();
 
-    // label
     calLabel.textContent = cursorDate.toLocaleString(undefined,{month:"long", year:"numeric"});
 
-    // First day of grid = Sunday of the week containing the 1st
     const firstOfMonth = new Date(year, month, 1);
     const startDow = firstOfMonth.getDay(); // 0 Sun
     const gridStart = new Date(firstOfMonth);
@@ -238,7 +271,6 @@
 
     const evs = eventsInRange(gridStart, gridEnd);
 
-    // Build a map day -> events (place on start day for simplicity)
     const dayMap = {};
     for (const ev of evs) {
       const d = truncateToDay(toDate(ev.start));
@@ -246,14 +278,12 @@
       (dayMap[key] ||= []).push(ev);
     }
 
-    // Weekday headers
     const weekdays = [];
     for (let i=0;i<7;i++) {
       const d = new Date(gridStart); d.setDate(gridStart.getDate()+i);
       weekdays.push(`<div class="month-head">${d.toLocaleDateString(undefined,{weekday:"short"})}</div>`);
     }
 
-    // Cells
     const cells = [];
     let iter = new Date(gridStart);
     for (let i=0;i<42;i++) {
@@ -264,9 +294,9 @@
 
       const evHtml = items.map(e=>{
         const disable = !canRegister(e) ? "full" : "";
-        return `<button class="month-evt ${disable}" data-id="${esc(e._id)}" title="${esc(e.title || "")}">
+        return `<div class="month-evt ${disable}" data-id="${esc(e._id)}" title="${esc(e.title || "")}">
                   ${esc(e.title || "Event")}
-                </button>`;
+                </div>`;
       }).join("");
 
       cells.push(`
@@ -278,21 +308,14 @@
       iter.setDate(iter.getDate()+1);
     }
 
-    containerCal.innerHTML = `
-      <div class="month-grid">
-        ${weekdays.join("")}
-        ${cells.join("")}
-      </div>
-    `;
-
-    wireRegisterButtons();
+    containerCal.innerHTML = `<div class="month-grid">${weekdays.join("")}${cells.join("")}</div>`;
+    wireEventOpeners();
     containerList.innerHTML = "";
   }
 
   // ----------------------------------------------------
   // WEEK VIEW
   function renderWeek() {
-    // Start of week (Sunday)
     const start = new Date(cursorDate);
     start.setDate(start.getDate() - start.getDay());
     start.setHours(0,0,0,0);
@@ -302,15 +325,12 @@
       `${start.toLocaleDateString(undefined,{month:"short",day:"numeric"})} – ${new Date(end-1).toLocaleDateString(undefined,{month:"short",day:"numeric",year:"numeric"})}`;
 
     const evs = eventsInRange(start, end);
-
-    // Hours to show
     const hours = Array.from({length:13}, (_,i)=> i+7); // 07:00 - 19:00
 
-    // Build columns for each day
     const cols = [];
     for (let d=0; d<7; d++) {
       const dayDate = new Date(start); dayDate.setDate(start.getDate()+d);
-      const dayStart = new Date(dayDate); // 00:00
+      const dayStart = new Date(dayDate);
       const dayEnd = new Date(dayDate); dayEnd.setDate(dayEnd.getDate()+1);
 
       const dayEvents = evs.filter(e => {
@@ -320,50 +340,37 @@
 
       const slots = hours.map(()=>`<div class="time-slot"></div>`).join("");
 
-      // events as pills positioned by hour (simple approximation)
       const pills = dayEvents.map(e=>{
         const s = toDate(e.start), ee = toDate(e.end);
         const startHour = Math.max(0, (s.getHours() - hours[0]) + s.getMinutes()/60);
         const durHours = Math.max(0.7, ((ee - s) / (1000*60*60)));
-        const top = Math.min(hours.length-0.7, startHour) * 44; // 44px per slot
+        const top = Math.min(hours.length-0.7, startHour) * 44;
         const height = Math.min(hours.length*44 - top - 4, Math.max(20, durHours*44 - 6));
         const full = !canRegister(e) ? "full" : "";
-        return `<button class="evt-pill ${full}" data-id="${esc(e._id)}"
-                       style="top:${top+2}px;height:${height}px"
-                       title="${esc(e.title || "")}">
+        return `<div class="evt-pill ${full}" data-id="${esc(e._id)}" style="top:${top+2}px;height:${height}px" title="${esc(e.title || "")}">
                   ${esc(e.title || "Event")}
-                </button>`;
+                </div>`;
       }).join("");
 
-      cols.push(`
-        <div class="time-col position-relative">
-          ${slots}
-          ${pills}
-        </div>
-      `);
+      cols.push(`<div class="time-col position-relative">${slots}${pills}</div>`);
     }
 
-    // Header row
     const heads = ['','Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map((name,idx)=>{
       if (idx===0) return `<div class="time-head"></div>`;
       const d = new Date(start); d.setDate(start.getDate()+idx-1);
       return `<div class="time-head">${name}<br><span class="muted">${d.getMonth()+1}/${d.getDate()}</span></div>`;
     }).join("");
 
-    // Hour labels
     const labels = hours.map(h=>`<div class="slot-label">${String(h).padStart(2,"0")}:00</div>`).join("");
 
     containerCal.innerHTML = `
       <div class="time-grid">
         ${heads}
-        <div class="time-col">
-          ${labels}
-        </div>
+        <div class="time-col">${labels}</div>
         ${cols.join("")}
       </div>
     `;
-
-    wireRegisterButtons();
+    wireEventOpeners();
     containerList.innerHTML = "";
   }
 
@@ -386,80 +393,128 @@
       const top = Math.min(hours.length-0.7, startHour) * 44;
       const height = Math.min(hours.length*44 - top - 4, Math.max(20, durHours*44 - 6));
       const full = !canRegister(e) ? "full" : "";
-      return `<button class="evt-pill ${full}" data-id="${esc(e._id)}"
-                     style="top:${top+2}px;height:${height}px"
-                     title="${esc(e.title || "")}">
+      return `<div class="evt-pill ${full}" data-id="${esc(e._id)}" style="top:${top+2}px;height:${height}px" title="${esc(e.title || "")}">
                 ${esc(e.title || "Event")}
-              </button>`;
+              </div>`;
     }).join("");
 
-    // Header
     const head = `
       <div class="time-head"></div>
       <div class="time-head" style="grid-column: span 7; text-align:left;">
         ${fmtDate(start)}
       </div>`;
 
-    // Hour labels
     const labels = hours.map(h=>`<div class="slot-label">${String(h).padStart(2,"0")}:00</div>`).join("");
 
     containerCal.innerHTML = `
       <div class="time-grid">
         ${head}
-        <div class="time-col">
-          ${labels}
-        </div>
+        <div class="time-col">${labels}</div>
         <div class="time-col position-relative" style="grid-column: span 7;">
           ${slots}
           ${pills}
         </div>
       </div>
     `;
-
-    wireRegisterButtons();
+    wireEventOpeners();
     containerList.innerHTML = "";
   }
 
   // ----------------------------------------------------
-  // Shared: wire clicks for register from any view (list or calendar)
-  function wireRegisterButtons() {
-    const selector = ".btn-register, .month-evt, .evt-pill";
-    document.querySelectorAll(selector).forEach(btn => {
-      btn.addEventListener("click", () => {
-        const id = btn.getAttribute("data-id");
+  // Wire openers (list cards, month-evt, evt-pills) → open Event Details modal
+  function wireEventOpeners() {
+    const selector = ".event-card, .month-evt, .evt-pill";
+    document.querySelectorAll(selector).forEach(el => {
+      el.addEventListener("click", () => {
+        const id = el.getAttribute("data-id");
         const ev = allEvents.find(x => x._id === id);
         if (!ev) return;
-        regTarget = ev;
-
-        const s = toDate(ev.start), e = toDate(ev.end);
-        regEventSummary.innerHTML = `
-          <div><strong>${esc(ev.title || "")}</strong></div>
-          <div class="text-secondary small">${esc(ev.resourceName || "")} · ${esc(ev.branch || "")}</div>
-          <div class="text-secondary small">${esc(fmtDateTime(s))} – ${esc(fmtDateTime(e))}</div>
-        `;
-
-        attendeeName.value = "";
-        attendeeEmail.value = "";
-        clearAlerts();
-        btnSubmitReg.disabled = false;
-        regBusy.classList.add("d-none");
-
-        regModal.show();
-      }, { once: true }); // guard from double-binding after re-render
+        detailTarget = ev;
+        showEventModal(ev);
+      }, { once: true });
     });
   }
+
+  // Populate and show Event Details modal
+  function showEventModal(ev) {
+    const s = toDate(ev.start), e = toDate(ev.end);
+
+    evTitleEl.textContent = ev.title || "Untitled Event";
+
+    const metaBits = [];
+    if (ev.resourceName) metaBits.push(`<span class="badge badge-room"><i class="bi bi-building me-1"></i>${esc(ev.resourceName)}</span>`);
+    if (ev.branch) metaBits.push(`<span class="badge badge-branch">${esc(ev.branch)}</span>`);
+    evMetaEl.innerHTML = metaBits.join(" ");
+
+    evDateLineEl.textContent = `${fmtDateTime(s)} – ${fmtDateTime(e)}`;
+
+    // capacity/remaining
+    const remaining = (typeof ev.remaining === "number") ? ev.remaining : null;
+    const capacity  = (typeof ev.capacity === "number") ? ev.capacity : null;
+    evCapacityEl.textContent = (remaining != null && capacity != null)
+      ? `${remaining}/${capacity} seats left`
+      : (remaining != null ? `${remaining} seats left` : "");
+
+    // description (plain)
+    const shortDesc = (ev.description || "").trim();
+    if (shortDesc) {
+      evShortDesc.style.display = "";
+      evShortDesc.textContent = shortDesc;
+    } else {
+      evShortDesc.style.display = "none";
+      evShortDesc.textContent = "";
+    }
+
+    // detailDescription (HTML)
+    const rich = (ev.detailDescription || "").trim();
+    if (rich) {
+      evDetailDesc.style.display = "";
+      evDetailDesc.innerHTML = sanitizeTrustedHtml(rich);
+    } else {
+      evDetailDesc.style.display = "none";
+      evDetailDesc.innerHTML = "";
+    }
+
+    // Register button state
+    const allowed = canRegister(ev);
+    btnOpenRegister.disabled = !allowed;
+    btnOpenRegister.title = allowed ? "Register for this event" : "Registration closed or full";
+
+    eventModal.show();
+  }
+
+  // Open Register modal from Event Details modal
+  btnOpenRegister.addEventListener("click", () => {
+    if (!detailTarget) return;
+    regTarget = detailTarget;
+
+    const s = toDate(regTarget.start), e = toDate(regTarget.end);
+    regEventSummary.innerHTML = `
+      <div><strong>${esc(regTarget.title || "")}</strong></div>
+      <div class="text-secondary small">${esc(regTarget.resourceName || "")} · ${esc(regTarget.branch || "")}</div>
+      <div class="text-secondary small">${esc(fmtDateTime(s))} – ${esc(fmtDateTime(e))}</div>
+    `;
+    attendeeName.value = "";
+    attendeeEmail.value = "";
+    clearAlerts();
+    btnSubmitReg.disabled = false;
+    regBusy.classList.add("d-none");
+
+    // keep details modal open or close? UX: close it to focus on form
+    eventModal.hide();
+    setTimeout(()=> regModal.show(), 150);
+  });
 
   // ----------------------------------------------------
   // Data load with index fallbacks
   async function loadResources() {
     const col = window.db.collection("resources");
     try {
-      // Preferred (needs composite index: branch asc, name asc)
       const snap = await col.orderBy("branch","asc").orderBy("name","asc").get();
       resources = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     } catch (err) {
       console.warn("resources index missing; falling back to client sort:", err);
-      const snap = await col.get(); // no order; client sort
+      const snap = await col.get();
       resources = snap.docs.map(d => ({ id: d.id, ...d.data() }))
         .sort((a,b) => (String(a.branch||"").localeCompare(String(b.branch||"")) ||
                         String(a.name||"").localeCompare(String(b.name||""))));
@@ -619,8 +674,6 @@
       const d = new Date(cursorDate); d.setDate(d.getDate()-7); cursorDate = truncateToDay(d);
     } else if (currentView === "day") {
       const d = new Date(cursorDate); d.setDate(d.getDate()-1); cursorDate = truncateToDay(d);
-    } else {
-      // list view ignores prev/next (optional: implement month paging for list)
     }
     render();
   }
@@ -631,8 +684,6 @@
       const d = new Date(cursorDate); d.setDate(d.getDate()+7); cursorDate = truncateToDay(d);
     } else if (currentView === "day") {
       const d = new Date(cursorDate); d.setDate(d.getDate()+1); cursorDate = truncateToDay(d);
-    } else {
-      // list view ignores prev/next
     }
     render();
   }
@@ -645,8 +696,8 @@
       return;
     }
 
-    await loadResources();          // uses fallback if index missing
-    attachEventsListener();         // sets live listener with fallback
+    await loadResources();
+    attachEventsListener();
 
     // Wire filters/search
     branchFilter.addEventListener("change", applyFilter);

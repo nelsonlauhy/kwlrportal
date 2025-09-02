@@ -21,7 +21,8 @@
 
     /* List view */
     .month-header { font-weight:700; font-size:1.1rem; margin:1.25rem 0 .5rem; color:#334155; }
-    .event-card { border:1px solid #e9ecef; border-radius:.75rem; padding:1rem; background:#fff; }
+    .event-card { border:1px solid #e9ecef; border-radius:.75rem; padding:1rem; background:#fff; cursor:pointer; }
+    .event-card:hover { background:#fafcff; }
     .event-title { font-weight:700; }
     .event-meta { color:#6c757d; font-size:.9rem; }
     .badge-branch { background:#eef2ff; color:#3730a3; }
@@ -39,7 +40,7 @@
     .month-cell{ min-height:120px; border-right:1px solid #f1f5f9; border-top:1px solid #f1f5f9; padding:.35rem; background:#fff; }
     .month-cell.other{ background:#fafafa; color:#94a3b8; }
     .month-day{ font-size:.85rem; font-weight:600; }
-    .month-evt{ display:block; font-size:.8rem; padding:.2rem .35rem; margin:.25rem 0; border-radius:.35rem; border:1px solid #e2e8f0; background:#ffffff; text-align:left; }
+    .month-evt{ display:block; font-size:.8rem; padding:.2rem .35rem; margin:.25rem 0; border-radius:.35rem; border:1px solid #e2e8f0; background:#ffffff; text-align:left; cursor:pointer; }
     .month-evt.full{ opacity:.6; }
 
     /* Week/Day */
@@ -48,10 +49,11 @@
     .time-col{ border-right:1px solid #f1f5f9; }
     .time-slot{ border-top:1px dashed #f1f5f9; height:44px; position:relative; }
     .slot-label{ font-size:.8rem; color:#64748b; padding:.25rem .5rem; border-top:1px dashed #e2e8f0; height:44px; }
-    .evt-pill{ position:absolute; left:6px; right:6px; top:2px; padding:.25rem .35rem; font-size:.8rem; border-radius:.4rem; background:#e6f4ff; border:1px solid #bfdbfe; overflow:hidden; white-space:nowrap; text-overflow:ellipsis;}
+    .evt-pill{ position:absolute; left:6px; right:6px; top:2px; padding:.25rem .35rem; font-size:.8rem; border-radius:.4rem; background:#e6f4ff; border:1px solid #bfdbfe; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; cursor:pointer;}
     .evt-pill.full{ background:#f1f5f9; border-color:#e2e8f0; }
 
-    /* Tiny helpers */
+    /* Modal content helpers */
+    .event-detail-meta .badge { margin-right:.35rem; }
     .muted{ color:#94a3b8; }
   </style>
 </head>
@@ -111,7 +113,38 @@
     </div>
   </main>
 
-  <!-- Registration Modal -->
+  <!-- Event Details Modal (NEW) -->
+  <div class="modal fade" id="eventModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title"><span id="evTitle"></span></h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+
+        <div class="modal-body">
+          <div class="event-detail-meta mb-2 text-secondary small" id="evMeta"></div>
+          <div class="mb-3 small text-secondary" id="evDateLine"></div>
+
+          <!-- Plain description (one-line summary) -->
+          <div class="mb-3" id="evShortDesc" style="display:none;"></div>
+
+          <!-- Rich detailDescription (HTML allowed) -->
+          <div class="border-top pt-3" id="evDetailDesc" style="display:none;"></div>
+        </div>
+
+        <div class="modal-footer">
+          <div class="me-auto small text-muted" id="evCapacity"></div>
+          <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Close</button>
+          <button type="button" class="btn btn-primary btn-sm" id="btnOpenRegister">
+            <i class="bi bi-pencil-square me-1"></i> Register
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Registration Modal (existing) -->
   <div class="modal fade" id="regModal" tabindex="-1" aria-labelledby="regModalLabel" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered">
       <form class="modal-content" id="regForm">
@@ -161,4 +194,3 @@
   <script src="./js/events_public.js" defer></script>
 </body>
 </html>
-
