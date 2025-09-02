@@ -1,20 +1,47 @@
 <!-- /partials/navbar.html -->
+<!-- /partials/navbar.html -->
 <nav id="appNav" class="navbar navbar-expand-lg navbar-light bg-white shadow-sm px-3 d-none">
-  <a class="navbar-brand fw-semibold" href="#home">
+  <a class="navbar-brand fw-semibold" href="/#home">
     <img src="/images/logos2square.png" alt="Logo" height="40" class="me-2" style="border: 1px solid #ccc;">
     KW Living Portal
   </a>
-  <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+
+  <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav"
+          aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
     <span class="navbar-toggler-icon"></span>
   </button>
 
   <div class="collapse navbar-collapse" id="navbarNav">
+    <!-- Portal menu -->
     <ul class="navbar-nav me-auto">
-      <li class="nav-item"><a class="nav-link" href="/directory.html">Company Directory</a></li>
-      <li class="nav-item"><a class="nav-link" href="/agentlist.html">Agent List</a></li>
-      <li class="nav-item"><a class="nav-link" href="#events">Event Booking</a></li>
+      <li class="nav-item">
+        <a class="nav-link" href="/directory.html">Company Directory</a>
+      </li>
+
+      <li class="nav-item">
+        <a class="nav-link" href="/agentlist.html">Agent List</a>
+      </li>
+
+      <!-- Event Booking dropdown -->
+      <li class="nav-item dropdown">
+        <a class="nav-link dropdown-toggle" href="#" id="eventsDropdown" role="button"
+           data-bs-toggle="dropdown" aria-expanded="false">
+          Event Booking
+        </a>
+        <ul class="dropdown-menu" aria-labelledby="eventsDropdown">
+          <li>
+            <!-- Admin (requires login; opens in same tab) -->
+            <a class="dropdown-item" href="/events-admin.html">Events Admin</a>
+          </li>
+          <li>
+            <!-- Public (no login; open new tab/window) -->
+            <a class="dropdown-item" href="/events-public.html" target="_blank" rel="noopener">Events Public</a>
+          </li>
+        </ul>
+      </li>
     </ul>
 
+    <!-- Right side: profile + logout -->
     <ul class="navbar-nav ms-auto">
       <li class="nav-item me-3 d-flex align-items-center">
         <span id="navUser" class="text-muted small"></span>
@@ -25,4 +52,5 @@
     </ul>
   </div>
 </nav>
+
 
