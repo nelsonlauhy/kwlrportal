@@ -1,6 +1,8 @@
 // Public Events list + Registration (Firestore v8) with index fallbacks
-// Views: Month / Week / Day / List.  Clicking an event opens Event Details modal,
+// Views: Month / Week / Day / List. Clicking an event opens Event Details modal,
 // which shows rich `detailDescription` (HTML) and a Register button.
+//
+// Fix: use event delegation so events can be opened repeatedly after re-renders.
 
 (function() {
   // --- DOM
@@ -107,9 +109,6 @@
       [...el.attributes].forEach(attr => {
         const name = attr.name.toLowerCase();
         if (name.startsWith("on")) el.removeAttribute(attr.name);
-        if (el.tagName === "A" && name === "href") {
-          // noop
-        }
       });
       if (el.tagName === "A") {
         // force safe target
@@ -190,10 +189,10 @@
       for (const e of g.events) parts.push(renderEventCard(e));
     });
     containerList.innerHTML = parts.join("");
-    wireEventOpeners();
+    // (No per-item binding here; use event delegation below)
   }
 
-  // Card no longer shows Register button; click opens Event Details modal
+  // Card click opens Event Details modal (via delegation). No inline Register button on card.
   function renderEventCard(e) {
     const start = toDate(e.start);
     const end   = toDate(e.end);
@@ -309,7 +308,7 @@
     }
 
     containerCal.innerHTML = `<div class="month-grid">${weekdays.join("")}${cells.join("")}</div>`;
-    wireEventOpeners();
+    // (No per-item binding; delegation used)
     containerList.innerHTML = "";
   }
 
@@ -370,7 +369,7 @@
         ${cols.join("")}
       </div>
     `;
-    wireEventOpeners();
+    // Delegation used; no per-item binding
     containerList.innerHTML = "";
   }
 
@@ -416,23 +415,34 @@
         </div>
       </div>
     `;
-    wireEventOpeners();
+    // Delegation used; no per-item binding
     containerList.innerHTML = "";
   }
 
   // ----------------------------------------------------
-  // Wire openers (list cards, month-evt, evt-pills) → open Event Details modal
-  function wireEventOpeners() {
-    const selector = ".event-card, .month-evt, .evt-pill";
-    document.querySelectorAll(selector).forEach(el => {
-      el.addEventListener("click", () => {
-        const id = el.getAttribute("data-id");
-        const ev = allEvents.find(x => x._id === id);
-        if (!ev) return;
-        detailTarget = ev;
-        showEventModal(ev);
-      }, { once: true });
-    });
+  // Delegated open handler for event details (click + keyboard)
+  const CLICK_OPEN_SELECTOR = ".event-card, .month-evt, .evt-pill";
+
+  function handleOpenEventFromClick(e) {
+    const el = e.target.closest(CLICK_OPEN_SELECTOR);
+    if (!el) return;
+    const id = el.getAttribute("data-id");
+    const ev = allEvents.find(x => x._id === id);
+    if (!ev) return;
+    detailTarget = ev;
+    showEventModal(ev);
+  }
+
+  function handleOpenEventFromKey(e) {
+    // allow Enter on list cards
+    if (e.key !== "Enter") return;
+    const el = e.target.closest(".event-card[role='button']");
+    if (!el) return;
+    const id = el.getAttribute("data-id");
+    const ev = allEvents.find(x => x._id === id);
+    if (!ev) return;
+    detailTarget = ev;
+    showEventModal(ev);
   }
 
   // Populate and show Event Details modal
@@ -500,7 +510,6 @@
     btnSubmitReg.disabled = false;
     regBusy.classList.add("d-none");
 
-    // keep details modal open or close? UX: close it to focus on form
     eventModal.hide();
     setTimeout(()=> regModal.show(), 150);
   });
@@ -717,5 +726,10 @@
     btnToday.addEventListener("click", gotoToday);
     btnPrev.addEventListener("click", prevPeriod);
     btnNext.addEventListener("click", nextPeriod);
+
+    // === Event delegation: attach once on containers ===
+    containerList.addEventListener("click", handleOpenEventFromClick);
+    containerCal.addEventListener("click", handleOpenEventFromClick);
+    containerList.addEventListener("keydown", handleOpenEventFromKey);
   });
 })();
