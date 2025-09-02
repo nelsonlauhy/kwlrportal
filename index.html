@@ -132,37 +132,15 @@
     </div>
   </div>
 
-  <!-- Bootstrap JS -->
-  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<!-- 先載入 Bootstrap & MSAL -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@2.39.0/lib/msal-browser.min.js"></script>
 
-  <!-- MSAL -->
-  <script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@2.39.0/lib/msal-browser.min.js"></script>
+<!-- 然後載入 partials（不要加 defer）-->
+<script src="/js/include.js"></script>
 
-  <!-- Your scripts -->
-  <script src="./js/auth.js" defer></script>
-  <script src="./js/app.js" defer></script>
-
-  <script>
-    // Auto trigger login after 2 seconds, but only once per session and only if not signed in
-    window.addEventListener("load", function () {
-      setTimeout(() => {
-        try {
-          const alreadyTried = sessionStorage.getItem("kwlr_auto_login_done") === "1";
-          const isSignedIn =
-            window._auth &&
-            typeof window._auth.getActiveAccount === "function" &&
-            !!window._auth.getActiveAccount();
-
-          if (!alreadyTried && !isSignedIn) {
-            sessionStorage.setItem("kwlr_auto_login_done", "1");
-            const btn = document.getElementById("btnLogin");
-            if (btn) btn.click();
-          }
-        } catch (e) {
-          console.error("Auto-login guard error:", e);
-        }
-      }, 2000);
-    });
-  </script>
+<!-- 再到你自己啲邏輯（可以用 defer） -->
+<script src="/js/auth.js" defer></script>
+<script src="/js/app.js" defer></script>
 </body>
 </html>
