@@ -114,10 +114,8 @@
             </div>
             <div class="col-md-8">
               <label class="form-label">Resource</label>
-              <select id="f_resourceId" class="form-select">
-                <!-- filled by JS -->
-              </select>
-              <div class="form-hint">選擇後會自動帶出 Resource 名稱與預設容量</div>
+              <select id="f_resourceId" class="form-select"></select>
+              <div class="form-hint">Selecting a resource will autofill name & default capacity.</div>
             </div>
 
             <div class="col-md-6">
@@ -135,8 +133,9 @@
             </div>
 
             <div class="col-md-12">
-              <label class="form-label">Detail Description (HTML allowed)</label>
-              <textarea class="form-control" id="f_detailDescription" rows="5" placeholder="<p>Click <a href='...'>here</a> ..."></textarea>
+              <label class="form-label">Detail Description (paste plain text; URLs auto-link)</label>
+              <textarea class="form-control" id="f_detailDescription" rows="6" placeholder="Paste Zoom invite or any text..."></textarea>
+              <div class="form-hint mt-1">Line breaks will be kept. Links are detected automatically.</div>
             </div>
 
             <div class="col-md-4">
@@ -224,9 +223,6 @@
   <!-- Your Firebase config (defines window.db) -->
   <script src="./js/firebaseConfig.js"></script>
 
-  <!-- Markdown parser -->
-  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-  
   <!-- Page Logic -->
   <script src="./js/events_admin.js" defer></script>
 </body>

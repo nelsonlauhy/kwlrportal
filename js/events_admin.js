@@ -1,5 +1,6 @@
 // Events Admin (Firestore v8) - List view only
-// Manage: create / update / delete events with Markdown in detailDescription
+// Manage: create / update / delete events
+// detailDescription: user pastes plain TEXT; we convert to safe HTML (auto-link + <br>)
 (function() {
   // --- DOM
   const containerList = document.getElementById("eventsContainer");
@@ -52,6 +53,37 @@
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, m => (
     { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[m]
   ));
+
+  // Convert plain text -> safe HTML: escape, linkify, keep <br>
+  function textToHtml(text) {
+    if (!text) return "";
+    // escape first
+    let safe = esc(text);
+    // linkify http/https (avoid matching trailing punctuation)
+    safe = safe.replace(
+      /(https?:\/\/[^\s<>"')\]]+)/g,
+      (m) => `<a href="${m}" target="_blank" rel="noopener noreferrer">${m}</a>`
+    );
+    // convert newlines
+    safe = safe.replace(/\r\n|\r|\n/g, "<br>");
+    return safe;
+  }
+
+  // Convert simple HTML -> plain text for editing (best-effort)
+  function htmlToPlain(html) {
+    if (!html) return "";
+    let s = html;
+    // anchors -> href (prefer showing the URL)
+    s = s.replace(/<a [^>]*href="([^"]+)"[^>]*>.*?<\/a>/gi, "$1");
+    // <br> -> \n
+    s = s.replace(/<br\s*\/?>/gi, "\n");
+    // block closers -> \n
+    s = s.replace(/<\/(p|div|li|h[1-6])>/gi, "\n");
+    // strip tags
+    const tmp = document.createElement("div");
+    tmp.innerHTML = s;
+    return (tmp.textContent || tmp.innerText || "").replace(/\u00A0/g, " ").trim();
+  }
 
   function toDate(ts) {
     if (!ts) return null;
@@ -117,7 +149,7 @@
   }
 
   // ----------------------------------------------------
-  // Listen events
+  // Listen events (future only)
   function attachEventsListener() {
     const now = new Date();
     window.db.collection("events")
@@ -143,7 +175,8 @@
       if (brSel !== "ALL" && br !== brSel) return false;
       if (resSel !== "ALL" && ev.resourceId !== resSel) return false;
       if (!q) return true;
-      const detailTxt = stripHtmlToText(marked.parse(ev.detailDescription || ""));
+
+      const detailTxt = stripHtmlToText(ev.detailDescription || "");
       const hay = [ev.title, ev.description, ev.resourceName, ev.branch, detailTxt]
         .map(v => (v || "").toString().toLowerCase());
       return hay.some(v => v.includes(q));
@@ -187,11 +220,10 @@
     const s = toDate(e.start), ed = toDate(e.end);
     const dateLine = `${fmtDateTime(s)} – ${fmtDateTime(ed)}`;
     const remainTxt = (typeof e.remaining === "number" && typeof e.capacity === "number")
-      ? `${e.remaining}/${e.capacity} left` : "";
+      ? `${e.remaining}/${e.capacity} left` : (typeof e.remaining === "number" ? `${e.remaining} left` : "");
 
-    // Use markdown for preview (strip HTML to text)
-    const md = e.detailDescription || "";
-    const previewSrc = e.description || stripHtmlToText(marked.parse(md));
+    // preview from HTML -> text
+    const previewSrc = e.description || stripHtmlToText(e.detailDescription || "");
     const preview = previewSrc ? esc(previewSrc).slice(0,180) + (previewSrc.length>180 ? "…" : "") : "";
 
     return `
@@ -204,14 +236,16 @@
               ${e.resourceName ? `<span class="badge badge-room me-2"><i class="bi bi-building me-1"></i>${esc(e.resourceName)}</span>` : ""}
               ${e.branch ? `<span class="badge badge-branch me-2">${esc(e.branch)}</span>` : ""}
               ${e.status ? `<span class="badge text-bg-light border">${esc(e.status)}</span>` : ""}
+              ${e.visibility ? `<span class="badge text-bg-light border">${esc(e.visibility)}</span>` : ""}
             </div>
             ${preview ? `<div class="mt-2 text-secondary">${preview}</div>` : ""}
           </div>
+
           <div class="text-end">
             ${remainTxt ? `<div class="small text-muted mb-2">${esc(remainTxt)}</div>` : ""}
             <div class="btn-group btn-group-sm">
-              <button class="btn btn-outline-secondary btn-edit" data-id="${esc(e._id)}">Edit</button>
-              <button class="btn btn-outline-danger btn-del" data-id="${esc(e._id)}">Delete</button>
+              <button class="btn btn-outline-secondary btn-edit" data-id="${esc(e._id)}"><i class="bi bi-pencil-square me-1"></i>Edit</button>
+              <button class="btn btn-outline-danger btn-del" data-id="${esc(e._id)}"><i class="bi bi-trash me-1"></i>Delete</button>
             </div>
           </div>
         </div>
@@ -239,6 +273,9 @@
 
   function openEdit(row) {
     editingId = row?._id || null;
+    editErr.classList.add("d-none"); editErr.textContent = "";
+    editOk.classList.add("d-none");
+
     editTitleEl.textContent = editingId ? "Edit Event" : "New Event";
     f_title.value = row?.title || "";
     f_status.value = row?.status || "draft";
@@ -248,7 +285,10 @@
     f_start.value = toLocalInputValue(toDate(row?.start));
     f_end.value   = toLocalInputValue(toDate(row?.end));
     f_description.value = row?.description || "";
-    f_detailDescription.value = row?.detailDescription || ""; // keep raw Markdown
+
+    // Show plain text to the user (convert HTML back to text for editing)
+    f_detailDescription.value = htmlToPlain(row?.detailDescription || "");
+
     f_allowRegistration.value = String(row?.allowRegistration !== false);
     f_capacity.value = (row?.capacity ?? "");
     f_remaining.value = (row?.remaining ?? "");
@@ -264,18 +304,26 @@
     btnSave.disabled = true; editBusy.classList.remove("d-none");
 
     try {
+      const title = f_title.value.trim();
+      if (!title) throw new Error("Title is required.");
+
       const start = fromLocalInputValue(f_start.value);
       const end   = fromLocalInputValue(f_end.value);
+      if (!start || !end || end <= start) throw new Error("Invalid start/end time.");
+
+      // *** Convert the pasted text to HTML here ***
+      const detailHtml = textToHtml(f_detailDescription.value || "");
+
       const data = {
-        title: f_title.value.trim(),
-        status: f_status.value,
-        branch: f_branch.value,
+        title,
+        status: f_status.value || "draft",
+        branch: f_branch.value || "",
         resourceId: f_resourceId.value || null,
         resourceName: f_resourceName.value || null,
         start: firebase.firestore.Timestamp.fromDate(start),
         end: firebase.firestore.Timestamp.fromDate(end),
         description: f_description.value || "",
-        detailDescription: f_detailDescription.value || "", // raw Markdown
+        detailDescription: detailHtml, // stored as HTML
         allowRegistration: (f_allowRegistration.value === "true"),
         capacity: f_capacity.value ? Number(f_capacity.value) : null,
         remaining: f_remaining.value ? Number(f_remaining.value) : null,
@@ -290,6 +338,10 @@
         await col.doc(editingId).update(data);
       } else {
         data.createdAt = new Date();
+        // default remaining to capacity if not provided
+        if (data.remaining == null && typeof data.capacity === "number") {
+          data.remaining = data.capacity;
+        }
         const doc = await col.add(data);
         await col.doc(doc.id).update({ id: doc.id });
       }
@@ -307,8 +359,9 @@
   // ----------------------------------------------------
   // Delete
   function openDelete(row) {
-    deletingId = row._id;
-    delMsg.innerHTML = `Delete <strong>${esc(row.title || "")}</strong>?`;
+    deletingId = row?._id || null;
+    delErr.classList.add("d-none"); delErr.textContent = "";
+    delMsg.innerHTML = `Delete <strong>${esc(row?.title || "")}</strong>?`;
     delModal.show();
   }
 
@@ -327,14 +380,26 @@
   });
 
   // ----------------------------------------------------
+  // Filters
+  branchFilter.addEventListener("change", applyFilter);
+  resourceFilter.addEventListener("change", applyFilter);
+  searchInput.addEventListener("input", () => {
+    clearTimeout(searchInput._t);
+    searchInput._t = setTimeout(applyFilter, 120);
+  });
+
+  // ----------------------------------------------------
   // Init
   document.addEventListener("DOMContentLoaded", async () => {
     if (!window.db) {
       containerList.innerHTML = `<div class="text-danger py-4 text-center">Firestore not initialized.</div>`;
       return;
     }
+
     await loadResources();
     wireResourceAutoFill();
-    attachEventsListener();
+    attachEventsListener(); // live updates
+
+    btnNew.disabled = false;
   });
 })();
