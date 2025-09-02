@@ -143,11 +143,25 @@
   <script src="./js/app.js" defer></script>
 
   <script>
-    // Auto trigger login after 2 seconds
+    // Auto trigger login after 2 seconds, but only once per session and only if not signed in
     window.addEventListener("load", function () {
       setTimeout(() => {
-        document.getElementById("btnLogin").click();
-      }, 1000);
+        try {
+          const alreadyTried = sessionStorage.getItem("kwlr_auto_login_done") === "1";
+          const isSignedIn =
+            window._auth &&
+            typeof window._auth.getActiveAccount === "function" &&
+            !!window._auth.getActiveAccount();
+
+          if (!alreadyTried && !isSignedIn) {
+            sessionStorage.setItem("kwlr_auto_login_done", "1");
+            const btn = document.getElementById("btnLogin");
+            if (btn) btn.click();
+          }
+        } catch (e) {
+          console.error("Auto-login guard error:", e);
+        }
+      }, 2000);
     });
   </script>
 </body>
