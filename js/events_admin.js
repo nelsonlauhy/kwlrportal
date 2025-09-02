@@ -2,6 +2,7 @@
 // Manage: create / update / delete events
 // detailDescription: user pastes plain TEXT; we convert to safe HTML (auto-link + <br>)
 // Includes a live Preview under the textarea and conflict prevention for same room/branch/time.
+// Now also shows an inline error left of the Save button.
 (function() {
   // --- DOM
   const containerList = document.getElementById("eventsContainer");
@@ -15,7 +16,8 @@
   const editModal    = new bootstrap.Modal(document.getElementById("editModal"));
   const editTitleEl  = document.getElementById("editTitle");
   const editForm     = document.getElementById("editForm");
-  const editErr      = document.getElementById("editErr");
+  const editErr      = document.getElementById("editErr");           // top alert (in body)
+  const editErrInline= document.getElementById("editErrInline");     // inline error (footer, left of Save)
   const editOk       = document.getElementById("editOk");
   const editBusy     = document.getElementById("editBusy");
   const btnSave      = document.getElementById("btnSave");
@@ -59,14 +61,11 @@
   // Convert plain text -> safe HTML: escape, linkify, keep <br>
   function textToHtml(text) {
     if (!text) return "";
-    // escape first
     let safe = esc(text);
-    // linkify http/https (avoid matching trailing punctuation)
     safe = safe.replace(
       /(https?:\/\/[^\s<>"')\]]+)/g,
       (m) => `<a href="${m}" target="_blank" rel="noopener noreferrer">${m}</a>`
     );
-    // convert newlines
     safe = safe.replace(/\r\n|\r|\n/g, "<br>");
     return safe;
   }
@@ -75,13 +74,9 @@
   function htmlToPlain(html) {
     if (!html) return "";
     let s = html;
-    // anchors -> href (prefer showing the URL)
     s = s.replace(/<a [^>]*href="([^"]+)"[^>]*>.*?<\/a>/gi, "$1");
-    // <br> -> \n
     s = s.replace(/<br\s*\/?>/gi, "\n");
-    // block closers -> \n
     s = s.replace(/<\/(p|div|li|h[1-6])>/gi, "\n");
-    // strip tags
     const tmp = document.createElement("div");
     tmp.innerHTML = s;
     return (tmp.textContent || tmp.innerText || "").replace(/\u00A0/g, " ").trim();
@@ -120,8 +115,6 @@
 
   // ----------------------------------------------------
   // Conflict detection (same branch + resource, overlapping time)
-  // Conflict rule: existing.start < newEnd && existing.end > newStart
-  // Returns the first conflicting event (or null)
   async function findTimeConflict({ branch, resourceId, startTS, endTS, excludeId }) {
     const col = window.db.collection("events");
     let snap;
@@ -135,7 +128,6 @@
         .get();
     } catch (err) {
       console.warn("conflict query missing index; fallback to branch+resource scan:", err);
-      // Fallback (less efficient): branch+resource only, filter in client
       snap = await col
         .where("branch", "==", branch)
         .where("resourceId", "==", resourceId)
@@ -153,8 +145,7 @@
       const e = ev.end?.toDate   ? ev.end.toDate()   : (ev.end   ? new Date(ev.end)   : null);
       if (!s || !e) continue;
 
-      // overlap: s < newEnd && e > newStart
-      if (s < newEnd && e > newStart) return ev;
+      if (s < newEnd && e > newStart) return ev; // overlap
     }
     return null;
   }
@@ -270,7 +261,6 @@
     const remainTxt = (typeof e.remaining === "number" && typeof e.capacity === "number")
       ? `${e.remaining}/${e.capacity} left` : (typeof e.remaining === "number" ? `${e.remaining} left` : "");
 
-    // preview from HTML -> text
     const previewSrc = e.description || stripHtmlToText(e.detailDescription || "");
     const preview = previewSrc ? esc(previewSrc).slice(0,180) + (previewSrc.length>180 ? "…" : "") : "";
 
@@ -319,10 +309,15 @@
 
   btnNew.addEventListener("click", () => openEdit(null));
 
+  function clearEditErrors() {
+    editErr.classList.add("d-none"); editErr.textContent = "";
+    editErrInline.classList.add("d-none"); editErrInline.textContent = "";
+    editOk.classList.add("d-none");
+  }
+
   function openEdit(row) {
     editingId = row?._id || null;
-    editErr.classList.add("d-none"); editErr.textContent = "";
-    editOk.classList.add("d-none");
+    clearEditErrors();
 
     editTitleEl.textContent = editingId ? "Edit Event" : "New Event";
     f_title.value = row?.title || "";
@@ -355,7 +350,7 @@
 
   editForm.addEventListener("submit", async (e) => {
     e.preventDefault();
-    editErr.classList.add("d-none"); editOk.classList.add("d-none");
+    clearEditErrors();
     btnSave.disabled = true; editBusy.classList.remove("d-none");
 
     try {
@@ -403,7 +398,7 @@
         start: startTS,
         end: endTS,
         description: f_description.value || "",
-        detailDescription: detailHtml, // stored as HTML (auto-link + <br>)
+        detailDescription: detailHtml,
         allowRegistration: (f_allowRegistration.value === "true"),
         capacity: f_capacity.value ? Number(f_capacity.value) : null,
         remaining: f_remaining.value ? Number(f_remaining.value) : null,
@@ -425,16 +420,19 @@
         await col.doc(doc.id).update({ id: doc.id });
       }
 
-      // refresh preview (not strictly needed but nice)
       updateDetailPreviewFromTextarea();
-
       editOk.classList.remove("d-none");
       setTimeout(()=> editModal.hide(), 800);
 
     } catch (err) {
       console.error("save error:", err);
-      editErr.textContent = err.message || "Save failed.";
+      // show both places: inline (footer) and top alert
+      const msg = err.message || "Save failed.";
+      editErr.textContent = msg;
       editErr.classList.remove("d-none");
+
+      editErrInline.textContent = msg;
+      editErrInline.classList.remove("d-none");
     } finally {
       btnSave.disabled = false; editBusy.classList.add("d-none");
     }
