@@ -1,6 +1,7 @@
 // Events Admin (Firestore v8) - List view only
 // Manage: create / update / delete events
 // detailDescription: user pastes plain TEXT; we convert to safe HTML (auto-link + <br>)
+// Includes a live Preview under the textarea.
 (function() {
   // --- DOM
   const containerList = document.getElementById("eventsContainer");
@@ -28,6 +29,7 @@
   const f_end   = document.getElementById("f_end");
   const f_description = document.getElementById("f_description");
   const f_detailDescription = document.getElementById("f_detailDescription");
+  const f_detailPreview = document.getElementById("f_detailPreview");
   const f_allowRegistration = document.getElementById("f_allowRegistration");
   const f_capacity = document.getElementById("f_capacity");
   const f_remaining = document.getElementById("f_remaining");
@@ -85,6 +87,10 @@
     return (tmp.textContent || tmp.innerText || "").replace(/\u00A0/g, " ").trim();
   }
 
+  function updateDetailPreviewFromTextarea() {
+    f_detailPreview.innerHTML = textToHtml(f_detailDescription.value || "");
+  }
+
   function toDate(ts) {
     if (!ts) return null;
     if (typeof ts.toDate === "function") return ts.toDate();
@@ -120,6 +126,7 @@
       const snap = await col.orderBy("branch","asc").orderBy("name","asc").get();
       resources = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     } catch (err) {
+      console.warn("resources order index missing; fallback:", err);
       const snap = await col.get();
       resources = snap.docs.map(d=>({ id:d.id, ...d.data() }));
     }
@@ -286,8 +293,11 @@
     f_end.value   = toLocalInputValue(toDate(row?.end));
     f_description.value = row?.description || "";
 
-    // Show plain text to the user (convert HTML back to text for editing)
-    f_detailDescription.value = htmlToPlain(row?.detailDescription || "");
+    // textarea shows plain text; convert stored HTML -> text for editing
+    const storedHtml = row?.detailDescription || "";
+    f_detailDescription.value = htmlToPlain(storedHtml);
+    // show preview as it will be saved again
+    f_detailPreview.innerHTML = textToHtml(f_detailDescription.value || "");
 
     f_allowRegistration.value = String(row?.allowRegistration !== false);
     f_capacity.value = (row?.capacity ?? "");
@@ -295,8 +305,12 @@
     f_regOpensAt.value = toLocalInputValue(toDate(row?.regOpensAt));
     f_regClosesAt.value = toLocalInputValue(toDate(row?.regClosesAt));
     f_visibility.value = row?.visibility || "public";
+
     editModal.show();
   }
+
+  // keep preview in sync as user types/pastes
+  f_detailDescription.addEventListener("input", updateDetailPreviewFromTextarea);
 
   editForm.addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -311,7 +325,7 @@
       const end   = fromLocalInputValue(f_end.value);
       if (!start || !end || end <= start) throw new Error("Invalid start/end time.");
 
-      // *** Convert the pasted text to HTML here ***
+      // Convert the pasted text to HTML that we store
       const detailHtml = textToHtml(f_detailDescription.value || "");
 
       const data = {
@@ -323,7 +337,7 @@
         start: firebase.firestore.Timestamp.fromDate(start),
         end: firebase.firestore.Timestamp.fromDate(end),
         description: f_description.value || "",
-        detailDescription: detailHtml, // stored as HTML
+        detailDescription: detailHtml, // stored as HTML (auto-link + <br>)
         allowRegistration: (f_allowRegistration.value === "true"),
         capacity: f_capacity.value ? Number(f_capacity.value) : null,
         remaining: f_remaining.value ? Number(f_remaining.value) : null,
@@ -338,17 +352,21 @@
         await col.doc(editingId).update(data);
       } else {
         data.createdAt = new Date();
-        // default remaining to capacity if not provided
         if (data.remaining == null && typeof data.capacity === "number") {
           data.remaining = data.capacity;
         }
         const doc = await col.add(data);
         await col.doc(doc.id).update({ id: doc.id });
       }
+
+      // refresh preview (not strictly needed but nice)
+      updateDetailPreviewFromTextarea();
+
       editOk.classList.remove("d-none");
       setTimeout(()=> editModal.hide(), 800);
 
     } catch (err) {
+      console.error("save error:", err);
       editErr.textContent = err.message || "Save failed.";
       editErr.classList.remove("d-none");
     } finally {
@@ -372,6 +390,7 @@
       await window.db.collection("events").doc(deletingId).delete();
       delModal.hide();
     } catch (err) {
+      console.error("delete error:", err);
       delErr.textContent = err.message || "Delete failed.";
       delErr.classList.remove("d-none");
     } finally {
