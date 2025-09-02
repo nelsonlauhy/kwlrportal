@@ -69,7 +69,7 @@
 </head>
 <body class="bg-light">
 
-  <!-- NAVBAR partial-->
+  <!-- NAVBAR partial -->
   <div data-include="/partials/navbar.html"></div>
 
   <!-- CONTENT -->
@@ -82,24 +82,23 @@
       </h3>
 
       <!-- Controls (one row) -->
-        <div class="control-row">
-
+      <div class="control-row">
         <!-- Office dropdown (reduced width) -->
         <select id="officeFilter" class="form-select filter-control shrink" style="width: 160px;">
-            <option value="ALL">All Offices</option>
-            <option value="LRI HO">LRI HO</option>
-            <option value="LRI NM">LRI NM</option>
-            <option value="LRI MS">LRI MS</option>
-            <option value="LRI WB">LRI WB</option>
-            <option value="LRI YE">LRI YE</option>
-            <option value="ICI">ICI</option>
-            <option value="LPI HO">LPI HO</option>
-            <option value="LPI AT">LPI AT</option>
-            <option value="LPI CT">LPI CT</option>
-            <option value="LPI EQ1">LPI EQ1</option>
-            <option value="LPI EQ2">LPI EQ2</option>
-            <option value="IHMG">IHMG</option>
-            <option value="OGR">OGR</option>
+          <option value="ALL">All Offices</option>
+          <option value="LRI HO">LRI HO</option>
+          <option value="LRI NM">LRI NM</option>
+          <option value="LRI MS">LRI MS</option>
+          <option value="LRI WB">LRI WB</option>
+          <option value="LRI YE">LRI YE</option>
+          <option value="ICI">ICI</option>
+          <option value="LPI HO">LPI HO</option>
+          <option value="LPI AT">LPI AT</option>
+          <option value="LPI CT">LPI CT</option>
+          <option value="LPI EQ1">LPI EQ1</option>
+          <option value="LPI EQ2">LPI EQ2</option>
+          <option value="IHMG">IHMG</option>
+          <option value="OGR">OGR</option>
         </select>
 
         <!-- Search field (slimmer width) -->
@@ -114,9 +113,9 @@
                 data-bs-toggle="tooltip"
                 data-bs-placement="bottom"
                 title="Preview & download PDF">
-            <i class="bi bi-file-earmark-pdf"></i>
+          <i class="bi bi-file-earmark-pdf"></i>
         </button>
-        </div>
+      </div>
     </div>
 
     <!-- Table -->
@@ -150,33 +149,33 @@
     <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
       <div class="modal-content">
         <div class="modal-header align-items-center">
-            <h5 class="modal-title d-flex align-items-center" id="reportModalLabel">
-                <i class="bi bi-file-earmark-pdf me-2"></i> Preview
-            </h5>
+          <h5 class="modal-title d-flex align-items-center" id="reportModalLabel">
+            <i class="bi bi-file-earmark-pdf me-2"></i> Preview
+          </h5>
 
-            <div class="d-flex align-items-center gap-2 ms-auto">
-                <!-- Size selector -->
-                <label for="reportSize" class="small text-muted mb-0">Size</label>
-                <select id="reportSize" class="form-select form-select-sm" style="min-width:120px">
-                <option value="Letter" selected>Letter</option>
-                <option value="Legal">Legal</option>
-                </select>
+          <div class="d-flex align-items-center gap-2 ms-auto">
+            <!-- Size selector -->
+            <label for="reportSize" class="small text-muted mb-0">Size</label>
+            <select id="reportSize" class="form-select form-select-sm" style="min-width:120px">
+              <option value="Letter" selected>Letter</option>
+              <option value="Legal">Legal</option>
+            </select>
 
-                <!-- Download current -->
-                <a id="downloadLink" 
-                class="btn btn-outline-primary btn-sm d-flex align-items-center" 
-                href="/companydirectorypdf/CompanyDirectoryLetterSize.pdf" 
-                target="_blank" download>
-                <i class="bi bi-download me-1"></i>
-                </a>
+            <!-- Download current -->
+            <a id="downloadLink"
+               class="btn btn-outline-primary btn-sm d-flex align-items-center"
+               href="/companydirectorypdf/CompanyDirectoryLetterSize.pdf"
+               target="_blank" download>
+              <i class="bi bi-download me-1"></i>
+            </a>
 
-                <!-- Close modal -->
-                <button type="button" 
-                        class="btn btn-outline-secondary btn-sm d-flex align-items-center" 
-                        data-bs-dismiss="modal">
-                <i class="bi bi-x-lg me-1"></i> Close
-                </button>
-            </div>
+            <!-- Close modal -->
+            <button type="button"
+                    class="btn btn-outline-secondary btn-sm d-flex align-items-center"
+                    data-bs-dismiss="modal">
+              <i class="bi bi-x-lg me-1"></i> Close
+            </button>
+          </div>
         </div>
         <div class="modal-body">
           <iframe id="pdfFrame" class="pdf-frame" src="/companydirectorypdf/CompanyDirectoryLetterSize.pdf" title="Company Directory PDF"></iframe>
@@ -193,6 +192,9 @@
   <!-- Your MSAL wrapper -->
   <script src="./js/auth.js" defer></script>
 
+  <!-- 🔸 Load partials BEFORE page logic -->
+  <script src="/js/include.js"></script>
+
   <!-- Firebase v8 -->
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
@@ -202,31 +204,55 @@
   <!-- Directory page logic -->
   <script src="./js/directory.js" defer></script>
 
-  <!-- Navbar auth guard & wiring + Report modal logic + tooltips -->
+  <!-- Navbar auth wiring + Report modal logic + tooltips -->
   <script>
-    document.addEventListener("DOMContentLoaded", () => {
-      // ---- Auth navbar ----
+    // 把 navbar 更新封裝成函數
+    function applyNavbar() {
       const navEl = document.getElementById("appNav");
       const navUserEl = document.getElementById("navUser");
-      const btnLogout = document.getElementById("btnLogout");
+      const acct = window._auth?.getActiveAccount?.();
 
-      function refreshNav() {
-        const acct = window._auth?.getActiveAccount?.();
-        if (acct) {
-          navEl.classList.remove("d-none");
-          navUserEl.textContent = `${acct.name || ""} · ${acct.username || ""}`;
-        } else {
-          location.href = "/index.html";
-        }
+      if (!navEl || !navUserEl) return false; // partial 未就緒
+
+      if (acct) {
+        navEl.classList.remove("d-none");
+        navUserEl.textContent = `${acct.name || ""}${acct.username ? " · " + acct.username : ""}`;
+      } else {
+        // 未登入：返首頁觸發登入流程
+        location.href = "/index.html";
       }
-      refreshNav();
-      window.updateAuthUI = refreshNav;
-      btnLogout.addEventListener("click", () => window._auth?.signOut?.());
+      return true;
+    }
 
-      // Enable tooltips (for the icon button)
+    // 1) partials 載入完成 → 更新 navbar
+    document.addEventListener("partials:loaded", applyNavbar);
+
+    // 2) 讓 auth.js 完成 redirect 處理後可再次刷新
+    window.updateAuthUI = applyNavbar;
+
+    // 3) 輪詢保險（最多 10 次 × 150ms ≈ 1.5s），避免極端時序問題
+    (function poll() {
+      let tries = 0;
+      const timer = setInterval(() => {
+        if (applyNavbar() || ++tries >= 10) clearInterval(timer);
+      }, 150);
+    })();
+
+    // 4) 登出委派（navbar 按鈕係動態插入）
+    document.addEventListener("click", (e) => {
+      if (e.target && e.target.id === "btnLogout") {
+        sessionStorage.removeItem("kwlr_auto_login_done");
+        window._auth?.signOut?.();
+      }
+    });
+
+    // 5) 啟用 Tooltip
+    document.addEventListener("DOMContentLoaded", () => {
       [...document.querySelectorAll('[data-bs-toggle="tooltip"]')].forEach(el => new bootstrap.Tooltip(el));
+    });
 
-      // ---- Report modal wiring ----
+    // ---- Report modal wiring ----
+    document.addEventListener("DOMContentLoaded", () => {
       const reportSize   = document.getElementById("reportSize");
       const pdfFrame     = document.getElementById("pdfFrame");
       const downloadLink = document.getElementById("downloadLink");
