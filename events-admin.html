@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Events Admin · KW Living Portal</title>
+
+  <!-- Bootstrap CSS & Icons -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+  <link href="./css/styles.css" rel="stylesheet">
+
+  <style>
+    .page-title { display:flex; align-items:center; gap:.5rem; }
+    .filter-control { height:38px; padding:.375rem .75rem; font-size:.95rem; line-height:1.5; border-radius:.5rem; }
+    .control-row { display:flex; align-items:center; gap:.5rem; flex-wrap:nowrap; }
+    #branchFilter { width:130px; } #resourceFilter { width:180px; } #searchInput { width:240px; }
+    @media (max-width:576px){ .control-row{flex-wrap:wrap!important;} #branchFilter,#resourceFilter,#searchInput{width:100%;flex:1 1 100%;} }
+
+    .month-header { font-weight:700; font-size:1.1rem; margin:1.25rem 0 .5rem; color:#334155; }
+    .event-card { border:1px solid #e9ecef; border-radius:.75rem; padding:1rem; background:#fff; }
+    .event-title { font-weight:700; }
+    .event-meta { color:#6c757d; font-size:.9rem; }
+    .badge-branch { background:#eef2ff; color:#3730a3; }
+    .badge-room { background:#ecfeff; color:#155e75; }
+
+    .muted{ color:#94a3b8; }
+    .form-hint { font-size:.85rem; color:#64748b; }
+  </style>
+</head>
+<body class="bg-light">
+
+  <main class="container py-4">
+    <!-- Header -->
+    <div class="d-flex align-items-center justify-content-between flex-wrap mb-3" style="row-gap:.5rem;">
+      <h3 class="page-title mb-0">
+        <i class="bi bi-calendar2-week me-1"></i>Events Admin
+      </h3>
+
+      <div class="d-flex align-items-center gap-2">
+        <button class="btn btn-primary btn-sm" id="btnNew">
+          <i class="bi bi-plus-lg me-1"></i> New Event
+        </button>
+      </div>
+    </div>
+
+    <!-- Filters (List only) -->
+    <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap" style="row-gap:.5rem;">
+      <div class="control-row">
+        <select id="branchFilter" class="form-select filter-control">
+          <option value="ALL">All Branches</option>
+          <option value="WB">WB</option>
+          <option value="NM">NM</option>
+          <option value="MS">MS</option>
+          <option value="YE">YE</option>
+          <option value="YB">YB</option>
+          <option value="ICI">ICI</option>
+        </select>
+
+        <select id="resourceFilter" class="form-select filter-control">
+          <option value="ALL">All Resources</option>
+        </select>
+
+        <input id="searchInput" class="form-control filter-control" placeholder="Search title, room, description…" />
+      </div>
+
+      <div class="text-muted small">
+        <span id="listLabel">Upcoming</span>
+      </div>
+    </div>
+
+    <!-- List container -->
+    <div id="eventsContainer" class="d-grid" style="gap:1rem;">
+      <div class="text-center text-muted py-4">
+        <div class="spinner-border spinner-border-sm me-2"></div> Loading events…
+      </div>
+    </div>
+  </main>
+
+  <!-- Create/Edit Modal -->
+  <div class="modal fade" id="editModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+      <form class="modal-content" id="editForm">
+        <div class="modal-header">
+          <h5 class="modal-title" id="editTitle">New Event</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+
+        <div class="modal-body">
+          <div class="row g-3">
+            <div class="col-md-8">
+              <label class="form-label">Title</label>
+              <input type="text" class="form-control" id="f_title" required maxlength="160">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Status</label>
+              <select id="f_status" class="form-select">
+                <option value="draft">draft</option>
+                <option value="published">published</option>
+              </select>
+            </div>
+
+            <div class="col-md-4">
+              <label class="form-label">Branch</label>
+              <select id="f_branch" class="form-select" required>
+                <option value="">--</option>
+                <option value="WB">WB</option>
+                <option value="NM">NM</option>
+                <option value="MS">MS</option>
+                <option value="YE">YE</option>
+                <option value="YB">YB</option>
+                <option value="ICI">ICI</option>
+              </select>
+            </div>
+            <div class="col-md-8">
+              <label class="form-label">Resource</label>
+              <select id="f_resourceId" class="form-select">
+                <!-- filled by JS -->
+              </select>
+              <div class="form-hint">選擇後會自動帶出 Resource 名稱與預設容量</div>
+            </div>
+
+            <div class="col-md-6">
+              <label class="form-label">Start</label>
+              <input type="datetime-local" class="form-control" id="f_start" required>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">End</label>
+              <input type="datetime-local" class="form-control" id="f_end" required>
+            </div>
+
+            <div class="col-md-12">
+              <label class="form-label">Short Description</label>
+              <input type="text" class="form-control" id="f_description" maxlength="500">
+            </div>
+
+            <div class="col-md-12">
+              <label class="form-label">Detail Description (HTML allowed)</label>
+              <textarea class="form-control" id="f_detailDescription" rows="5" placeholder="<p>Click <a href='...'>here</a> ..."></textarea>
+            </div>
+
+            <div class="col-md-4">
+              <label class="form-label">Allow Registration</label>
+              <select id="f_allowRegistration" class="form-select">
+                <option value="true">true</option>
+                <option value="false">false</option>
+              </select>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Capacity</label>
+              <input type="number" class="form-control" id="f_capacity" min="0" step="1">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Remaining</label>
+              <input type="number" class="form-control" id="f_remaining" min="0" step="1">
+            </div>
+
+            <div class="col-md-6">
+              <label class="form-label">Registration Opens</label>
+              <input type="datetime-local" class="form-control" id="f_regOpensAt">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Registration Closes</label>
+              <input type="datetime-local" class="form-control" id="f_regClosesAt">
+            </div>
+
+            <div class="col-md-6">
+              <label class="form-label">Visibility</label>
+              <select id="f_visibility" class="form-select">
+                <option value="public">public</option>
+                <option value="private">private</option>
+              </select>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Resource Name (auto)</label>
+              <input type="text" class="form-control" id="f_resourceName" readonly>
+            </div>
+          </div>
+
+          <div class="alert alert-danger mt-3 d-none" id="editErr"></div>
+          <div class="alert alert-success mt-3 d-none" id="editOk">Saved.</div>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Close</button>
+          <button type="submit" class="btn btn-primary btn-sm" id="btnSave">
+            <span class="spinner-border spinner-border-sm me-1 d-none" id="editBusy"></span>
+            Save
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Delete confirm -->
+  <div class="modal fade" id="delModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h6 class="modal-title">Delete Event</h6>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <div id="delMsg">Are you sure to delete this event?</div>
+          <div class="small text-muted mt-2">This action cannot be undone.</div>
+          <div class="alert alert-danger mt-3 d-none" id="delErr"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+          <button type="button" class="btn btn-danger btn-sm" id="btnDoDelete">
+            <span class="spinner-border spinner-border-sm me-1 d-none" id="delBusy"></span>
+            Delete
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bootstrap + Firebase v8 -->
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+
+  <!-- Your Firebase config (defines window.db) -->
+  <script src="./js/firebaseConfig.js"></script>
+
+  <!-- Page Logic -->
+  <script src="./js/events_admin.js" defer></script>
+</body>
+</html>
