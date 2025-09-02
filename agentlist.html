@@ -54,7 +54,7 @@
 </head>
 <body class="bg-light">
 
-  <!-- NAVBAR partial-->
+  <!-- NAVBAR partial -->
   <div data-include="/partials/navbar.html"></div>
 
   <!-- CONTENT -->
@@ -66,7 +66,6 @@
       </h3>
 
       <div class="control-row">
-
         <!-- Branch filter -->
         <select id="branchFilter" class="form-select filter-control">
           <option value="ALL">All Branches</option>
@@ -82,8 +81,8 @@
 
         <!-- Export to Excel (icon button) -->
         <button id="btnExport" class="btn btn-success btn-icon" type="button"
-            data-bs-toggle="tooltip" title="Export filtered rows to Excel">
-            <i class="bi bi-download"></i>
+                data-bs-toggle="tooltip" title="Export filtered rows to Excel">
+          <i class="bi bi-download"></i>
         </button>
       </div>
     </div>
@@ -121,7 +120,7 @@
   <!-- Scripts -->
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 
-  <!-- MSAL (must load before your auth.js; no defer/async) -->
+  <!-- MSAL (must load before your auth logic) -->
   <script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@2.39.0/lib/msal-browser.min.js"></script>
   <script src="./js/auth.js" defer></script>
 
@@ -141,25 +140,48 @@
 
   <!-- Navbar auth wiring -->
   <script>
-    document.addEventListener("DOMContentLoaded", () => {
+    // 把 navbar 更新封裝成函數
+    function applyNavbar() {
       const navEl = document.getElementById("appNav");
       const navUserEl = document.getElementById("navUser");
-      const btnLogout = document.getElementById("btnLogout");
+      const acct = window._auth?.getActiveAccount?.();
 
-      function refreshNav() {
-        const acct = window._auth?.getActiveAccount?.();
-        if (acct) {
-          navEl.classList.remove("d-none");
-          navUserEl.textContent = `${acct.name || ""} · ${acct.username || ""}`;
-        } else {
-          location.href = "/index.html";
-        }
+      if (!navEl || !navUserEl) return false; // partial 未就緒
+
+      if (acct) {
+        navEl.classList.remove("d-none");
+        navUserEl.textContent = `${acct.name || ""}${acct.username ? " · " + acct.username : ""}`;
+      } else {
+        // 未登入：返首頁觸發登入流程
+        location.href = "/index.html";
       }
-      refreshNav();
-      window.updateAuthUI = refreshNav;
-      btnLogout.addEventListener("click", () => window._auth?.signOut?.());
+      return true;
+    }
 
-      // tooltip for export icon
+    // 1) partials 載入完成 → 更新 navbar
+    document.addEventListener("partials:loaded", applyNavbar);
+
+    // 2) 讓 auth.js 完成 redirect 處理後可再次刷新
+    window.updateAuthUI = applyNavbar;
+
+    // 3) 輪詢保險（最多 10 次 × 150ms ≈ 1.5s），避免極端時序問題
+    (function poll() {
+      let tries = 0;
+      const timer = setInterval(() => {
+        if (applyNavbar() || ++tries >= 10) clearInterval(timer);
+      }, 150);
+    })();
+
+    // 4) 登出委派（navbar 按鈕係動態插入）
+    document.addEventListener("click", (e) => {
+      if (e.target && e.target.id === "btnLogout") {
+        sessionStorage.removeItem("kwlr_auto_login_done");
+        window._auth?.signOut?.();
+      }
+    });
+
+    // 5) 啟用 Tooltip
+    document.addEventListener("DOMContentLoaded", () => {
       [...document.querySelectorAll('[data-bs-toggle="tooltip"]')].forEach(el => new bootstrap.Tooltip(el));
     });
   </script>
