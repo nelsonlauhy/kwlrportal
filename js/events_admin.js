@@ -1,7 +1,7 @@
 // Events Admin (Firestore v8) - List view only
 // Manage: create / update / delete events
 // detailDescription: user pastes plain TEXT; we convert to safe HTML (auto-link + <br>)
-// Includes a live Preview under the textarea.
+// Includes a live Preview under the textarea and conflict prevention for same room/branch/time.
 (function() {
   // --- DOM
   const containerList = document.getElementById("eventsContainer");
@@ -116,6 +116,47 @@
     const tmp = document.createElement("div");
     tmp.innerHTML = html || "";
     return (tmp.textContent || tmp.innerText || "").trim();
+  }
+
+  // ----------------------------------------------------
+  // Conflict detection (same branch + resource, overlapping time)
+  // Conflict rule: existing.start < newEnd && existing.end > newStart
+  // Returns the first conflicting event (or null)
+  async function findTimeConflict({ branch, resourceId, startTS, endTS, excludeId }) {
+    const col = window.db.collection("events");
+    let snap;
+    try {
+      // Needs composite index: branch asc, resourceId asc, start asc
+      snap = await col
+        .where("branch", "==", branch)
+        .where("resourceId", "==", resourceId)
+        .where("start", "<", endTS)       // existing.start < newEnd
+        .orderBy("start", "asc")
+        .get();
+    } catch (err) {
+      console.warn("conflict query missing index; fallback to branch+resource scan:", err);
+      // Fallback (less efficient): branch+resource only, filter in client
+      snap = await col
+        .where("branch", "==", branch)
+        .where("resourceId", "==", resourceId)
+        .get();
+    }
+
+    const newStart = startTS.toDate();
+    const newEnd   = endTS.toDate();
+
+    for (const doc of snap.docs) {
+      const ev = { _id: doc.id, ...doc.data() };
+      if (excludeId && ev._id === excludeId) continue;
+
+      const s = ev.start?.toDate ? ev.start.toDate() : (ev.start ? new Date(ev.start) : null);
+      const e = ev.end?.toDate   ? ev.end.toDate()   : (ev.end   ? new Date(ev.end)   : null);
+      if (!s || !e) continue;
+
+      // overlap: s < newEnd && e > newStart
+      if (s < newEnd && e > newStart) return ev;
+    }
+    return null;
   }
 
   // ----------------------------------------------------
@@ -325,6 +366,31 @@
       const end   = fromLocalInputValue(f_end.value);
       if (!start || !end || end <= start) throw new Error("Invalid start/end time.");
 
+      if (!f_branch.value) throw new Error("Branch is required.");
+      if (!f_resourceId.value) throw new Error("Resource is required.");
+
+      // Build timestamps once
+      const startTS = firebase.firestore.Timestamp.fromDate(start);
+      const endTS   = firebase.firestore.Timestamp.fromDate(end);
+
+      // ---- DUPLICATE / OVERLAP CHECK (same branch + resource) ----
+      const conflict = await findTimeConflict({
+        branch: f_branch.value,
+        resourceId: f_resourceId.value,
+        startTS,
+        endTS,
+        excludeId: editingId || null
+      });
+      if (conflict) {
+        const titleC = conflict.title || "(untitled)";
+        const sC = conflict.start?.toDate?.() || new Date(conflict.start);
+        const eC = conflict.end?.toDate?.() || new Date(conflict.end);
+        const pad = (n)=> String(n).padStart(2,"0");
+        const fmt = (d)=> `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+        throw new Error(`Time conflict in this room/branch with "${titleC}" (${fmt(sC)} – ${fmt(eC)}).`);
+      }
+      // ------------------------------------------------------------
+
       // Convert the pasted text to HTML that we store
       const detailHtml = textToHtml(f_detailDescription.value || "");
 
@@ -334,8 +400,8 @@
         branch: f_branch.value || "",
         resourceId: f_resourceId.value || null,
         resourceName: f_resourceName.value || null,
-        start: firebase.firestore.Timestamp.fromDate(start),
-        end: firebase.firestore.Timestamp.fromDate(end),
+        start: startTS,
+        end: endTS,
         description: f_description.value || "",
         detailDescription: detailHtml, // stored as HTML (auto-link + <br>)
         allowRegistration: (f_allowRegistration.value === "true"),
