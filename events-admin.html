@@ -178,6 +178,26 @@
               <label class="form-label">Resource Name (auto)</label>
               <input type="text" class="form-control" id="f_resourceName" readonly>
             </div>
+
+            <!-- Tag Color -->
+            <div class="col-md-6">
+              <label class="form-label">Tag Color</label>
+              <div class="d-flex gap-2 align-items-center">
+                <select id="f_colorPreset" class="form-select">
+                  <option value="#3b82f6">Blue</option>
+                  <option value="#22c55e">Green</option>
+                  <option value="#ef4444">Red</option>
+                  <option value="#eab308">Yellow</option>
+                  <option value="#a855f7">Purple</option>
+                  <option value="#f97316">Orange</option>
+                  <option value="#14b8a6">Teal</option>
+                  <option value="#64748b">Slate</option>
+                  <option value="__custom">Custom…</option>
+                </select>
+                <input type="color" id="f_color" class="form-control form-control-color" value="#3b82f6" title="Custom color">
+              </div>
+              <div class="form-hint">Used as the event background in calendar views.</div>
+            </div>
           </div>
 
           <!-- top error (body) -->

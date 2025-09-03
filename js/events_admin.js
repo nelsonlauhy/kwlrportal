@@ -2,7 +2,7 @@
 // Manage: create / update / delete events
 // detailDescription: user pastes plain TEXT; convert to safe HTML (auto-link + <br>)
 // Live Preview; conflict prevention (same branch+room overlap);
-// Defensive DOM handling so missing nodes don't crash.
+// Inline error near Save; COLOR TAG support (preset + custom).
 (function() {
   // --- DOM
   const containerList   = document.getElementById("eventsContainer");
@@ -16,8 +16,8 @@
   const editModal       = new bootstrap.Modal(document.getElementById("editModal"));
   const editTitleEl     = document.getElementById("editTitle");
   const editForm        = document.getElementById("editForm");
-  const editErr         = document.getElementById("editErr");        // top alert (may be null if removed)
-  const editErrInline   = document.getElementById("editErrInline");  // inline error (may be null)
+  const editErr         = document.getElementById("editErr");
+  const editErrInline   = document.getElementById("editErrInline");
   const editOk          = document.getElementById("editOk");
   const editBusy        = document.getElementById("editBusy");
   const btnSave         = document.getElementById("btnSave");
@@ -38,6 +38,9 @@
   const f_regOpensAt        = document.getElementById("f_regOpensAt");
   const f_regClosesAt       = document.getElementById("f_regClosesAt");
   const f_visibility        = document.getElementById("f_visibility");
+  // NEW: color fields
+  const f_colorPreset       = document.getElementById("f_colorPreset");
+  const f_color             = document.getElementById("f_color");
 
   // Delete modal
   const delModal  = new bootstrap.Modal(document.getElementById("delModal"));
@@ -63,7 +66,7 @@
     { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[m]
   ));
 
-  // Convert plain text -> safe HTML: escape, linkify, keep <br>
+  // plain text -> safe HTML with links + <br>
   function textToHtml(text) {
     if (!text) return "";
     let safe = esc(text);
@@ -75,7 +78,7 @@
     return safe;
   }
 
-  // Convert simple HTML -> plain text for editing (best-effort)
+  // simple HTML -> plain text for editing
   function htmlToPlain(html) {
     if (!html) return "";
     let s = html;
@@ -116,6 +119,15 @@
     const tmp = document.createElement("div");
     tmp.innerHTML = html || "";
     return (tmp.textContent || tmp.innerText || "").trim();
+  }
+  function normalizeHex(c) {
+    if (!c) return "#3b82f6";
+    let x = c.trim();
+    if (!x.startsWith("#")) x = "#" + x;
+    if (x.length === 4) { // #abc -> #aabbcc
+      x = "#" + x[1]+x[1]+x[2]+x[2]+x[3]+x[3];
+    }
+    return x.toLowerCase();
   }
 
   // ----------------------------------------------------
@@ -194,6 +206,34 @@
   }
 
   // ----------------------------------------------------
+  // Color preset ↔ input sync
+  function syncColorUIFromValue(hex) {
+    const val = normalizeHex(hex || "#3b82f6");
+    if (f_color) f_color.value = val;
+    if (f_colorPreset) {
+      // if val matches one of preset options, select it; else choose custom
+      const found = Array.from(f_colorPreset.options).find(o => o.value.toLowerCase() === val);
+      f_colorPreset.value = found ? found.value : "__custom";
+    }
+  }
+  function wireColorControls() {
+    if (f_colorPreset) {
+      f_colorPreset.addEventListener("change", () => {
+        if (f_colorPreset.value === "__custom") return; // keep current custom input
+        if (f_color) f_color.value = f_colorPreset.value;
+      });
+    }
+    if (f_color) {
+      f_color.addEventListener("input", () => {
+        // if user picks a custom color not in presets, set preset to custom
+        const hex = normalizeHex(f_color.value);
+        const found = Array.from(f_colorPreset.options || []).find(o => o.value.toLowerCase() === hex);
+        if (f_colorPreset) f_colorPreset.value = found ? found.value : "__custom";
+      });
+    }
+  }
+
+  // ----------------------------------------------------
   // Listen events (future only)
   function attachEventsListener() {
     const now = new Date();
@@ -231,7 +271,7 @@
   }
 
   // ----------------------------------------------------
-  // Render list
+  // Render list (show color dot)
   function renderList() {
     if (!filtered.length) {
       if (listLabel) listLabel.textContent = "Upcoming";
@@ -266,15 +306,18 @@
     const dateLine = `${fmtDateTime(s)} – ${fmtDateTime(ed)}`;
     const remainTxt = (typeof e.remaining === "number" && typeof e.capacity === "number")
       ? `${e.remaining}/${e.capacity} left` : (typeof e.remaining === "number" ? `${e.remaining} left` : "");
-
     const previewSrc = e.description || stripHtmlToText(e.detailDescription || "");
     const preview = previewSrc ? esc(previewSrc).slice(0,180) + (previewSrc.length>180 ? "…" : "") : "";
+    const color = normalizeHex(e.color || "#3b82f6");
 
     return `
       <div class="event-card" data-id="${esc(e._id)}">
         <div class="d-flex justify-content-between align-items-start">
           <div class="me-3">
-            <div class="event-title">${esc(e.title || "Untitled Event")}</div>
+            <div class="d-flex align-items-center gap-2">
+              <span style="display:inline-block;width:.85rem;height:.85rem;border-radius:50%;background:${esc(color)};"></span>
+              <div class="event-title">${esc(e.title || "Untitled Event")}</div>
+            </div>
             <div class="event-meta mt-1">
               <span class="me-2"><i class="bi bi-clock"></i> ${esc(dateLine)}</span>
               ${e.resourceName ? `<span class="badge badge-room me-2"><i class="bi bi-building me-1"></i>${esc(e.resourceName)}</span>` : ""}
@@ -347,12 +390,16 @@
     if (f_regClosesAt)f_regClosesAt.value = toLocalInputValue(toDate(row?.regClosesAt));
     if (f_visibility) f_visibility.value = row?.visibility || "public";
 
+    // Color
+    const color = normalizeHex(row?.color || "#3b82f6");
+    syncColorUIFromValue(color);
+
     editModal.show();
   }
 
-  if (f_detailDescription) {
-    f_detailDescription.addEventListener("input", updateDetailPreviewFromTextarea);
-  }
+  // live preview & color sync
+  if (f_detailDescription) f_detailDescription.addEventListener("input", updateDetailPreviewFromTextarea);
+  wireColorControls();
 
   if (editForm) {
     editForm.addEventListener("submit", async (e) => {
@@ -393,6 +440,8 @@
         }
 
         const detailHtml = textToHtml(f_detailDescription?.value || "");
+        // Color to save
+        const color = normalizeHex(f_color?.value || "#3b82f6");
 
         const data = {
           title,
@@ -410,6 +459,7 @@
           regOpensAt: f_regOpensAt?.value ? firebase.firestore.Timestamp.fromDate(fromLocalInputValue(f_regOpensAt.value)) : null,
           regClosesAt: f_regClosesAt?.value ? firebase.firestore.Timestamp.fromDate(fromLocalInputValue(f_regClosesAt.value)) : null,
           visibility: f_visibility?.value || "public",
+          color, // <-- NEW
           updatedAt: new Date()
         };
 
