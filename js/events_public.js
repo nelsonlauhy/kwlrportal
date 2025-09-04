@@ -1,11 +1,11 @@
-// Public Events list + Registration (Firestore v8) with index fallbacks
-// Views: Month / Week / Day / List. Clicking an event opens Event Details modal,
-// which shows rich `detailDescription` (HTML) and a Register button.
-//
-// Fix: use event delegation so events can be opened repeatedly after re-renders.
-
+// Public Events (Firestore v8)
+// Views: Month / Week / Day / List
+// - Click any event to open DETAILS MODAL with info + Register button (uses #eventModal in your HTML)
+// - Colors rendered from event.color (hex)
+// - detailDescription is trusted HTML (produced by admin side)
+// - Registration uses existing #regModal
 (function() {
-  // --- DOM
+  // ---------- DOM ----------
   const containerList = document.getElementById("eventsContainer");
   const containerCal  = document.getElementById("calendarContainer");
   const branchFilter  = document.getElementById("branchFilter");
@@ -22,18 +22,7 @@
   const btnToday = document.getElementById("btnToday");
   const calLabel = document.getElementById("calLabel");
 
-  // Event Details modal
-  const eventModalEl = document.getElementById("eventModal");
-  const eventModal   = new bootstrap.Modal(eventModalEl);
-  const evTitleEl    = document.getElementById("evTitle");
-  const evMetaEl     = document.getElementById("evMeta");
-  const evDateLineEl = document.getElementById("evDateLine");
-  const evShortDesc  = document.getElementById("evShortDesc");
-  const evDetailDesc = document.getElementById("evDetailDesc");
-  const evCapacityEl = document.getElementById("evCapacity");
-  const btnOpenRegister = document.getElementById("btnOpenRegister");
-
-  // Registration modal
+  // Registration modal (already in your HTML)
   const regModalEl = document.getElementById("regModal");
   const regModal   = new bootstrap.Modal(regModalEl);
   const regForm    = document.getElementById("regForm");
@@ -46,30 +35,42 @@
   const regBusy = document.getElementById("regBusy");
   const btnSubmitReg = document.getElementById("btnSubmitReg");
 
-  // --- State
+  // Event Details modal (static in your HTML)
+  const eventModalEl = document.getElementById("eventModal");
+  const eventModal   = new bootstrap.Modal(eventModalEl);
+  const evTitleEl    = document.getElementById("evTitle");
+  const evMetaEl     = document.getElementById("evMeta");
+  const evDateLineEl = document.getElementById("evDateLine");
+  const evShortDescEl= document.getElementById("evShortDesc");
+  const evDetailDescEl = document.getElementById("evDetailDesc");
+  const evCapacityEl = document.getElementById("evCapacity");
+  const btnOpenRegister = document.getElementById("btnOpenRegister");
+
+  // ---------- State ----------
   let allEvents = [];   // raw from firestore (upcoming only)
   let filtered  = [];   // after applying top filters/search
   let resources = [];   // [{id,name,branch,type}]
   let regTarget = null; // event object being registered
-  let detailTarget = null; // event object being viewed
   let unsubscribeEvents = null;
 
   // calendar state
   let currentView = "list";    // 'month' | 'week' | 'day' | 'list'
   let cursorDate  = truncateToDay(new Date()); // reference date for calendar
 
-  // --- Utils
+  // ---------- Utils ----------
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, m => (
     { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[m]
   ));
-
+  function stripHtmlToText(html) {
+    const tmp = document.createElement("div"); tmp.innerHTML = html || "";
+    return (tmp.textContent || tmp.innerText || "").trim();
+  }
   function toDate(ts) {
     if (!ts) return null;
     if (typeof ts.toDate === "function") return ts.toDate();
     const d = new Date(ts);
     return isNaN(d) ? null : d;
   }
-
   function fmtDateTime(d) {
     if (!d) return "";
     const pad = (n) => String(n).padStart(2, "0");
@@ -80,70 +81,53 @@
     return d.toLocaleDateString(undefined, { weekday:"short", month:"short", day:"numeric", year:"numeric" });
   }
   function truncateToDay(d) { const x=new Date(d); x.setHours(0,0,0,0); return x; }
-
   function monthKey(d) { return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`; }
   function monthLabel(d) { return d.toLocaleString(undefined, { month: "long", year: "numeric" }); }
 
-  function clearAlerts() {
+  function normalizeHex(c) {
+    if (!c) return "#3b82f6";
+    let x = String(c).trim();
+    if (!x.startsWith("#")) x = "#" + x;
+    if (x.length === 4) x = "#" + x[1]+x[1]+x[2]+x[2]+x[3]+x[3];
+    return x.toLowerCase();
+  }
+  function idealTextColor(bgHex) {
+    const h = normalizeHex(bgHex).slice(1);
+    const r = parseInt(h.substring(0,2), 16);
+    const g = parseInt(h.substring(2,4), 16);
+    const b = parseInt(h.substring(4,6), 16);
+    const yiq = (r*299 + g*587 + b*114) / 1000;
+    return yiq >= 150 ? "#000000" : "#ffffff";
+  }
+
+  function clearRegAlerts() {
     [regWarn, regErr, regOk].forEach(el => { el.classList.add("d-none"); el.textContent=""; });
   }
 
-  // Strip HTML to plain text (for search indexing/preview)
-  function stripHtmlToText(html) {
-    const tmp = document.createElement("div");
-    tmp.innerHTML = html || "";
-    return (tmp.textContent || tmp.innerText || "").trim();
-  }
-
-  // Very basic sanitizer: remove <script> and inline on* handlers. Trust content is admin-authored.
-  function sanitizeTrustedHtml(html) {
-    if (!html) return "";
-    const tmp = document.createElement("div");
-    tmp.innerHTML = html;
-
-    // remove script/style
-    tmp.querySelectorAll("script, style").forEach(n => n.remove());
-
-    // remove on* attrs; allow target/href on <a>
-    tmp.querySelectorAll("*").forEach(el => {
-      [...el.attributes].forEach(attr => {
-        const name = attr.name.toLowerCase();
-        if (name.startsWith("on")) el.removeAttribute(attr.name);
-      });
-      if (el.tagName === "A") {
-        // force safe target
-        if (!el.getAttribute("target")) el.setAttribute("target","_blank");
-        el.setAttribute("rel","noopener noreferrer");
-      }
-    });
-    return tmp.innerHTML;
-  }
-
-  // ----------------------------------------------------
-  // Filters/Search (include title, description, resourceName, branch, detailDescription)
+  // ---------- Filters/Search ----------
   function applyFilter() {
     const q = (searchInput.value || "").toLowerCase().trim();
     const brSel = (branchFilter.value || "ALL").toUpperCase();
     const resSel = (resourceFilter.value || "ALL");
 
     filtered = allEvents.filter(ev => {
+      // branch
       const br = (ev.branch || "").toUpperCase();
       if (brSel !== "ALL" && br !== brSel) return false;
+      // resource
       if (resSel !== "ALL" && ev.resourceId !== resSel) return false;
-
+      // text
       if (!q) return true;
-
       const detailTxt = stripHtmlToText(ev.detailDescription || "");
       const hay = [ev.title, ev.description, ev.resourceName, ev.branch, detailTxt]
         .map(v => (v || "").toString().toLowerCase());
       return hay.some(v => v.includes(q));
     });
 
-    render();
+    render(); // switch based on currentView
   }
 
-  // ----------------------------------------------------
-  // RENDER DISPATCH
+  // ---------- RENDER DISPATCH ----------
   function render() {
     [btnMonth,btnWeek,btnDay,btnList].forEach(b=>b.classList.remove("active"));
     if (currentView==="month") btnMonth.classList.add("active");
@@ -158,14 +142,13 @@
       return;
     }
 
-    containerList.innerHTML = "";
+    containerList.innerHTML = ""; // hide list
     if (currentView === "month") renderMonth();
     else if (currentView === "week") renderWeek();
     else renderDay();
   }
 
-  // ----------------------------------------------------
-  // LIST VIEW
+  // ---------- LIST VIEW ----------
   function renderList() {
     if (!filtered.length) {
       containerList.innerHTML = `
@@ -189,10 +172,9 @@
       for (const e of g.events) parts.push(renderEventCard(e));
     });
     containerList.innerHTML = parts.join("");
-    // (No per-item binding here; use event delegation below)
+    // Clicks handled via document delegation
   }
 
-  // Card click opens Event Details modal (via delegation). No inline Register button on card.
   function renderEventCard(e) {
     const start = toDate(e.start);
     const end   = toDate(e.end);
@@ -202,34 +184,33 @@
     const remainTxt = (remaining != null && capacity != null)
       ? `${remaining}/${capacity} seats left`
       : (remaining != null ? `${remaining} seats left` : "");
-
-    // short preview from description or detailDescription
-    const previewSrc = e.description || stripHtmlToText(e.detailDescription || "");
-    const preview = previewSrc ? esc(previewSrc).slice(0,180) + (previewSrc.length>180 ? "…" : "") : "";
+    const color = normalizeHex(e.color || "#3b82f6");
 
     return `
-      <div class="event-card" data-id="${esc(e._id)}" role="button" tabindex="0">
+      <div class="event-card" data-id="${esc(e._id)}" role="button">
         <div class="d-flex justify-content-between align-items-start">
           <div class="me-3">
-            <div class="event-title">${esc(e.title || "Untitled Event")}</div>
+            <div class="event-title">
+              <span style="display:inline-block;width:.7rem;height:.7rem;border-radius:50%;background:${esc(color)};margin-right:.35rem;"></span>
+              ${esc(e.title || "Untitled Event")}
+            </div>
             <div class="event-meta mt-1">
               <span class="me-2"><i class="bi bi-clock"></i> ${esc(dateLine)}</span>
               ${e.resourceName ? `<span class="badge badge-room me-2"><i class="bi bi-building me-1"></i>${esc(e.resourceName)}</span>` : ""}
               ${e.branch ? `<span class="badge badge-branch me-2">${esc(e.branch)}</span>` : ""}
             </div>
-            ${preview ? `<div class="mt-2 text-secondary">${preview}</div>` : ""}
+            ${e.description ? `<div class="mt-2 text-secondary">${esc(e.description)}</div>` : ""}
           </div>
           <div class="text-end">
             ${remainTxt ? `<div class="small text-muted mb-2">${esc(remainTxt)}</div>` : ""}
-            <span class="text-primary small"><i class="bi bi-box-arrow-up-right me-1"></i>View</span>
+            <div class="small text-primary">Details &raquo;</div>
           </div>
         </div>
       </div>
     `;
   }
 
-  // ----------------------------------------------------
-  // CALENDAR HELPERS
+  // ---------- CALENDAR SHARED ----------
   function canRegister(ev) {
     const now = new Date();
     if (ev.status !== "published" || ev.visibility !== "public") return false;
@@ -243,9 +224,9 @@
     if (start && now > start) return false;
     return true;
   }
-
-  function overlaps(evStart, evEnd, a, b) { return evStart < b && evEnd > a; }
-
+  function overlaps(evStart, evEnd, a, b) {
+    return evStart < b && evEnd > a;
+  }
   function eventsInRange(rangeStart, rangeEnd) {
     return filtered.filter(ev => {
       const s = toDate(ev.start); const e = toDate(ev.end);
@@ -254,11 +235,10 @@
     });
   }
 
-  // ----------------------------------------------------
-  // MONTH VIEW
+  // ---------- MONTH VIEW ----------
   function renderMonth() {
     const year = cursorDate.getFullYear();
-    const month = cursorDate.getMonth();
+    const month = cursorDate.getMonth(); // 0-based
 
     calLabel.textContent = cursorDate.toLocaleString(undefined,{month:"long", year:"numeric"});
 
@@ -292,10 +272,14 @@
       const dayNum = iter.getDate();
 
       const evHtml = items.map(e=>{
+        const color = normalizeHex(e.color || "#3b82f6");
+        const txt = idealTextColor(color);
         const disable = !canRegister(e) ? "full" : "";
-        return `<div class="month-evt ${disable}" data-id="${esc(e._id)}" title="${esc(e.title || "")}">
+        return `<button class="month-evt ${disable}" data-id="${esc(e._id)}" 
+                        title="${esc(e.title || "")}"
+                        style="background:${esc(color)};border-color:${esc(color)};color:${esc(txt)};">
                   ${esc(e.title || "Event")}
-                </div>`;
+                </button>`;
       }).join("");
 
       cells.push(`
@@ -307,13 +291,15 @@
       iter.setDate(iter.getDate()+1);
     }
 
-    containerCal.innerHTML = `<div class="month-grid">${weekdays.join("")}${cells.join("")}</div>`;
-    // (No per-item binding; delegation used)
-    containerList.innerHTML = "";
+    containerCal.innerHTML = `
+      <div class="month-grid">
+        ${weekdays.join("")}
+        ${cells.join("")}
+      </div>
+    `;
   }
 
-  // ----------------------------------------------------
-  // WEEK VIEW
+  // ---------- WEEK VIEW ----------
   function renderWeek() {
     const start = new Date(cursorDate);
     start.setDate(start.getDate() - start.getDay());
@@ -343,15 +329,24 @@
         const s = toDate(e.start), ee = toDate(e.end);
         const startHour = Math.max(0, (s.getHours() - hours[0]) + s.getMinutes()/60);
         const durHours = Math.max(0.7, ((ee - s) / (1000*60*60)));
-        const top = Math.min(hours.length-0.7, startHour) * 44;
+        const top = Math.min(hours.length-0.7, startHour) * 44; // 44px per slot
         const height = Math.min(hours.length*44 - top - 4, Math.max(20, durHours*44 - 6));
         const full = !canRegister(e) ? "full" : "";
-        return `<div class="evt-pill ${full}" data-id="${esc(e._id)}" style="top:${top+2}px;height:${height}px" title="${esc(e.title || "")}">
+        const color = normalizeHex(e.color || "#3b82f6");
+        const txt = idealTextColor(color);
+        return `<button class="evt-pill ${full}" data-id="${esc(e._id)}"
+                       style="top:${top+2}px;height:${height}px;background:${esc(color)};border-color:${esc(color)};color:${esc(txt)}"
+                       title="${esc(e.title || "")}">
                   ${esc(e.title || "Event")}
-                </div>`;
+                </button>`;
       }).join("");
 
-      cols.push(`<div class="time-col position-relative">${slots}${pills}</div>`);
+      cols.push(`
+        <div class="time-col position-relative">
+          ${slots}
+          ${pills}
+        </div>
+      `);
     }
 
     const heads = ['','Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map((name,idx)=>{
@@ -365,16 +360,15 @@
     containerCal.innerHTML = `
       <div class="time-grid">
         ${heads}
-        <div class="time-col">${labels}</div>
+        <div class="time-col">
+          ${labels}
+        </div>
         ${cols.join("")}
       </div>
     `;
-    // Delegation used; no per-item binding
-    containerList.innerHTML = "";
   }
 
-  // ----------------------------------------------------
-  // DAY VIEW
+  // ---------- DAY VIEW ----------
   function renderDay() {
     const start = truncateToDay(cursorDate);
     const end = new Date(start); end.setDate(start.getDate()+1);
@@ -392,9 +386,13 @@
       const top = Math.min(hours.length-0.7, startHour) * 44;
       const height = Math.min(hours.length*44 - top - 4, Math.max(20, durHours*44 - 6));
       const full = !canRegister(e) ? "full" : "";
-      return `<div class="evt-pill ${full}" data-id="${esc(e._id)}" style="top:${top+2}px;height:${height}px" title="${esc(e.title || "")}">
+      const color = normalizeHex(e.color || "#3b82f6");
+      const txt = idealTextColor(color);
+      return `<button class="evt-pill ${full}" data-id="${esc(e._id)}"
+                     style="top:${top+2}px;height:${height}px;background:${esc(color)};border-color:${esc(color)};color:${esc(txt)}"
+                     title="${esc(e.title || "")}">
                 ${esc(e.title || "Event")}
-              </div>`;
+              </button>`;
     }).join("");
 
     const head = `
@@ -408,114 +406,90 @@
     containerCal.innerHTML = `
       <div class="time-grid">
         ${head}
-        <div class="time-col">${labels}</div>
+        <div class="time-col">
+          ${labels}
+        </div>
         <div class="time-col position-relative" style="grid-column: span 7;">
           ${slots}
           ${pills}
         </div>
       </div>
     `;
-    // Delegation used; no per-item binding
-    containerList.innerHTML = "";
   }
 
-  // ----------------------------------------------------
-  // Delegated open handler for event details (click + keyboard)
-  const CLICK_OPEN_SELECTOR = ".event-card, .month-evt, .evt-pill";
-
-  function handleOpenEventFromClick(e) {
-    const el = e.target.closest(CLICK_OPEN_SELECTOR);
-    if (!el) return;
-    const id = el.getAttribute("data-id");
-    const ev = allEvents.find(x => x._id === id);
-    if (!ev) return;
-    detailTarget = ev;
-    showEventModal(ev);
-  }
-
-  function handleOpenEventFromKey(e) {
-    // allow Enter on list cards
-    if (e.key !== "Enter") return;
-    const el = e.target.closest(".event-card[role='button']");
-    if (!el) return;
-    const id = el.getAttribute("data-id");
-    const ev = allEvents.find(x => x._id === id);
-    if (!ev) return;
-    detailTarget = ev;
-    showEventModal(ev);
-  }
-
-  // Populate and show Event Details modal
-  function showEventModal(ev) {
+  // ---------- Event Details Modal ----------
+  function openEventDetails(ev) {
     const s = toDate(ev.start), e = toDate(ev.end);
+    const dateLine = `${fmtDateTime(s)} – ${fmtDateTime(e)}`;
+    const remainTxt = (typeof ev.remaining === "number" && typeof ev.capacity === "number")
+      ? `${ev.remaining}/${ev.capacity} seats left`
+      : (typeof ev.remaining === "number" ? `${ev.remaining} seats left` : "");
+    const canReg = canRegister(ev);
+    const color = normalizeHex(ev.color || "#3b82f6");
 
-    evTitleEl.textContent = ev.title || "Untitled Event";
-
-    const metaBits = [];
-    if (ev.resourceName) metaBits.push(`<span class="badge badge-room"><i class="bi bi-building me-1"></i>${esc(ev.resourceName)}</span>`);
-    if (ev.branch) metaBits.push(`<span class="badge badge-branch">${esc(ev.branch)}</span>`);
-    evMetaEl.innerHTML = metaBits.join(" ");
-
-    evDateLineEl.textContent = `${fmtDateTime(s)} – ${fmtDateTime(e)}`;
-
-    // capacity/remaining
-    const remaining = (typeof ev.remaining === "number") ? ev.remaining : null;
-    const capacity  = (typeof ev.capacity === "number") ? ev.capacity : null;
-    evCapacityEl.textContent = (remaining != null && capacity != null)
-      ? `${remaining}/${capacity} seats left`
-      : (remaining != null ? `${remaining} seats left` : "");
-
-    // description (plain)
-    const shortDesc = (ev.description || "").trim();
-    if (shortDesc) {
-      evShortDesc.style.display = "";
-      evShortDesc.textContent = shortDesc;
-    } else {
-      evShortDesc.style.display = "none";
-      evShortDesc.textContent = "";
+    if (evTitleEl) {
+      evTitleEl.innerHTML = `
+        <span class="me-2" style="display:inline-block;width:.9rem;height:.9rem;border-radius:50%;background:${esc(color)};vertical-align:baseline;"></span>
+        ${esc(ev.title || "Event Details")}
+      `;
     }
 
-    // detailDescription (HTML)
-    const rich = (ev.detailDescription || "").trim();
-    if (rich) {
-      evDetailDesc.style.display = "";
-      evDetailDesc.innerHTML = sanitizeTrustedHtml(rich);
-    } else {
-      evDetailDesc.style.display = "none";
-      evDetailDesc.innerHTML = "";
+    if (evMetaEl) {
+      evMetaEl.innerHTML = `
+        ${ev.resourceName ? `<span class="badge badge-room"><i class="bi bi-building me-1"></i>${esc(ev.resourceName)}</span>` : ""}
+        ${ev.branch ? `<span class="badge badge-branch">${esc(ev.branch)}</span>` : ""}
+        ${ev.status ? `<span class="badge text-bg-light border">${esc(ev.status)}</span>` : ""}
+        ${ev.visibility ? `<span class="badge text-bg-light border">${esc(ev.visibility)}</span>` : ""}
+      `;
     }
 
-    // Register button state
-    const allowed = canRegister(ev);
-    btnOpenRegister.disabled = !allowed;
-    btnOpenRegister.title = allowed ? "Register for this event" : "Registration closed or full";
+    if (evDateLineEl) evDateLineEl.textContent = dateLine;
+
+    if (evShortDescEl) {
+      if (ev.description) {
+        evShortDescEl.textContent = ev.description;
+        evShortDescEl.style.display = "";
+      } else {
+        evShortDescEl.style.display = "none";
+      }
+    }
+
+    if (evDetailDescEl) {
+      if (ev.detailDescription) {
+        evDetailDescEl.innerHTML = ev.detailDescription; // trusted HTML from admin
+        evDetailDescEl.style.display = "";
+      } else {
+        evDetailDescEl.style.display = "none";
+      }
+    }
+
+    if (evCapacityEl) evCapacityEl.textContent = remainTxt || "";
+
+    // Register button enable/disable
+    if (btnOpenRegister) {
+      btnOpenRegister.disabled = !canReg;
+      btnOpenRegister.onclick = () => {
+        // prepare reg form
+        regTarget = ev;
+        regEventSummary.innerHTML = `
+          <div><strong>${esc(ev.title || "")}</strong></div>
+          <div class="text-secondary small">${esc(ev.resourceName || "")} · ${esc(ev.branch || "")}</div>
+          <div class="text-secondary small">${esc(fmtDateTime(s))} – ${esc(fmtDateTime(e))}</div>
+        `;
+        attendeeName.value = "";
+        attendeeEmail.value = "";
+        clearRegAlerts();
+        btnSubmitReg.disabled = false;
+        regBusy.classList.add("d-none");
+        eventModal.hide();
+        regModal.show();
+      };
+    }
 
     eventModal.show();
   }
 
-  // Open Register modal from Event Details modal
-  btnOpenRegister.addEventListener("click", () => {
-    if (!detailTarget) return;
-    regTarget = detailTarget;
-
-    const s = toDate(regTarget.start), e = toDate(regTarget.end);
-    regEventSummary.innerHTML = `
-      <div><strong>${esc(regTarget.title || "")}</strong></div>
-      <div class="text-secondary small">${esc(regTarget.resourceName || "")} · ${esc(regTarget.branch || "")}</div>
-      <div class="text-secondary small">${esc(fmtDateTime(s))} – ${esc(fmtDateTime(e))}</div>
-    `;
-    attendeeName.value = "";
-    attendeeEmail.value = "";
-    clearAlerts();
-    btnSubmitReg.disabled = false;
-    regBusy.classList.add("d-none");
-
-    eventModal.hide();
-    setTimeout(()=> regModal.show(), 150);
-  });
-
-  // ----------------------------------------------------
-  // Data load with index fallbacks
+  // ---------- Data load ----------
   async function loadResources() {
     const col = window.db.collection("resources");
     try {
@@ -590,11 +564,10 @@
     }
   }
 
-  // ----------------------------------------------------
-  // Registration submit: transaction w/ dedupe and capacity check
+  // ---------- Registration submit ----------
   regForm.addEventListener("submit", async (e) => {
     e.preventDefault();
-    clearAlerts();
+    clearRegAlerts();
     btnSubmitReg.disabled = true;
     regBusy.classList.remove("d-none");
 
@@ -615,7 +588,6 @@
         if (!evSnap.exists) throw new Error("Event not found.");
         const ev = evSnap.data();
 
-        // Re-evaluate on server snapshot
         if (ev.status !== "published" || ev.visibility !== "public") {
           throw new Error("Registration is closed for this event.");
         }
@@ -636,7 +608,6 @@
           throw new Error("This event is full.");
         }
 
-        // Create/overwrite registration
         tx.set(regRef, {
           eventId: eventRef.id,
           eventTitle: ev.title || "",
@@ -647,7 +618,6 @@
           createdAt: new Date()
         });
 
-        // Decrement remaining if tracked
         if (typeof ev.remaining === "number") {
           tx.update(eventRef, { remaining: ev.remaining - 1 });
         }
@@ -670,8 +640,7 @@
     }
   });
 
-  // ----------------------------------------------------
-  // View switching & date navigation
+  // ---------- View navigation ----------
   function gotoToday() {
     cursorDate = truncateToDay(new Date());
     render();
@@ -697,8 +666,22 @@
     render();
   }
 
-  // ----------------------------------------------------
-  // Init
+  // ---------- Event Delegation for Clicks ----------
+  // Works for: list cards (.event-card), month buttons (.month-evt), week/day pills (.evt-pill)
+  document.addEventListener("click", (ev) => {
+    const card = ev.target.closest(".event-card");
+    const monthBtn = ev.target.closest(".month-evt");
+    const pill = ev.target.closest(".evt-pill");
+    const el = card || monthBtn || pill;
+    if (!el) return;
+    const id = el.getAttribute("data-id");
+    if (!id) return;
+    const eventObj = allEvents.find(x => x._id === id);
+    if (!eventObj) return;
+    openEventDetails(eventObj);
+  });
+
+  // ---------- Init ----------
   document.addEventListener("DOMContentLoaded", async () => {
     if (!window.db) {
       containerList.innerHTML = `<div class="text-danger py-4 text-center">Firestore not initialized.</div>`;
@@ -708,7 +691,7 @@
     await loadResources();
     attachEventsListener();
 
-    // Wire filters/search
+    // Filters/search
     branchFilter.addEventListener("change", applyFilter);
     resourceFilter.addEventListener("change", applyFilter);
     searchInput.addEventListener("input", () => {
@@ -726,10 +709,5 @@
     btnToday.addEventListener("click", gotoToday);
     btnPrev.addEventListener("click", prevPeriod);
     btnNext.addEventListener("click", nextPeriod);
-
-    // === Event delegation: attach once on containers ===
-    containerList.addEventListener("click", handleOpenEventFromClick);
-    containerCal.addEventListener("click", handleOpenEventFromClick);
-    containerList.addEventListener("keydown", handleOpenEventFromKey);
   });
 })();
