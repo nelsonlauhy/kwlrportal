@@ -25,6 +25,7 @@
     .badge-room { background:#ecfeff; color:#155e75; }
     .muted{ color:#94a3b8; }
     .form-hint { font-size:.85rem; color:#64748b; }
+    .weekday-pill { user-select:none; }
   </style>
 </head>
 <body class="bg-light">
@@ -42,7 +43,7 @@
       </div>
     </div>
 
-    <!-- Filters -->
+    <!-- Filters (List only) -->
     <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap" style="row-gap:.5rem;">
       <div class="control-row">
         <select id="branchFilter" class="form-select filter-control">
@@ -158,13 +159,14 @@
               <input type="number" class="form-control" id="f_remaining" min="0" step="1">
             </div>
 
+            <!-- Offsets in minutes (relative to each occurrence's start) -->
             <div class="col-md-6">
-              <label class="form-label">Registration Opens</label>
-              <input type="datetime-local" class="form-control" id="f_regOpensAt">
+              <label class="form-label">Reg Opens Offset (mins)</label>
+              <input type="number" class="form-control" id="f_regOpensOffsetMins" placeholder="-10080 (7 days before)" value="-10080">
             </div>
             <div class="col-md-6">
-              <label class="form-label">Registration Closes</label>
-              <input type="datetime-local" class="form-control" id="f_regClosesAt">
+              <label class="form-label">Reg Closes Offset (mins)</label>
+              <input type="number" class="form-control" id="f_regClosesOffsetMins" placeholder="-60 (1 hour before)" value="-60">
             </div>
 
             <div class="col-md-6">
@@ -198,9 +200,60 @@
               </div>
               <div class="form-hint">Used as the event background in calendar views.</div>
             </div>
+
+            <!-- Recurrence (Approach A: materialize on save) -->
+            <div class="col-12">
+              <div class="border-top pt-3 mt-2">
+                <div class="d-flex align-items-center justify-content-between">
+                  <label class="form-label m-0">Repeat</label>
+                  <span class="form-hint">Materializes separate events on Save.</span>
+                </div>
+                <div class="row g-2">
+                  <div class="col-md-4">
+                    <select id="f_repeat" class="form-select">
+                      <option value="none">None</option>
+                      <option value="daily">Daily</option>
+                      <option value="weekly">Weekly</option>
+                      <option value="monthly">Monthly (by date)</option>
+                    </select>
+                  </div>
+                  <div class="col-md-2">
+                    <input type="number" class="form-control" id="f_interval" value="1" min="1" step="1">
+                    <div class="form-hint">Interval</div>
+                  </div>
+                  <div class="col-md-6" id="weeklyDaysWrap" style="display:none;">
+                    <div class="d-flex flex-wrap gap-2">
+                      <!-- weekday pills -->
+                      <label class="btn btn-sm btn-outline-secondary weekday-pill"><input class="form-check-input me-1" type="checkbox" value="0">Sun</label>
+                      <label class="btn btn-sm btn-outline-secondary weekday-pill"><input class="form-check-input me-1" type="checkbox" value="1">Mon</label>
+                      <label class="btn btn-sm btn-outline-secondary weekday-pill"><input class="form-check-input me-1" type="checkbox" value="2">Tue</label>
+                      <label class="btn btn-sm btn-outline-secondary weekday-pill"><input class="form-check-input me-1" type="checkbox" value="3">Wed</label>
+                      <label class="btn btn-sm btn-outline-secondary weekday-pill"><input class="form-check-input me-1" type="checkbox" value="4">Thu</label>
+                      <label class="btn btn-sm btn-outline-secondary weekday-pill"><input class="form-check-input me-1" type="checkbox" value="5">Fri</label>
+                      <label class="btn btn-sm btn-outline-secondary weekday-pill"><input class="form-check-input me-1" type="checkbox" value="6">Sat</label>
+                    </div>
+                    <div class="form-hint">For Weekly, choose days.</div>
+                  </div>
+                  <div class="col-md-3">
+                    <select id="f_repeatEndType" class="form-select">
+                      <option value="count">After N</option>
+                      <option value="until">Until date</option>
+                    </select>
+                  </div>
+                  <div class="col-md-3" id="repeatCountWrap">
+                    <input type="number" class="form-control" id="f_repeatCount" value="1" min="1" step="1">
+                    <div class="form-hint">Occurrences</div>
+                  </div>
+                  <div class="col-md-3" id="repeatUntilWrap" style="display:none;">
+                    <input type="date" class="form-control" id="f_repeatUntil">
+                    <div class="form-hint">Inclusive</div>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
 
-          <!-- top error (body) -->
+          <!-- top/bottom messages -->
           <div class="alert alert-danger mt-3 d-none" id="editErr"></div>
           <div class="alert alert-success mt-3 d-none" id="editOk">Saved.</div>
         </div>

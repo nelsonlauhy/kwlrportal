@@ -1,98 +1,82 @@
-// Events Admin (Firestore v8) - List view only
-// Manage: create / update / delete events
-// detailDescription: user pastes plain TEXT; convert to safe HTML (auto-link + <br>)
-// Live Preview; conflict prevention (same branch+room overlap);
-// Inline error near Save; COLOR TAG support (preset + custom).
+// Events Admin (Firestore v8) — List-only with Edit/Create modal
+// Approach A (materialize on save) for recurrence
+// - detailDescription: auto-link + <br> (Option A) with live preview
+// - Color tag
+// - Conflict detection (branch + resource overlap)
+// - Registration windows per occurrence via offsets (mins)
+
 (function() {
-  // --- DOM
-  const containerList   = document.getElementById("eventsContainer");
-  const branchFilter    = document.getElementById("branchFilter");
-  const resourceFilter  = document.getElementById("resourceFilter");
-  const searchInput     = document.getElementById("searchInput");
-  const listLabel       = document.getElementById("listLabel");
-  const btnNew          = document.getElementById("btnNew");
+  // ---------- DOM ----------
+  const containerList = document.getElementById("eventsContainer");
+  const branchFilter  = document.getElementById("branchFilter");
+  const resourceFilter= document.getElementById("resourceFilter");
+  const searchInput   = document.getElementById("searchInput");
+  const listLabel     = document.getElementById("listLabel");
 
-  // Edit modal fields
-  const editModal       = new bootstrap.Modal(document.getElementById("editModal"));
-  const editTitleEl     = document.getElementById("editTitle");
-  const editForm        = document.getElementById("editForm");
-  const editErr         = document.getElementById("editErr");
-  const editErrInline   = document.getElementById("editErrInline");
-  const editOk          = document.getElementById("editOk");
-  const editBusy        = document.getElementById("editBusy");
-  const btnSave         = document.getElementById("btnSave");
+  const btnNew   = document.getElementById("btnNew");
 
-  const f_title             = document.getElementById("f_title");
-  const f_status            = document.getElementById("f_status");
-  const f_branch            = document.getElementById("f_branch");
-  const f_resourceId        = document.getElementById("f_resourceId");
-  const f_resourceName      = document.getElementById("f_resourceName");
-  const f_start             = document.getElementById("f_start");
-  const f_end               = document.getElementById("f_end");
-  const f_description       = document.getElementById("f_description");
+  // Edit modal
+  const editModalEl = document.getElementById("editModal");
+  const editModal   = new bootstrap.Modal(editModalEl);
+  const editForm    = document.getElementById("editForm");
+  const editTitle   = document.getElementById("editTitle");
+  const editErr     = document.getElementById("editErr");
+  const editErrInline = document.getElementById("editErrInline");
+  const editOk      = document.getElementById("editOk");
+  const editBusy    = document.getElementById("editBusy");
+  const btnSave     = document.getElementById("btnSave");
+
+  // Fields
+  const f_title = document.getElementById("f_title");
+  const f_status = document.getElementById("f_status");
+  const f_branch = document.getElementById("f_branch");
+  const f_resourceId = document.getElementById("f_resourceId");
+  const f_resourceName = document.getElementById("f_resourceName");
+  const f_start = document.getElementById("f_start");
+  const f_end = document.getElementById("f_end");
+  const f_description = document.getElementById("f_description");
   const f_detailDescription = document.getElementById("f_detailDescription");
-  const f_detailPreview     = document.getElementById("f_detailPreview");
+  const f_detailPreview = document.getElementById("f_detailPreview");
   const f_allowRegistration = document.getElementById("f_allowRegistration");
-  const f_capacity          = document.getElementById("f_capacity");
-  const f_remaining         = document.getElementById("f_remaining");
-  const f_regOpensAt        = document.getElementById("f_regOpensAt");
-  const f_regClosesAt       = document.getElementById("f_regClosesAt");
-  const f_visibility        = document.getElementById("f_visibility");
-  // NEW: color fields
-  const f_colorPreset       = document.getElementById("f_colorPreset");
-  const f_color             = document.getElementById("f_color");
+  const f_capacity = document.getElementById("f_capacity");
+  const f_remaining = document.getElementById("f_remaining");
+  const f_regOpensOffsetMins = document.getElementById("f_regOpensOffsetMins");
+  const f_regClosesOffsetMins = document.getElementById("f_regClosesOffsetMins");
+  const f_visibility = document.getElementById("f_visibility");
+  const f_colorPreset = document.getElementById("f_colorPreset");
+  const f_color = document.getElementById("f_color");
+
+  // Recurrence fields
+  const f_repeat = document.getElementById("f_repeat");
+  const f_interval = document.getElementById("f_interval");
+  const weeklyDaysWrap = document.getElementById("weeklyDaysWrap");
+  const f_repeatEndType = document.getElementById("f_repeatEndType");
+  const repeatCountWrap = document.getElementById("repeatCountWrap");
+  const f_repeatCount = document.getElementById("f_repeatCount");
+  const repeatUntilWrap = document.getElementById("repeatUntilWrap");
+  const f_repeatUntil = document.getElementById("f_repeatUntil");
 
   // Delete modal
-  const delModal  = new bootstrap.Modal(document.getElementById("delModal"));
-  const delMsg    = document.getElementById("delMsg");
-  const delErr    = document.getElementById("delErr");
-  const delBusy   = document.getElementById("delBusy");
+  const delModalEl = document.getElementById("delModal");
+  const delModal = new bootstrap.Modal(delModalEl);
+  const delMsg = document.getElementById("delMsg");
+  const delErr = document.getElementById("delErr");
+  const delBusy = document.getElementById("delBusy");
   const btnDoDelete = document.getElementById("btnDoDelete");
 
-  // --- State
-  let resources = [];
+  // ---------- State ----------
+  let resources = []; // [{id,name,branch,capacity?}]
   let allEvents = [];
-  let filtered  = [];
-  let editingId = null;
-  let deletingId = null;
+  let filtered = [];
+  let editingId = null; // _id when editing a single event (non-recurrence edit)
+  let pendingDeleteId = null;
 
-  // --- Helpers (defensive DOM)
-  const hide = (el)=> { if (el && el.classList) el.classList.add("d-none"); };
-  const show = (el)=> { if (el && el.classList) el.classList.remove("d-none"); };
-  const setText = (el, txt)=> { if (el) el.textContent = txt; };
+  let unsubscribeEvents = null;
 
-  // --- Utils
+  // ---------- Utils ----------
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, m => (
     { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[m]
   ));
-
-  // plain text -> safe HTML with links + <br>
-  function textToHtml(text) {
-    if (!text) return "";
-    let safe = esc(text);
-    safe = safe.replace(
-      /(https?:\/\/[^\s<>"')\]]+)/g,
-      (m) => `<a href="${m}" target="_blank" rel="noopener noreferrer">${m}</a>`
-    );
-    safe = safe.replace(/\r\n|\r|\n/g, "<br>");
-    return safe;
-  }
-
-  // simple HTML -> plain text for editing
-  function htmlToPlain(html) {
-    if (!html) return "";
-    let s = html;
-    s = s.replace(/<a [^>]*href="([^"]+)"[^>]*>.*?<\/a>/gi, "$1");
-    s = s.replace(/<br\s*\/?>/gi, "\n");
-    s = s.replace(/<\/(p|div|li|h[1-6])>/gi, "\n");
-    const tmp = document.createElement("div");
-    tmp.innerHTML = s;
-    return (tmp.textContent || tmp.innerText || "").replace(/\u00A0/g, " ").trim();
-  }
-
-  function updateDetailPreviewFromTextarea() {
-    if (f_detailPreview) f_detailPreview.innerHTML = textToHtml(f_detailDescription.value || "");
-  }
 
   function toDate(ts) {
     if (!ts) return null;
@@ -102,167 +86,61 @@
   }
   function fmtDateTime(d) {
     if (!d) return "";
-    const pad = (n) => String(n).padStart(2,"0");
+    const pad = (n) => String(n).padStart(2, "0");
     return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
   }
-  function toLocalInputValue(d) {
+  function fmtDate(d) {
     if (!d) return "";
-    const pad = (n) => String(n).padStart(2,"0");
-    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    return d.toLocaleDateString(undefined, { weekday:"short", month:"short", day:"numeric", year:"numeric" });
   }
-  function fromLocalInputValue(str) {
-    if (!str) return null;
-    const d = new Date(str);
-    return isNaN(d) ? null : d;
+  function dtLocalFromInput(value) {
+    return value ? new Date(value) : null; // local time
   }
-  function stripHtmlToText(html) {
-    const tmp = document.createElement("div");
-    tmp.innerHTML = html || "";
-    return (tmp.textContent || tmp.innerText || "").trim();
+  function applyOffsetMins(date, mins) {
+    if (!date || typeof mins !== "number" || isNaN(mins)) return null;
+    return new Date(date.getTime() + mins * 60000);
   }
-  function normalizeHex(c) {
-    if (!c) return "#3b82f6";
-    let x = c.trim();
-    if (!x.startsWith("#")) x = "#" + x;
-    if (x.length === 4) { // #abc -> #aabbcc
-      x = "#" + x[1]+x[1]+x[2]+x[2]+x[3]+x[3];
+  function deriveRegWindow(startDate, opensOffsetMins, closesOffsetMins) {
+    const opens = applyOffsetMins(startDate, Number(opensOffsetMins));
+    const closes = applyOffsetMins(startDate, Number(closesOffsetMins));
+    if (opens && closes && opens >= closes) {
+      return { regOpensAt: opens, regClosesAt: new Date(opens.getTime() + 30 * 60000) };
     }
-    return x.toLowerCase();
+    return { regOpensAt: opens, regClosesAt: closes };
   }
 
-  // ----------------------------------------------------
-  // Conflict detection (same branch + resource, overlapping time)
-  async function findTimeConflict({ branch, resourceId, startTS, endTS, excludeId }) {
-    const col = window.db.collection("events");
-    let snap;
-    try {
-      // Needs composite index: branch asc, resourceId asc, start asc
-      snap = await col
-        .where("branch", "==", branch)
-        .where("resourceId", "==", resourceId)
-        .where("start", "<", endTS)
-        .orderBy("start", "asc")
-        .get();
-    } catch (err) {
-      console.warn("conflict query missing index; fallback:", err);
-      snap = await col
-        .where("branch", "==", branch)
-        .where("resourceId", "==", resourceId)
-        .get();
-    }
-
-    const newStart = startTS.toDate();
-    const newEnd   = endTS.toDate();
-
-    for (const doc of snap.docs) {
-      const ev = { _id: doc.id, ...doc.data() };
-      if (excludeId && ev._id === excludeId) continue;
-
-      const s = ev.start?.toDate ? ev.start.toDate() : (ev.start ? new Date(ev.start) : null);
-      const e = ev.end?.toDate   ? ev.end.toDate()   : (ev.end   ? new Date(ev.end)   : null);
-      if (!s || !e) continue;
-
-      if (s < newEnd && e > newStart) return ev; // overlap
-    }
-    return null;
-  }
-
-  // ----------------------------------------------------
-  // Load resources
-  async function loadResources() {
-    const col = window.db.collection("resources");
-    try {
-      const snap = await col.orderBy("branch","asc").orderBy("name","asc").get();
-      resources = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    } catch (err) {
-      console.warn("resources order index missing; fallback:", err);
-      const snap = await col.get();
-      resources = snap.docs.map(d=>({ id:d.id, ...d.data() }));
-    }
-
-    const opts = [`<option value="">--</option>`]
-      .concat(resources.map(r => `<option value="${esc(r.id)}" data-name="${esc(r.name||"")}" data-cap="${Number(r.capacity||0)}">${esc(r.name || r.id)}</option>`));
-    if (f_resourceId) f_resourceId.innerHTML = opts.join("");
-
-    const fopts = [`<option value="ALL">All Resources</option>`]
-      .concat(resources.map(r => `<option value="${esc(r.id)}">${esc(r.name)}</option>`));
-    if (resourceFilter) resourceFilter.innerHTML = fopts.join("");
-  }
-
-  function wireResourceAutoFill() {
-    if (!f_resourceId) return;
-    f_resourceId.addEventListener("change", () => {
-      const opt = f_resourceId.options[f_resourceId.selectedIndex];
-      if (!opt) { if (f_resourceName) f_resourceName.value = ""; return; }
-      if (f_resourceName) f_resourceName.value = opt.getAttribute("data-name") || "";
-      if (!f_capacity.value || Number(f_capacity.value) === 0) {
-        const cap = Number(opt.getAttribute("data-cap") || 0);
-        if (cap) f_capacity.value = String(cap);
-        if (!f_remaining.value || Number(f_remaining.value) === 0) {
-          f_remaining.value = cap ? String(cap) : "";
-        }
-      }
+  // Convert plain text → HTML (auto-link + preserve newlines)
+  function plainToHtml(text) {
+    const escText = esc(text || "");
+    const urlRegex = /((?:https?:\/\/|www\.)[^\s<]+)/gi;
+    const linked = escText.replace(urlRegex, (m) => {
+      const href = m.startsWith("www.") ? `https://${m}` : m;
+      return `<a href="${href}" target="_blank" rel="noopener">${m}</a>`;
     });
+    return linked.replace(/\n/g, "<br>");
   }
 
-  // ----------------------------------------------------
-  // Color preset ↔ input sync
-  function syncColorUIFromValue(hex) {
-    const val = normalizeHex(hex || "#3b82f6");
-    if (f_color) f_color.value = val;
-    if (f_colorPreset) {
-      // if val matches one of preset options, select it; else choose custom
-      const found = Array.from(f_colorPreset.options).find(o => o.value.toLowerCase() === val);
-      f_colorPreset.value = found ? found.value : "__custom";
-    }
-  }
-  function wireColorControls() {
-    if (f_colorPreset) {
-      f_colorPreset.addEventListener("change", () => {
-        if (f_colorPreset.value === "__custom") return; // keep current custom input
-        if (f_color) f_color.value = f_colorPreset.value;
-      });
-    }
-    if (f_color) {
-      f_color.addEventListener("input", () => {
-        // if user picks a custom color not in presets, set preset to custom
-        const hex = normalizeHex(f_color.value);
-        const found = Array.from(f_colorPreset.options || []).find(o => o.value.toLowerCase() === hex);
-        if (f_colorPreset) f_colorPreset.value = found ? found.value : "__custom";
-      });
-    }
+  function clearEditErrors() {
+    [editErr, editErrInline, editOk].forEach(el => { el.classList.add("d-none"); el.textContent=""; });
   }
 
-  // ----------------------------------------------------
-  // Listen events (future only)
-  function attachEventsListener() {
-    const now = new Date();
-    window.db.collection("events")
-      .where("start", ">=", now).orderBy("start","asc")
-      .onSnapshot(snap => {
-        allEvents = snap.docs.map(d => ({ _id: d.id, ...d.data() }));
-        applyFilter();
-      }, err => {
-        console.error("listen events failed:", err);
-        if (containerList) containerList.innerHTML = `<div class="text-danger py-4 text-center">Failed to load events.</div>`;
-      });
+  function showInlineError(msg) {
+    editErrInline.textContent = msg;
+    editErrInline.classList.remove("d-none");
   }
 
-  // ----------------------------------------------------
-  // Filter/Search
+  // ---------- Filters / Search ----------
   function applyFilter() {
-    const q = (searchInput?.value || "").toLowerCase().trim();
-    const brSel = (branchFilter?.value || "ALL").toUpperCase();
-    const resSel = (resourceFilter?.value || "ALL");
+    const q = (searchInput.value || "").toLowerCase().trim();
+    const brSel = (branchFilter.value || "ALL").toUpperCase();
+    const resSel = (resourceFilter.value || "ALL");
 
     filtered = allEvents.filter(ev => {
       const br = (ev.branch || "").toUpperCase();
       if (brSel !== "ALL" && br !== brSel) return false;
       if (resSel !== "ALL" && ev.resourceId !== resSel) return false;
       if (!q) return true;
-
-      const detailTxt = stripHtmlToText(ev.detailDescription || "");
-      const hay = [ev.title, ev.description, ev.resourceName, ev.branch, detailTxt]
+      const hay = [ev.title, ev.description, ev.resourceName, ev.branch]
         .map(v => (v || "").toString().toLowerCase());
       return hay.some(v => v.includes(q));
     });
@@ -270,271 +148,568 @@
     renderList();
   }
 
-  // ----------------------------------------------------
-  // Render list (show color dot)
+  // ---------- Render List ----------
   function renderList() {
     if (!filtered.length) {
-      if (listLabel) listLabel.textContent = "Upcoming";
-      if (containerList) containerList.innerHTML = `
+      containerList.innerHTML = `
         <div class="text-center text-muted py-5">
-          <i class="bi bi-calendar-x me-2"></i>No upcoming events match your filters.
+          <i class="bi bi-calendar-x me-2"></i>No events match your filters.
         </div>`;
       return;
     }
-    if (listLabel) listLabel.textContent = "Upcoming";
-
     const groups = {};
     for (const e of filtered) {
       const d = toDate(e.start);
       if (!d) continue;
       const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
-      const label = d.toLocaleString(undefined, { month:"long", year:"numeric" });
-      (groups[key] ||= { label, events: [] }).events.push(e);
+      (groups[key] ||= { label: d.toLocaleString(undefined,{ month: "long", year: "numeric" }), events: [] }).events.push(e);
     }
     const parts = [];
-    Object.keys(groups).sort().forEach(k => {
-      const g = groups[k];
+    Object.keys(groups).sort().forEach(key => {
+      const g = groups[key];
       parts.push(`<div class="month-header">${esc(g.label)}</div>`);
-      g.events.forEach(e => parts.push(renderRow(e)));
+      for (const e of g.events) parts.push(renderEventRow(e));
     });
+    containerList.innerHTML = parts.join("");
 
-    if (containerList) containerList.innerHTML = parts.join("");
+    // Bind edit/delete
+    containerList.querySelectorAll("[data-action='edit']").forEach(btn=>{
+      btn.addEventListener("click", ()=> openEdit(btn.getAttribute("data-id")));
+    });
+    containerList.querySelectorAll("[data-action='delete']").forEach(btn=>{
+      btn.addEventListener("click", ()=> openDelete(btn.getAttribute("data-id")));
+    });
   }
 
-  function renderRow(e) {
-    const s = toDate(e.start), ed = toDate(e.end);
-    const dateLine = `${fmtDateTime(s)} – ${fmtDateTime(ed)}`;
-    const remainTxt = (typeof e.remaining === "number" && typeof e.capacity === "number")
-      ? `${e.remaining}/${e.capacity} left` : (typeof e.remaining === "number" ? `${e.remaining} left` : "");
-    const previewSrc = e.description || stripHtmlToText(e.detailDescription || "");
-    const preview = previewSrc ? esc(previewSrc).slice(0,180) + (previewSrc.length>180 ? "…" : "") : "";
-    const color = normalizeHex(e.color || "#3b82f6");
+  function renderEventRow(e) {
+    const s = toDate(e.start), ee = toDate(e.end);
+    const dateLine = `${fmtDateTime(s)} – ${fmtDateTime(ee)}`;
+    const remaining = (typeof e.remaining === "number") ? e.remaining : null;
+    const capacity  = (typeof e.capacity === "number") ? e.capacity : null;
+    const remainTxt = (remaining != null && capacity != null)
+      ? `${remaining}/${capacity} left`
+      : (remaining != null ? `${remaining} left` : "");
 
     return `
-      <div class="event-card" data-id="${esc(e._id)}">
+      <div class="event-card">
         <div class="d-flex justify-content-between align-items-start">
           <div class="me-3">
-            <div class="d-flex align-items-center gap-2">
-              <span style="display:inline-block;width:.85rem;height:.85rem;border-radius:50%;background:${esc(color)};"></span>
-              <div class="event-title">${esc(e.title || "Untitled Event")}</div>
-            </div>
+            <div class="event-title">${esc(e.title || "Untitled Event")}</div>
             <div class="event-meta mt-1">
               <span class="me-2"><i class="bi bi-clock"></i> ${esc(dateLine)}</span>
               ${e.resourceName ? `<span class="badge badge-room me-2"><i class="bi bi-building me-1"></i>${esc(e.resourceName)}</span>` : ""}
               ${e.branch ? `<span class="badge badge-branch me-2">${esc(e.branch)}</span>` : ""}
-              ${e.status ? `<span class="badge text-bg-light border">${esc(e.status)}</span>` : ""}
-              ${e.visibility ? `<span class="badge text-bg-light border">${esc(e.visibility)}</span>` : ""}
+              <span class="badge text-bg-light border">${esc(e.status || "")}</span>
+              <span class="badge text-bg-light border">${esc(e.visibility || "")}</span>
             </div>
-            ${preview ? `<div class="mt-2 text-secondary">${preview}</div>` : ""}
+            ${e.description ? `<div class="mt-2 text-secondary">${esc(e.description)}</div>` : ""}
           </div>
           <div class="text-end">
             ${remainTxt ? `<div class="small text-muted mb-2">${esc(remainTxt)}</div>` : ""}
-            <div class="btn-group btn-group-sm">
-              <button class="btn btn-outline-secondary btn-edit" data-id="${esc(e._id)}"><i class="bi bi-pencil-square me-1"></i>Edit</button>
-              <button class="btn btn-outline-danger btn-del" data-id="${esc(e._id)}"><i class="bi bi-trash me-1"></i>Delete</button>
-            </div>
+            <button class="btn btn-outline-secondary btn-sm me-1" data-action="edit" data-id="${esc(e._id)}">
+              <i class="bi bi-pencil-square me-1"></i>Edit
+            </button>
+            <button class="btn btn-outline-danger btn-sm" data-action="delete" data-id="${esc(e._id)}">
+              <i class="bi bi-trash me-1"></i>Delete
+            </button>
           </div>
         </div>
       </div>
     `;
   }
 
-  // ----------------------------------------------------
-  // Edit & Save
-  if (containerList) {
-    containerList.addEventListener("click", (ev) => {
-      const editBtn = ev.target.closest(".btn-edit");
-      const delBtn  = ev.target.closest(".btn-del");
-      if (editBtn) {
-        const id = editBtn.getAttribute("data-id");
-        const row = allEvents.find(x => x._id === id);
-        if (row) openEdit(row);
-      } else if (delBtn) {
-        const id = delBtn.getAttribute("data-id");
-        const row = allEvents.find(x => x._id === id);
-        if (row) openDelete(row);
-      }
-    });
+  // ---------- Resources & Events load ----------
+  async function loadResources() {
+    const col = window.db.collection("resources");
+    try {
+      const snap = await col.orderBy("branch","asc").orderBy("name","asc").get();
+      resources = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    } catch (err) {
+      console.warn("resources index missing; client-sort fallback:", err);
+      const snap = await col.get();
+      resources = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+        .sort((a,b) => (String(a.branch||"").localeCompare(String(b.branch||"")) ||
+                        String(a.name||"").localeCompare(String(b.name||""))));
+    }
+    const opts = [`<option value="">-- select --</option>`]
+      .concat(resources.map(r => `<option value="${esc(r.id)}">${esc(r.name)} (${esc(r.branch||"-")})</option>`));
+    f_resourceId.innerHTML = opts.join("");
+
+    // top filter dropdown
+    const fopts = [`<option value="ALL">All Resources</option>`]
+      .concat(resources.map(r => `<option value="${esc(r.id)}">${esc(r.name)}</option>`));
+    resourceFilter.innerHTML = fopts.join("");
   }
 
-  if (btnNew) btnNew.addEventListener("click", () => openEdit(null));
+  function attachEventsListener() {
+    if (typeof unsubscribeEvents === "function") { unsubscribeEvents(); unsubscribeEvents = null; }
 
-  function clearEditErrors() {
-    hide(editErr); setText(editErr, "");
-    hide(editErrInline); setText(editErrInline, "");
-    hide(editOk);
+    const now = new Date();
+    const col = window.db.collection("events");
+    try {
+      unsubscribeEvents = col
+        .where("start",">=", now)
+        .orderBy("start","asc")
+        .onSnapshot(snap => {
+          allEvents = snap.docs.map(d => ({ _id: d.id, ...d.data() }));
+          applyFilter();
+        }, err => {
+          console.error("events listener error:", err);
+          containerList.innerHTML = `<div class="text-danger py-4 text-center">Failed to load events.</div>`;
+        });
+    } catch (err) {
+      console.error("events listener threw:", err);
+      containerList.innerHTML = `<div class="text-danger py-4 text-center">Failed to load events.</div>`;
+    }
   }
 
-  function openEdit(row) {
-    editingId = row?._id || null;
+  // ---------- Open Edit ----------
+  function openEdit(id) {
     clearEditErrors();
+    editOk.classList.add("d-none");
+    btnSave.disabled = false;
+    editBusy.classList.add("d-none");
 
-    setText(editTitleEl, editingId ? "Edit Event" : "New Event");
-    if (f_title) f_title.value = row?.title || "";
-    if (f_status) f_status.value = row?.status || "draft";
-    if (f_branch) f_branch.value = row?.branch || "";
-    if (f_resourceId) f_resourceId.value = row?.resourceId || "";
-    if (f_resourceName) f_resourceName.value = row?.resourceName || "";
-    if (f_start) f_start.value = toLocalInputValue(toDate(row?.start));
-    if (f_end) f_end.value   = toLocalInputValue(toDate(row?.end));
-    if (f_description) f_description.value = row?.description || "";
+    editingId = id || null;
+    editTitle.textContent = editingId ? "Edit Event" : "New Event";
 
-    const storedHtml = row?.detailDescription || "";
-    if (f_detailDescription) f_detailDescription.value = htmlToPlain(storedHtml);
-    updateDetailPreviewFromTextarea();
+    // Defaults
+    f_title.value = "";
+    f_status.value = "draft";
+    f_branch.value = "";
+    f_resourceId.value = "";
+    f_resourceName.value = "";
+    f_start.value = "";
+    f_end.value = "";
+    f_description.value = "";
+    f_detailDescription.value = "";
+    f_detailPreview.innerHTML = "";
 
-    if (f_allowRegistration) f_allowRegistration.value = String(row?.allowRegistration !== false);
-    if (f_capacity)   f_capacity.value = (row?.capacity ?? "");
-    if (f_remaining)  f_remaining.value = (row?.remaining ?? "");
-    if (f_regOpensAt) f_regOpensAt.value = toLocalInputValue(toDate(row?.regOpensAt));
-    if (f_regClosesAt)f_regClosesAt.value = toLocalInputValue(toDate(row?.regClosesAt));
-    if (f_visibility) f_visibility.value = row?.visibility || "public";
+    f_allowRegistration.value = "true";
+    f_capacity.value = "";
+    f_remaining.value = "";
+    f_regOpensOffsetMins.value = "-10080";
+    f_regClosesOffsetMins.value = "-60";
 
-    // Color
-    const color = normalizeHex(row?.color || "#3b82f6");
-    syncColorUIFromValue(color);
+    f_visibility.value = "public";
+    f_colorPreset.value = "#3b82f6";
+    f_color.value = "#3b82f6";
 
+    // Recurrence defaults
+    f_repeat.value = "none";
+    f_interval.value = "1";
+    weeklyDaysWrap.style.display = "none";
+    f_repeatEndType.value = "count";
+    repeatCountWrap.style.display = "";
+    repeatUntilWrap.style.display = "none";
+    f_repeatCount.value = "1";
+    f_repeatUntil.value = "";
+
+    if (!editingId) {
+      editModal.show();
+      return;
+    }
+
+    const ev = allEvents.find(x => x._id === editingId);
+    if (!ev) { showInlineError("Event not found."); return; }
+
+    // Fill form for single event edit
+    f_title.value = ev.title || "";
+    f_status.value = ev.status || "draft";
+    f_branch.value = ev.branch || "";
+    f_resourceId.value = ev.resourceId || "";
+    f_resourceName.value = ev.resourceName || "";
+    f_start.value = inputValueFromDate(toDate(ev.start));
+    f_end.value = inputValueFromDate(toDate(ev.end));
+    f_description.value = ev.description || "";
+    f_detailDescription.value = textFromHtml(ev.detailDescription || "");
+    f_detailPreview.innerHTML = ev.detailDescription || "";
+
+    f_allowRegistration.value = (ev.allowRegistration === false) ? "false" : "true";
+    f_capacity.value = (ev.capacity ?? "");
+    f_remaining.value = (ev.remaining ?? "");
+    f_visibility.value = ev.visibility || "public";
+
+    if (ev.color) {
+      f_colorPreset.value = (isPreset(ev.color) ? ev.color : "__custom");
+      f_color.value = normalizeHex(ev.color);
+    } else {
+      f_colorPreset.value = "#3b82f6";
+      f_color.value = "#3b82f6";
+    }
+
+    // Recurrence stays "none" when editing a single event
     editModal.show();
   }
 
-  // live preview & color sync
-  if (f_detailDescription) f_detailDescription.addEventListener("input", updateDetailPreviewFromTextarea);
-  wireColorControls();
-
-  if (editForm) {
-    editForm.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      clearEditErrors();
-      if (btnSave) btnSave.disabled = true;
-      show(editBusy);
-
-      try {
-        const title = (f_title?.value || "").trim();
-        if (!title) throw new Error("Title is required.");
-
-        const start = fromLocalInputValue(f_start?.value);
-        const end   = fromLocalInputValue(f_end?.value);
-        if (!start || !end || end <= start) throw new Error("Invalid start/end time.");
-
-        if (!f_branch?.value) throw new Error("Branch is required.");
-        if (!f_resourceId?.value) throw new Error("Resource is required.");
-
-        const startTS = firebase.firestore.Timestamp.fromDate(start);
-        const endTS   = firebase.firestore.Timestamp.fromDate(end);
-
-        // Conflict check
-        const conflict = await findTimeConflict({
-          branch: f_branch.value,
-          resourceId: f_resourceId.value,
-          startTS,
-          endTS,
-          excludeId: editingId || null
-        });
-        if (conflict) {
-          const titleC = conflict.title || "(untitled)";
-          const sC = conflict.start?.toDate?.() || new Date(conflict.start);
-          const eC = conflict.end?.toDate?.() || new Date(conflict.end);
-          const pad = (n)=> String(n).padStart(2,"0");
-          const fmt = (d)=> `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-          throw new Error(`Time conflict in this room/branch with "${titleC}" (${fmt(sC)} – ${fmt(eC)}).`);
-        }
-
-        const detailHtml = textToHtml(f_detailDescription?.value || "");
-        // Color to save
-        const color = normalizeHex(f_color?.value || "#3b82f6");
-
-        const data = {
-          title,
-          status: f_status?.value || "draft",
-          branch: f_branch?.value || "",
-          resourceId: f_resourceId?.value || null,
-          resourceName: f_resourceName?.value || null,
-          start: startTS,
-          end: endTS,
-          description: f_description?.value || "",
-          detailDescription: detailHtml,
-          allowRegistration: (f_allowRegistration?.value === "true"),
-          capacity: f_capacity?.value ? Number(f_capacity.value) : null,
-          remaining: f_remaining?.value ? Number(f_remaining.value) : null,
-          regOpensAt: f_regOpensAt?.value ? firebase.firestore.Timestamp.fromDate(fromLocalInputValue(f_regOpensAt.value)) : null,
-          regClosesAt: f_regClosesAt?.value ? firebase.firestore.Timestamp.fromDate(fromLocalInputValue(f_regClosesAt.value)) : null,
-          visibility: f_visibility?.value || "public",
-          color, // <-- NEW
-          updatedAt: new Date()
-        };
-
-        const col = window.db.collection("events");
-        if (editingId) {
-          await col.doc(editingId).update(data);
-        } else {
-          data.createdAt = new Date();
-          if (data.remaining == null && typeof data.capacity === "number") {
-            data.remaining = data.capacity;
-          }
-          const doc = await col.add(data);
-          await col.doc(doc.id).update({ id: doc.id });
-        }
-
-        updateDetailPreviewFromTextarea();
-        show(editOk);
-        setTimeout(()=> editModal.hide(), 800);
-
-      } catch (err) {
-        console.error("save error:", err);
-        const msg = err?.message || "Save failed.";
-        setText(editErr, msg); show(editErr);
-        setText(editErrInline, msg); show(editErrInline);
-      } finally {
-        if (btnSave) btnSave.disabled = false;
-        hide(editBusy);
-      }
-    });
+  function inputValueFromDate(d) {
+    if (!d) return "";
+    const pad = (n)=> String(n).padStart(2,"0");
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    // seconds omitted to match input format
   }
 
-  // ----------------------------------------------------
-  // Delete
-  function openDelete(row) {
-    deletingId = row?._id || null;
-    if (delErr) { hide(delErr); setText(delErr, ""); }
-    if (delMsg) delMsg.innerHTML = `Delete <strong>${esc(row?.title || "")}</strong>?`;
+  function textFromHtml(html) {
+    const div = document.createElement("div");
+    div.innerHTML = html || "";
+    return div.innerText || "";
+  }
+
+  function isPreset(hex) {
+    const presets = ["#3b82f6","#22c55e","#ef4444","#eab308","#a855f7","#f97316","#14b8a6","#64748b"];
+    return presets.includes(normalizeHex(hex));
+  }
+  function normalizeHex(c) {
+    if (!c) return "#3b82f6";
+    let x = String(c).trim();
+    if (!x.startsWith("#")) x = "#" + x;
+    if (x.length === 4) x = "#" + x[1]+x[1]+x[2]+x[2]+x[3]+x[3];
+    return x.toLowerCase();
+  }
+
+  // ---------- Delete ----------
+  function openDelete(id) {
+    pendingDeleteId = id || null;
+    delErr.classList.add("d-none");
+    delBusy.classList.add("d-none");
+    delMsg.textContent = "Are you sure to delete this event?";
     delModal.show();
   }
 
-  if (btnDoDelete) {
-    btnDoDelete.addEventListener("click", async () => {
-      if (!deletingId) return;
-      btnDoDelete.disabled = true; show(delBusy);
-      try {
-        await window.db.collection("events").doc(deletingId).delete();
-        delModal.hide();
-      } catch (err) {
-        console.error("delete error:", err);
-        setText(delErr, err?.message || "Delete failed."); show(delErr);
-      } finally {
-        btnDoDelete.disabled = false; hide(delBusy);
+  btnDoDelete.addEventListener("click", async () => {
+    if (!pendingDeleteId) return;
+    delErr.classList.add("d-none");
+    delBusy.classList.remove("d-none");
+
+    try {
+      await window.db.collection("events").doc(pendingDeleteId).delete();
+      delModal.hide();
+    } catch (err) {
+      console.error("delete error:", err);
+      delErr.textContent = err.message || "Delete failed.";
+      delErr.classList.remove("d-none");
+    } finally {
+      delBusy.classList.add("d-none");
+    }
+  });
+
+  // ---------- Color picker link ----------
+  f_colorPreset.addEventListener("change", () => {
+    if (f_colorPreset.value === "__custom") return;
+    f_color.value = f_colorPreset.value;
+  });
+  f_color.addEventListener("input", () => {
+    f_colorPreset.value = "__custom";
+  });
+
+  // ---------- Recurrence UI dynamics ----------
+  f_repeat.addEventListener("change", () => {
+    weeklyDaysWrap.style.display = (f_repeat.value === "weekly") ? "" : "none";
+  });
+  f_repeatEndType.addEventListener("change", () => {
+    const isCount = f_repeatEndType.value === "count";
+    repeatCountWrap.style.display = isCount ? "" : "none";
+    repeatUntilWrap.style.display = isCount ? "none" : "";
+  });
+
+  // ---------- Detail preview ----------
+  f_detailDescription.addEventListener("input", () => {
+    f_detailPreview.innerHTML = plainToHtml(f_detailDescription.value);
+  });
+
+  // ---------- New ----------
+  btnNew.addEventListener("click", () => openEdit(null));
+
+  // ---------- Save (Create/Update + Materialize Recurrence) ----------
+  editForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    clearEditErrors();
+    btnSave.disabled = true;
+    editBusy.classList.remove("d-none");
+
+    try {
+      // Basic fields
+      const title = f_title.value.trim();
+      const status = f_status.value;
+      const branch = f_branch.value;
+      const resourceId = f_resourceId.value;
+      const resourceName = f_resourceName.value.trim();
+      const start = dtLocalFromInput(f_start.value);
+      const end = dtLocalFromInput(f_end.value);
+      if (!title || !branch || !resourceId || !start || !end || end <= start) {
+        throw new Error("Please fill Title, Branch, Resource, Start/End (End must be after Start).");
       }
-    });
+
+      // Registration & visibility
+      const allowRegistration = (f_allowRegistration.value === "true");
+      const capacity = f_capacity.value ? Number(f_capacity.value) : null;
+      const remaining = f_remaining.value ? Number(f_remaining.value) : null;
+      const opensOffset = f_regOpensOffsetMins.value ? Number(f_regOpensOffsetMins.value) : null;
+      const closesOffset = f_regClosesOffsetMins.value ? Number(f_regClosesOffsetMins.value) : null;
+      const visibility = f_visibility.value;
+
+      // Color
+      const color = normalizeHex(f_color.value || "#3b82f6");
+
+      // Descriptions
+      const description = f_description.value.trim();
+      const detailDescriptionHtml = plainToHtml(f_detailDescription.value);
+
+      // Recurrence
+      const repeat = f_repeat.value;           // none/daily/weekly/monthly
+      const interval = Math.max(1, Number(f_interval.value || 1));
+      const endType = f_repeatEndType.value;   // count/until
+      const count = Math.max(1, Number(f_repeatCount.value || 1));
+      const until = f_repeatUntil.value ? new Date(f_repeatUntil.value + "T23:59:59") : null;
+      const weekdays = Array.from(weeklyDaysWrap.querySelectorAll("input[type='checkbox']:checked"))
+        .map(cb => Number(cb.value)); // 0..6
+
+      // If editing single event (no recurrence re-materialization)
+      if (editingId) {
+        // Conflict check (single)
+        const conflictMsg = await hasConflict(branch, resourceId, start, end, editingId);
+        if (conflictMsg) {
+          showInlineError(conflictMsg);
+          throw new Error(conflictMsg);
+        }
+
+        const payload = {
+          title, description, detailDescription: detailDescriptionHtml,
+          branch, resourceId, resourceName, color,
+          visibility, status,
+          start, end,
+          allowRegistration,
+          capacity: capacity ?? undefined,
+          remaining: remaining ?? undefined
+        };
+
+        // derive per-event reg window only if offsets provided
+        if (allowRegistration) {
+          const { regOpensAt, regClosesAt } = deriveRegWindow(start, opensOffset, closesOffset);
+          if (regOpensAt) payload.regOpensAt = regOpensAt;
+          if (regClosesAt) payload.regClosesAt = regClosesAt;
+        } else {
+          payload.regOpensAt = undefined;
+          payload.regClosesAt = undefined;
+        }
+
+        await window.db.collection("events").doc(editingId).update(payload);
+        editOk.textContent = "Saved.";
+        editOk.classList.remove("d-none");
+        setTimeout(()=> editModal.hide(), 800);
+        return;
+      }
+
+      // New event: handle recurrence materialization
+      const occurrences = buildOccurrences({ repeat, interval, start, end, endType, count, until, weekdays });
+
+      if (!occurrences.length) {
+        throw new Error("No occurrences generated. Check your repeat settings.");
+      }
+
+      // Batch create with conflict check per occurrence
+      const batch = window.db.batch();
+      const evCol = window.db.collection("events");
+
+      // Save stats for message
+      let made = 0;
+      let skipped = 0;
+      let firstConflictMsg = null;
+
+      for (const occ of occurrences) {
+        const occStart = occ.start;
+        const occEnd = occ.end;
+
+        // Conflict check
+        const conflictMsg = await hasConflict(branch, resourceId, occStart, occEnd, null);
+        if (conflictMsg) {
+          skipped++;
+          if (!firstConflictMsg) firstConflictMsg = conflictMsg;
+          continue;
+        }
+
+        const docRef = evCol.doc();
+
+        const payload = {
+          title, description, detailDescription: detailDescriptionHtml,
+          branch, resourceId, resourceName, color,
+          visibility, status,
+          start: occStart,
+          end: occEnd,
+          allowRegistration,
+          createdAt: new Date(),
+          updatedAt: new Date()
+        };
+
+        if (capacity != null) {
+          payload.capacity = capacity;
+          payload.remaining = (remaining != null ? remaining : capacity);
+        }
+
+        if (allowRegistration) {
+          const { regOpensAt, regClosesAt } = deriveRegWindow(occStart, opensOffset, closesOffset);
+          if (regOpensAt) payload.regOpensAt = regOpensAt;
+          if (regClosesAt) payload.regClosesAt = regClosesAt;
+        }
+
+        batch.set(docRef, payload);
+        made++;
+      }
+
+      if (made === 0) {
+        if (firstConflictMsg) {
+          showInlineError("All occurrences conflict with existing events.");
+          throw new Error(firstConflictMsg);
+        } else {
+          throw new Error("No events created.");
+        }
+      }
+
+      await batch.commit();
+
+      const msg = skipped > 0
+        ? `Created ${made} event(s). Skipped ${skipped} due to time conflicts.`
+        : `Created ${made} event(s).`;
+      editOk.textContent = msg;
+      editOk.classList.remove("d-none");
+      setTimeout(()=> editModal.hide(), 1000);
+
+    } catch (err) {
+      console.error("save error:", err);
+      if (!editErrInline.classList.contains("d-none")) {
+        // already shown inline conflict
+      } else {
+        editErr.textContent = err.message || "Save failed.";
+        editErr.classList.remove("d-none");
+      }
+    } finally {
+      editBusy.classList.add("d-none");
+      btnSave.disabled = false;
+    }
+  });
+
+  // Build occurrences for Approach A
+  function buildOccurrences({ repeat, interval, start, end, endType, count, until, weekdays }) {
+    const out = [];
+    const durMs = end - start;
+
+    // Helper to push an occurrence copy
+    const pushOcc = (s) => out.push({ start: new Date(s), end: new Date(s.getTime() + durMs) });
+
+    if (repeat === "none") {
+      pushOcc(start);
+      return out;
+    }
+
+    // Stop conditions
+    const limitCount = (endType === "count") ? Math.max(1, count) : Number.POSITIVE_INFINITY;
+    const limitUntil = (endType === "until" && until) ? until : null;
+
+    let made = 0;
+    let cursor = new Date(start);
+
+    if (repeat === "daily") {
+      while (made < limitCount) {
+        if (!limitUntil || cursor <= limitUntil) pushOcc(cursor);
+        else break;
+        made++;
+        cursor = new Date(cursor.getTime() + interval*24*60*60*1000);
+      }
+    } else if (repeat === "weekly") {
+      // For weekly, move through weeks by interval; within each week, add selected weekdays
+      const startDow = start.getDay(); // 0..6
+      // base week (week of start)
+      let weekStart = new Date(start);
+      weekStart.setHours(0,0,0,0);
+      weekStart.setDate(weekStart.getDate() - startDow); // back to Sunday
+
+      while (made < limitCount) {
+        // days in this week
+        for (const dow of weekdays.length ? weekdays : [startDow]) {
+          const occStart = new Date(weekStart);
+          occStart.setDate(weekStart.getDate() + dow);
+          occStart.setHours(start.getHours(), start.getMinutes(), 0, 0);
+          if (occStart < start) continue; // don't include before the very first start
+          if (limitUntil && occStart > limitUntil) { made = limitCount; break; }
+          pushOcc(occStart);
+          made++;
+          if (made >= limitCount) break;
+        }
+        // jump weeks
+        weekStart = new Date(weekStart.getTime() + interval*7*24*60*60*1000);
+      }
+    } else if (repeat === "monthly") {
+      const startDay = start.getDate();
+      while (made < limitCount) {
+        if (!limitUntil || cursor <= limitUntil) pushOcc(cursor);
+        else break;
+        made++;
+        // advance by N months preserving day where possible
+        const m = cursor.getMonth();
+        const y = cursor.getFullYear();
+        const next = new Date(y, m + interval, startDay, start.getHours(), start.getMinutes(), 0, 0);
+        cursor = next;
+      }
+    }
+
+    return out;
   }
 
-  // ----------------------------------------------------
-  // Filters
-  branchFilter?.addEventListener("change", applyFilter);
-  resourceFilter?.addEventListener("change", applyFilter);
-  searchInput?.addEventListener("input", () => {
+  // Time conflict check (resource + branch overlap)
+  async function hasConflict(branch, resourceId, start, end, ignoreId) {
+    if (!branch || !resourceId || !start || !end) return null;
+    const col = window.db.collection("events");
+    // Firestore supports only one range field — we use start < end, then filter by doc.end > start in client
+    try {
+      const snap = await col
+        .where("branch","==",branch)
+        .where("resourceId","==",resourceId)
+        .where("start","<", end)
+        .orderBy("start","asc")
+        .limit(50)
+        .get();
+
+      const overlap = snap.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        .filter(ev => (!ignoreId || ev._id !== ignoreId) && ev.id !== ignoreId) // support both shapes
+        .some(ev => {
+          const s = toDate(ev.start), e = toDate(ev.end);
+          if (!s || !e) return false;
+          return s < end && e > start; // overlap
+        });
+
+      return overlap ? "Time conflict: same branch & resource already occupied in that time range." : null;
+    } catch (err) {
+      console.warn("conflict check failed; allowing save:", err);
+      return null; // fail-open to avoid blocking saves if query fails
+    }
+  }
+
+  // ---------- Resource auto-fill ----------
+  f_resourceId.addEventListener("change", () => {
+    const r = resources.find(x => x.id === f_resourceId.value);
+    f_resourceName.value = r ? (r.name || "") : "";
+    if (r && !f_capacity.value && typeof r.capacity === "number") {
+      f_capacity.value = r.capacity;
+      if (!f_remaining.value) f_remaining.value = r.capacity;
+    }
+  });
+
+  // ---------- Top filters/search ----------
+  branchFilter.addEventListener("change", applyFilter);
+  resourceFilter.addEventListener("change", applyFilter);
+  searchInput.addEventListener("input", () => {
     clearTimeout(searchInput._t);
     searchInput._t = setTimeout(applyFilter, 120);
   });
 
-  // ----------------------------------------------------
-  // Init
+  // ---------- Init ----------
   document.addEventListener("DOMContentLoaded", async () => {
     if (!window.db) {
-      if (containerList) containerList.innerHTML = `<div class="text-danger py-4 text-center">Firestore not initialized.</div>`;
+      containerList.innerHTML = `<div class="text-danger py-4 text-center">Firestore not initialized.</div>`;
       return;
     }
     await loadResources();
-    wireResourceAutoFill();
     attachEventsListener();
-    if (btnNew) btnNew.disabled = false;
   });
 })();
