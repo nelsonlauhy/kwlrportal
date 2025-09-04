@@ -3,7 +3,7 @@
 // - detailDescription: auto-link + <br> (Option A) with live preview
 // - Color tag
 // - Conflict detection (branch + resource overlap)
-// - Registration windows per occurrence via offsets (mins)
+// - Registration windows per occurrence via DAYS-before-start
 
 (function() {
   // ---------- DOM ----------
@@ -40,8 +40,8 @@
   const f_allowRegistration = document.getElementById("f_allowRegistration");
   const f_capacity = document.getElementById("f_capacity");
   const f_remaining = document.getElementById("f_remaining");
-  const f_regOpensOffsetMins = document.getElementById("f_regOpensOffsetMins");
-  const f_regClosesOffsetMins = document.getElementById("f_regClosesOffsetMins");
+  const f_regOpensDays = document.getElementById("f_regOpensDays");
+  const f_regClosesDays = document.getElementById("f_regClosesDays");
   const f_visibility = document.getElementById("f_visibility");
   const f_colorPreset = document.getElementById("f_colorPreset");
   const f_color = document.getElementById("f_color");
@@ -68,7 +68,7 @@
   let resources = []; // [{id,name,branch,capacity?}]
   let allEvents = [];
   let filtered = [];
-  let editingId = null; // _id when editing a single event (non-recurrence edit)
+  let editingId = null; // _id when editing a single event
   let pendingDeleteId = null;
 
   let unsubscribeEvents = null;
@@ -89,24 +89,26 @@
     const pad = (n) => String(n).padStart(2, "0");
     return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
   }
-  function fmtDate(d) {
+  function inputValueFromDate(d) {
     if (!d) return "";
-    return d.toLocaleDateString(undefined, { weekday:"short", month:"short", day:"numeric", year:"numeric" });
+    const pad = (n)=> String(n).padStart(2,"0");
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
   }
   function dtLocalFromInput(value) {
     return value ? new Date(value) : null; // local time
   }
-  function applyOffsetMins(date, mins) {
-    if (!date || typeof mins !== "number" || isNaN(mins)) return null;
-    return new Date(date.getTime() + mins * 60000);
-  }
-  function deriveRegWindow(startDate, opensOffsetMins, closesOffsetMins) {
-    const opens = applyOffsetMins(startDate, Number(opensOffsetMins));
-    const closes = applyOffsetMins(startDate, Number(closesOffsetMins));
-    if (opens && closes && opens >= closes) {
-      return { regOpensAt: opens, regClosesAt: new Date(opens.getTime() + 30 * 60000) };
+
+  // Compute reg windows using DAYS before start
+  function deriveRegWindowDays(startDate, opensDays, closesDays) {
+    const openMs = (Number(opensDays) || 0) * 24 * 60 * 60 * 1000;
+    const closeMs = (Number(closesDays) || 0) * 24 * 60 * 60 * 1000;
+    const regOpensAt = new Date(startDate.getTime() - openMs);
+    let regClosesAt = new Date(startDate.getTime() - closeMs);
+    if (regOpensAt >= regClosesAt) {
+      // ensure closes is after opens by 30 minutes
+      regClosesAt = new Date(regOpensAt.getTime() + 30 * 60000);
     }
-    return { regOpensAt: opens, regClosesAt: closes };
+    return { regOpensAt, regClosesAt };
   }
 
   // Convert plain text → HTML (auto-link + preserve newlines)
@@ -172,7 +174,6 @@
     });
     containerList.innerHTML = parts.join("");
 
-    // Bind edit/delete
     containerList.querySelectorAll("[data-action='edit']").forEach(btn=>{
       btn.addEventListener("click", ()=> openEdit(btn.getAttribute("data-id")));
     });
@@ -233,7 +234,7 @@
     }
     const opts = [`<option value="">-- select --</option>`]
       .concat(resources.map(r => `<option value="${esc(r.id)}">${esc(r.name)} (${esc(r.branch||"-")})</option>`));
-    f_resourceId.innerHTML = opts.join("");
+    document.getElementById("f_resourceId").innerHTML = opts.join("");
 
     // top filter dropdown
     const fopts = [`<option value="ALL">All Resources</option>`]
@@ -271,7 +272,7 @@
     editBusy.classList.add("d-none");
 
     editingId = id || null;
-    editTitle.textContent = editingId ? "Edit Event" : "New Event";
+    document.getElementById("editTitle").textContent = editingId ? "Edit Event" : "New Event";
 
     // Defaults
     f_title.value = "";
@@ -288,8 +289,8 @@
     f_allowRegistration.value = "true";
     f_capacity.value = "";
     f_remaining.value = "";
-    f_regOpensOffsetMins.value = "-10080";
-    f_regClosesOffsetMins.value = "-60";
+    f_regOpensDays.value = "7";
+    f_regClosesDays.value = "1";
 
     f_visibility.value = "public";
     f_colorPreset.value = "#3b82f6";
@@ -305,15 +306,11 @@
     f_repeatCount.value = "1";
     f_repeatUntil.value = "";
 
-    if (!editingId) {
-      editModal.show();
-      return;
-    }
+    if (!editingId) { editModal.show(); return; }
 
     const ev = allEvents.find(x => x._id === editingId);
     if (!ev) { showInlineError("Event not found."); return; }
 
-    // Fill form for single event edit
     f_title.value = ev.title || "";
     f_status.value = ev.status || "draft";
     f_branch.value = ev.branch || "";
@@ -338,15 +335,8 @@
       f_color.value = "#3b82f6";
     }
 
-    // Recurrence stays "none" when editing a single event
+    // We do not try to reverse-calc days from existing regOpensAt/regClosesAt.
     editModal.show();
-  }
-
-  function inputValueFromDate(d) {
-    if (!d) return "";
-    const pad = (n)=> String(n).padStart(2,"0");
-    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-    // seconds omitted to match input format
   }
 
   function textFromHtml(html) {
@@ -420,7 +410,7 @@
   // ---------- New ----------
   btnNew.addEventListener("click", () => openEdit(null));
 
-  // ---------- Save (Create/Update + Materialize Recurrence) ----------
+  // ---------- Save ----------
   editForm.addEventListener("submit", async (e) => {
     e.preventDefault();
     clearEditErrors();
@@ -444,8 +434,8 @@
       const allowRegistration = (f_allowRegistration.value === "true");
       const capacity = f_capacity.value ? Number(f_capacity.value) : null;
       const remaining = f_remaining.value ? Number(f_remaining.value) : null;
-      const opensOffset = f_regOpensOffsetMins.value ? Number(f_regOpensOffsetMins.value) : null;
-      const closesOffset = f_regClosesOffsetMins.value ? Number(f_regClosesOffsetMins.value) : null;
+      const opensDays = Number(f_regOpensDays.value || 0);
+      const closesDays = Number(f_regClosesDays.value || 0);
       const visibility = f_visibility.value;
 
       // Color
@@ -464,7 +454,6 @@
       const weekdays = Array.from(weeklyDaysWrap.querySelectorAll("input[type='checkbox']:checked"))
         .map(cb => Number(cb.value)); // 0..6
 
-      // If editing single event (no recurrence re-materialization)
       if (editingId) {
         // Conflict check (single)
         const conflictMsg = await hasConflict(branch, resourceId, start, end, editingId);
@@ -483,11 +472,10 @@
           remaining: remaining ?? undefined
         };
 
-        // derive per-event reg window only if offsets provided
         if (allowRegistration) {
-          const { regOpensAt, regClosesAt } = deriveRegWindow(start, opensOffset, closesOffset);
-          if (regOpensAt) payload.regOpensAt = regOpensAt;
-          if (regClosesAt) payload.regClosesAt = regClosesAt;
+          const { regOpensAt, regClosesAt } = deriveRegWindowDays(start, opensDays, closesDays);
+          payload.regOpensAt = regOpensAt;
+          payload.regClosesAt = regClosesAt;
         } else {
           payload.regOpensAt = undefined;
           payload.regClosesAt = undefined;
@@ -500,18 +488,15 @@
         return;
       }
 
-      // New event: handle recurrence materialization
+      // New event: recurrence materialization
       const occurrences = buildOccurrences({ repeat, interval, start, end, endType, count, until, weekdays });
-
       if (!occurrences.length) {
         throw new Error("No occurrences generated. Check your repeat settings.");
       }
 
-      // Batch create with conflict check per occurrence
       const batch = window.db.batch();
       const evCol = window.db.collection("events");
 
-      // Save stats for message
       let made = 0;
       let skipped = 0;
       let firstConflictMsg = null;
@@ -520,7 +505,6 @@
         const occStart = occ.start;
         const occEnd = occ.end;
 
-        // Conflict check
         const conflictMsg = await hasConflict(branch, resourceId, occStart, occEnd, null);
         if (conflictMsg) {
           skipped++;
@@ -547,9 +531,9 @@
         }
 
         if (allowRegistration) {
-          const { regOpensAt, regClosesAt } = deriveRegWindow(occStart, opensOffset, closesOffset);
-          if (regOpensAt) payload.regOpensAt = regOpensAt;
-          if (regClosesAt) payload.regClosesAt = regClosesAt;
+          const { regOpensAt, regClosesAt } = deriveRegWindowDays(occStart, opensDays, closesDays);
+          payload.regOpensAt = regOpensAt;
+          payload.regClosesAt = regClosesAt;
         }
 
         batch.set(docRef, payload);
@@ -577,7 +561,7 @@
     } catch (err) {
       console.error("save error:", err);
       if (!editErrInline.classList.contains("d-none")) {
-        // already shown inline conflict
+        // inline already shown
       } else {
         editErr.textContent = err.message || "Save failed.";
         editErr.classList.remove("d-none");
@@ -588,20 +572,15 @@
     }
   });
 
-  // Build occurrences for Approach A
+  // Build occurrences (Approach A)
   function buildOccurrences({ repeat, interval, start, end, endType, count, until, weekdays }) {
     const out = [];
     const durMs = end - start;
 
-    // Helper to push an occurrence copy
     const pushOcc = (s) => out.push({ start: new Date(s), end: new Date(s.getTime() + durMs) });
 
-    if (repeat === "none") {
-      pushOcc(start);
-      return out;
-    }
+    if (repeat === "none") { pushOcc(start); return out; }
 
-    // Stop conditions
     const limitCount = (endType === "count") ? Math.max(1, count) : Number.POSITIVE_INFINITY;
     const limitUntil = (endType === "until" && until) ? until : null;
 
@@ -610,41 +589,34 @@
 
     if (repeat === "daily") {
       while (made < limitCount) {
-        if (!limitUntil || cursor <= limitUntil) pushOcc(cursor);
-        else break;
+        if (!limitUntil || cursor <= limitUntil) pushOcc(cursor); else break;
         made++;
         cursor = new Date(cursor.getTime() + interval*24*60*60*1000);
       }
     } else if (repeat === "weekly") {
-      // For weekly, move through weeks by interval; within each week, add selected weekdays
-      const startDow = start.getDay(); // 0..6
-      // base week (week of start)
+      const startDow = start.getDay();
       let weekStart = new Date(start);
       weekStart.setHours(0,0,0,0);
-      weekStart.setDate(weekStart.getDate() - startDow); // back to Sunday
+      weekStart.setDate(weekStart.getDate() - startDow); // to Sunday
 
       while (made < limitCount) {
-        // days in this week
-        for (const dow of weekdays.length ? weekdays : [startDow]) {
+        for (const dow of (weekdays.length ? weekdays : [startDow])) {
           const occStart = new Date(weekStart);
           occStart.setDate(weekStart.getDate() + dow);
           occStart.setHours(start.getHours(), start.getMinutes(), 0, 0);
-          if (occStart < start) continue; // don't include before the very first start
+          if (occStart < start) continue;
           if (limitUntil && occStart > limitUntil) { made = limitCount; break; }
           pushOcc(occStart);
           made++;
           if (made >= limitCount) break;
         }
-        // jump weeks
         weekStart = new Date(weekStart.getTime() + interval*7*24*60*60*1000);
       }
     } else if (repeat === "monthly") {
       const startDay = start.getDate();
       while (made < limitCount) {
-        if (!limitUntil || cursor <= limitUntil) pushOcc(cursor);
-        else break;
+        if (!limitUntil || cursor <= limitUntil) pushOcc(cursor); else break;
         made++;
-        // advance by N months preserving day where possible
         const m = cursor.getMonth();
         const y = cursor.getFullYear();
         const next = new Date(y, m + interval, startDay, start.getHours(), start.getMinutes(), 0, 0);
@@ -659,7 +631,6 @@
   async function hasConflict(branch, resourceId, start, end, ignoreId) {
     if (!branch || !resourceId || !start || !end) return null;
     const col = window.db.collection("events");
-    // Firestore supports only one range field — we use start < end, then filter by doc.end > start in client
     try {
       const snap = await col
         .where("branch","==",branch)
@@ -671,24 +642,24 @@
 
       const overlap = snap.docs
         .map(d => ({ id: d.id, ...d.data() }))
-        .filter(ev => (!ignoreId || ev._id !== ignoreId) && ev.id !== ignoreId) // support both shapes
+        .filter(ev => ev.id !== ignoreId && ev._id !== ignoreId) // support both shapes
         .some(ev => {
           const s = toDate(ev.start), e = toDate(ev.end);
           if (!s || !e) return false;
-          return s < end && e > start; // overlap
+          return s < end && e > start;
         });
 
       return overlap ? "Time conflict: same branch & resource already occupied in that time range." : null;
     } catch (err) {
       console.warn("conflict check failed; allowing save:", err);
-      return null; // fail-open to avoid blocking saves if query fails
+      return null; // fail-open
     }
   }
 
   // ---------- Resource auto-fill ----------
-  f_resourceId.addEventListener("change", () => {
-    const r = resources.find(x => x.id === f_resourceId.value);
-    f_resourceName.value = r ? (r.name || "") : "";
+  document.getElementById("f_resourceId").addEventListener("change", () => {
+    const r = resources.find(x => x.id === document.getElementById("f_resourceId").value);
+    document.getElementById("f_resourceName").value = r ? (r.name || "") : "";
     if (r && !f_capacity.value && typeof r.capacity === "number") {
       f_capacity.value = r.capacity;
       if (!f_remaining.value) f_remaining.value = r.capacity;
