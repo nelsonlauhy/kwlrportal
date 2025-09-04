@@ -4,6 +4,7 @@
 // - Color tag
 // - Conflict detection (branch + resource overlap)
 // - Registration windows per occurrence via DAYS-before-start
+// - Back-fill "Reg Opens/Closes (days)" when editing an existing event
 
 (function() {
   // ---------- DOM ----------
@@ -234,7 +235,7 @@
     }
     const opts = [`<option value="">-- select --</option>`]
       .concat(resources.map(r => `<option value="${esc(r.id)}">${esc(r.name)} (${esc(r.branch||"-")})</option>`));
-    document.getElementById("f_resourceId").innerHTML = opts.join("");
+    f_resourceId.innerHTML = opts.join("");
 
     // top filter dropdown
     const fopts = [`<option value="ALL">All Resources</option>`]
@@ -272,7 +273,7 @@
     editBusy.classList.add("d-none");
 
     editingId = id || null;
-    document.getElementById("editTitle").textContent = editingId ? "Edit Event" : "New Event";
+    editTitle.textContent = editingId ? "Edit Event" : "New Event";
 
     // Defaults
     f_title.value = "";
@@ -311,6 +312,7 @@
     const ev = allEvents.find(x => x._id === editingId);
     if (!ev) { showInlineError("Event not found."); return; }
 
+    // Fill form for single event edit
     f_title.value = ev.title || "";
     f_status.value = ev.status || "draft";
     f_branch.value = ev.branch || "";
@@ -335,7 +337,30 @@
       f_color.value = "#3b82f6";
     }
 
-    // We do not try to reverse-calc days from existing regOpensAt/regClosesAt.
+    // --- Back-calc "days before start" for reg windows (if present) ---
+    (function backfillRegDays() {
+      const startDate = toDate(ev.start);
+      const opensAt = toDate(ev.regOpensAt);
+      const closesAt = toDate(ev.regClosesAt);
+
+      function daysBefore(start, other) {
+        if (!start || !other) return null;
+        const ms = start.getTime() - other.getTime();
+        if (ms <= 0) return 0; // same day or after -> 0 days before
+        return Math.round(ms / (24*60*60*1000)); // use Math.floor if you prefer
+      }
+
+      const openDays = daysBefore(startDate, opensAt);
+      const closeDays = daysBefore(startDate, closesAt);
+
+      if (openDays !== null && !Number.isNaN(openDays)) {
+        f_regOpensDays.value = String(openDays);
+      }
+      if (closeDays !== null && !Number.isNaN(closeDays)) {
+        f_regClosesDays.value = String(closeDays);
+      }
+    })();
+
     editModal.show();
   }
 
@@ -405,6 +430,16 @@
   // ---------- Detail preview ----------
   f_detailDescription.addEventListener("input", () => {
     f_detailPreview.innerHTML = plainToHtml(f_detailDescription.value);
+  });
+
+  // ---------- Resource auto-fill ----------
+  f_resourceId.addEventListener("change", () => {
+    const r = resources.find(x => x.id === f_resourceId.value);
+    f_resourceName.value = r ? (r.name || "") : "";
+    if (r && !f_capacity.value && typeof r.capacity === "number") {
+      f_capacity.value = r.capacity;
+      if (!f_remaining.value) f_remaining.value = r.capacity;
+    }
   });
 
   // ---------- New ----------
@@ -655,16 +690,6 @@
       return null; // fail-open
     }
   }
-
-  // ---------- Resource auto-fill ----------
-  document.getElementById("f_resourceId").addEventListener("change", () => {
-    const r = resources.find(x => x.id === document.getElementById("f_resourceId").value);
-    document.getElementById("f_resourceName").value = r ? (r.name || "") : "";
-    if (r && !f_capacity.value && typeof r.capacity === "number") {
-      f_capacity.value = r.capacity;
-      if (!f_remaining.value) f_remaining.value = r.capacity;
-    }
-  });
 
   // ---------- Top filters/search ----------
   branchFilter.addEventListener("change", applyFilter);
