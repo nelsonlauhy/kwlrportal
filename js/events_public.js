@@ -628,6 +628,14 @@
       regWarn.classList.add("d-none");
       regErr.classList.add("d-none");
 
+      // Tell the comms module to send the email (keeps this file small)
+      window.dispatchEvent(new CustomEvent("event:registered", {
+        detail: {
+          event: regTarget,
+          attendee: { name, email }
+        }
+      }));
+
       setTimeout(() => regModal.hide(), 1200);
 
     } catch (err) {
