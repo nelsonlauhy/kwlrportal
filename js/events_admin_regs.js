@@ -1,6 +1,7 @@
 // events_admin_regs.js
-// Adds "Registrations" button to each event card and shows a modal with the list.
-// Firestore v8 is already loaded; window.db is set by firebaseConfig.js
+// Adds a "Registrations" button to each event card and shows a modal with the list.
+// Works with either collection name: "eventRegistrations" (preferred) or the typo "eventRegidtrations" (fallback).
+// Avoids composite index requirement by sorting on the client.
 
 (function(){
   const container = document.getElementById("eventsContainer");
@@ -21,59 +22,45 @@
   // Observe list changes and enhance cards by injecting a "Registrations" button
   const observer = new MutationObserver(() => enhanceCards());
   observer.observe(container, { childList: true, subtree: true });
-
   document.addEventListener("DOMContentLoaded", enhanceCards);
 
   function enhanceCards() {
-    // Find action areas inside each card and add a button if missing
     const cards = container.querySelectorAll(".event-card");
     cards.forEach(card => {
       const id = extractEventId(card);
       if (!id) return;
 
-      // Action area (right column)
       const right = card.querySelector(".text-end");
       if (!right) return;
 
-      // Skip if already added
-      if (right.querySelector(".btn-view-reg")) return;
+      if (right.querySelector(".btn-view-reg")) return; // already added
 
       const btn = document.createElement("button");
       btn.className = "btn btn-outline-primary btn-sm me-1 btn-view-reg";
-      btn.setAttribute("type","button");
-      btn.setAttribute("data-id", id);
+      btn.type = "button";
+      btn.dataset.id = id;
       btn.innerHTML = `<i class="bi bi-people me-1"></i>Registrations`;
-
       btn.addEventListener("click", () => openRegistrations(card, id));
 
-      // Insert before Delete, if present, else append
       const delBtn = right.querySelector("[data-action='delete']");
-      if (delBtn && delBtn.parentElement === right) {
-        right.insertBefore(btn, delBtn);
-      } else {
-        right.appendChild(btn);
-      }
+      if (delBtn && delBtn.parentElement === right) right.insertBefore(btn, delBtn);
+      else right.appendChild(btn);
     });
   }
 
-  // Try to extract the event id from buttons already rendered in the card
   function extractEventId(card) {
-    const editBtn = card.querySelector("[data-action='edit']");
-    if (editBtn) return editBtn.getAttribute("data-id");
-    const delBtn = card.querySelector("[data-action='delete']");
-    if (delBtn) return delBtn.getAttribute("data-id");
-    return null;
+    return (card.querySelector("[data-action='edit']")?.getAttribute("data-id"))
+        || (card.querySelector("[data-action='delete']")?.getAttribute("data-id"))
+        || null;
   }
 
   async function openRegistrations(card, eventId) {
-    // Try to read some basic event info from the card DOM
     const title = (card.querySelector(".event-title")?.textContent || "").trim();
     const meta  = (card.querySelector(".event-meta")?.textContent || "").trim();
 
     regEventTitle.textContent = title || eventId;
     regEventMeta.textContent  = meta;
 
-    // Reset table
     regListBody.innerHTML = `<tr><td colspan="5" class="text-center text-muted py-4">
       <div class="spinner-border spinner-border-sm me-2"></div> Loading…
     </td></tr>`;
@@ -83,24 +70,29 @@
     modal.show();
 
     try {
-      const snap = await window.db.collection("eventRegistrations")
-        .where("eventId","==", eventId)
-        .orderBy("createdAt","desc")
-        .get();
+      // Try preferred collection first
+      let regs = await fetchRegs("eventRegistrations", eventId);
 
-      if (snap.empty) {
+      // Fallback to the typo collection if needed
+      if (!regs.length) {
+        regs = await fetchRegs("eventRegidtrations", eventId);
+      }
+
+      if (!regs.length) {
         regListBody.innerHTML = `<tr><td colspan="5" class="text-center text-muted py-4">No registrations found.</td></tr>`;
         regListCounts.textContent = "0 registrations";
         enableCopy([]);
         return;
       }
 
+      // Sort by createdAt desc on client to avoid composite index
+      regs.sort((a, b) => (toDate(b.createdAt) - toDate(a.createdAt)));
+
       const rows = [];
       const emails = [];
       let idx = 1;
 
-      snap.docs.forEach(doc => {
-        const r = doc.data() || {};
+      for (const r of regs) {
         const name  = (r.attendeeName || "").toString();
         const email = (r.attendeeEmail || "").toString();
         const status= (r.status || "").toString();
@@ -118,7 +110,7 @@
             <td class="text-nowrap">${esc(atStr)}</td>
           </tr>
         `);
-      });
+      }
 
       regListBody.innerHTML = rows.join("");
       regListCounts.textContent = `${rows.length} registration${rows.length===1?"":"s"}`;
@@ -132,7 +124,23 @@
     }
   }
 
-  // Copy helper
+  async function fetchRegs(collectionName, eventId) {
+    try {
+      const snap = await window.db
+        .collection(collectionName)
+        .where("eventId","==", eventId)
+        // .orderBy("createdAt","desc")  // removed to avoid composite index requirement
+        .get();
+
+      if (snap.empty) return [];
+      return snap.docs.map(d => d.data() || []);
+    } catch (err) {
+      // If index error or collection missing, just return empty and let caller try fallback
+      console.warn(`fetchRegs(${collectionName}) failed:`, err);
+      return [];
+    }
+  }
+
   function enableCopy(emails) {
     if (!btnCopyEmails) return;
     btnCopyEmails.onclick = async () => {
@@ -141,7 +149,6 @@
         await navigator.clipboard.writeText(text);
         toast("Emails copied.");
       } catch {
-        // Fallback: select hidden textarea
         const ta = document.createElement("textarea");
         ta.value = text;
         ta.style.position = "fixed";
@@ -155,14 +162,13 @@
     };
   }
 
-  // Tiny toast using Bootstrap’s modal footer area
   function toast(msg) {
     if (!regListStatus) return;
     regListStatus.textContent = msg;
     setTimeout(() => { regListStatus.textContent = ""; }, 2000);
   }
 
-  // Utilities (copied lightweight versions to avoid coupling to events_admin.js)
+  // Utilities (standalone to avoid coupling to other files)
   function esc(s) {
     return String(s ?? "").replace(/[&<>"']/g, m => (
       { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[m]
@@ -170,7 +176,7 @@
   }
   function toDate(ts) {
     if (!ts) return null;
-    if (typeof ts.toDate === "function") return ts.toDate();
+    if (typeof ts.toDate === "function") return ts.toDate(); // Firestore Timestamp
     const d = new Date(ts);
     return isNaN(d) ? null : d;
   }
