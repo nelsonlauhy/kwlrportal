@@ -1,9 +1,9 @@
 // /netlify/functions/send-reg-email.js
-// Netlify Function: send post-registration confirmation as a real calendar invite (method=REQUEST)
+// Send a real Outlook-friendly meeting request (inline text/calendar; method=REQUEST)
 
 const nodemailer = require("nodemailer");
 
-// Build HTML confirmation
+// ---------- HTML body ----------
 function buildEmailHTML({ attendee, event, summary }) {
   const safe = (s) => String(s ?? "");
   const title = safe(event.title);
@@ -38,14 +38,14 @@ function buildEmailHTML({ attendee, event, summary }) {
 
     ${detailHTML}
 
-    <p style="margin:16px 0 0 0;color:#475569;">📅 This email includes a calendar invite — click <b>Accept</b> to add it to your calendar.</p>
+    <p style="margin:16px 0 0 0;color:#475569;">📅 Click <b>Accept</b> (or Add to Calendar) in your mail client to add this to your calendar.</p>
 
     <hr style="border:none;border-top:1px solid #e5e7eb;margin:16px 0;" />
     <p style="font-size:12px;color:#94a3b8;margin:0;">KW Living Portal • Automated confirmation</p>
   </div>`;
 }
 
-// Escape ICS values
+// ---------- ICS helpers ----------
 function escapeICS(s) {
   return String(s)
     .replace(/\\/g, "\\\\")
@@ -54,52 +54,65 @@ function escapeICS(s) {
     .replace(/,/g, "\\,");
 }
 
-// Build ICS string
-function buildICS({ event }) {
-  const uid = `${event.id || "event"}@kw-living-portal`;
-  const dtStart = event.startISO ? new Date(event.startISO) : null;
-  const dtEnd   = event.endISO ? new Date(event.endISO) : null;
+function toICSUTC(d) {
+  const pad = (n) => String(n).padStart(2, "0");
+  return (
+    d.getUTCFullYear() +
+    pad(d.getUTCMonth() + 1) +
+    pad(d.getUTCDate()) +
+    "T" +
+    pad(d.getUTCHours()) +
+    pad(d.getUTCMinutes()) +
+    pad(d.getUTCSeconds()) +
+    "Z"
+  );
+}
 
-  const toICSUTC = (d) => {
-    const pad = (n) => String(n).padStart(2, "0");
-    return [
-      d.getUTCFullYear(),
-      pad(d.getUTCMonth() + 1),
-      pad(d.getUTCDate()),
-      "T",
-      pad(d.getUTCHours()),
-      pad(d.getUTCMinutes()),
-      pad(d.getUTCSeconds()),
-      "Z",
-    ].join("");
-  };
+function buildICS({ ev, organizerEmail, attendee }) {
+  const uid = `${ev.id || "event"}@kw-living-portal`;
+  const now = new Date();
+  const dtstamp = toICSUTC(now);
+
+  const dtStart = ev.startISO ? new Date(ev.startISO) : null;
+  const dtEnd   = ev.endISO ? new Date(ev.endISO) : null;
 
   const DTSTART = dtStart ? toICSUTC(dtStart) : "";
   const DTEND   = dtEnd ? toICSUTC(dtEnd) : "";
-  const SUMMARY = escapeICS(event.title || "");
-  const LOCATION = escapeICS(event.location || "");
-  const DESCRIPTION = escapeICS(event.description || "");
 
+  const SUMMARY     = escapeICS(ev.title || "");
+  const LOCATION    = escapeICS(ev.location || "");
+  const DESCRIPTION = escapeICS(ev.description || "");
+
+  const ORGANIZER = `ORGANIZER;CN=KW Living Portal:MAILTO:${organizerEmail}`;
+  const ATTENDEE  = `ATTENDEE;CN=${escapeICS(attendee.name || attendee.email)};ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=TRUE:MAILTO:${attendee.email}`;
+
+  // CRLF line endings are important for ICS
   return [
     "BEGIN:VCALENDAR",
-    "VERSION:2.0",
     "PRODID:-//KW Living Portal//Event//EN",
+    "VERSION:2.0",
     "CALSCALE:GREGORIAN",
     "METHOD:REQUEST",
     "BEGIN:VEVENT",
     `UID:${uid}`,
+    `DTSTAMP:${dtstamp}`,
     DTSTART ? `DTSTART:${DTSTART}` : "",
     DTEND ? `DTEND:${DTEND}` : "",
+    `SEQUENCE:0`,
+    `STATUS:CONFIRMED`,
+    `${ORGANIZER}`,
+    `${ATTENDEE}`,
     `SUMMARY:${SUMMARY}`,
     `LOCATION:${LOCATION}`,
     `DESCRIPTION:${DESCRIPTION}`,
-    "STATUS:CONFIRMED",
+    "TRANSP:OPAQUE",
     "END:VEVENT",
     "END:VCALENDAR",
-    "",
+    ""
   ].filter(Boolean).join("\r\n");
 }
 
+// ---------- Handler ----------
 exports.handler = async (event) => {
   if (event.httpMethod !== "POST") {
     return { statusCode: 405, body: "Method Not Allowed" };
@@ -113,13 +126,14 @@ exports.handler = async (event) => {
       return { statusCode: 400, body: "Missing required fields." };
     }
 
-    // ENV vars from Netlify
+    // Env vars
     const O365_USER = process.env.O365_USER; // office@livinggroupinc.com
-    const O365_PASS = process.env.O365_PASS; // password
+    const O365_PASS = process.env.O365_PASS;
     const CC_EMAIL  = process.env.CC_EMAIL || "itsupport@livingrealtykw.com";
     const FROM_NAME = process.env.FROM_NAME || "KW Living Portal";
     const REPLY_TO  = process.env.REPLY_TO || O365_USER;
 
+    // SMTP transport (Office 365)
     const transporter = nodemailer.createTransport({
       host: "smtp.office365.com",
       port: 587,
@@ -129,7 +143,7 @@ exports.handler = async (event) => {
     });
 
     const html = buildEmailHTML({ attendee, event: ev, summary });
-    const ics  = buildICS({ event: ev });
+    const ics  = buildICS({ ev, organizerEmail: O365_USER, attendee });
 
     const mailOptions = {
       from: `${FROM_NAME} <${O365_USER}>`,
@@ -138,24 +152,24 @@ exports.handler = async (event) => {
       subject: `Registration confirmed: ${ev.title}`,
       html,
       replyTo: REPLY_TO,
-      // 🔑 THIS makes it a real meeting request
-      icalEvent: {
-        method: "REQUEST",
-        content: ics,
-      },
+
+      // The magic: inline calendar part as an ALTERNATIVE (not an attachment),
+      // with Outlook-friendly header forcing calendar inspector.
+      alternatives: [
+        {
+          content: ics,
+          contentType: 'text/calendar; method=REQUEST; charset="utf-8"',
+          headers: {
+            "Content-Class": "urn:content-classes:calendarmessage"
+          }
+        }
+      ]
     };
 
     await transporter.sendMail(mailOptions);
-
-    return {
-      statusCode: 200,
-      body: JSON.stringify({ ok: true }),
-    };
+    return { statusCode: 200, body: JSON.stringify({ ok: true }) };
   } catch (err) {
     console.error("send-reg-email error:", err);
-    return {
-      statusCode: 500,
-      body: JSON.stringify({ ok: false, error: String(err?.message || err) }),
-    };
+    return { statusCode: 500, body: JSON.stringify({ ok: false, error: String(err?.message || err) }) };
   }
 };
