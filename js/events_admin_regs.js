@@ -1,5 +1,5 @@
 // /netlify/functions/send-reg-email.js
-// Send a real Outlook-friendly meeting request (inline text/calendar; method=REQUEST)
+// Outlook-friendly meeting request (real invite) with VTIMEZONE + inline text/calendar part
 
 const nodemailer = require("nodemailer");
 
@@ -38,7 +38,7 @@ function buildEmailHTML({ attendee, event, summary }) {
 
     ${detailHTML}
 
-    <p style="margin:16px 0 0 0;color:#475569;">📅 Click <b>Accept</b> (or Add to Calendar) in your mail client to add this to your calendar.</p>
+    <p style="margin:16px 0 0 0;color:#475569;">📅 Click <b>Accept</b> / <b>Add to calendar</b> in your mail client.</p>
 
     <hr style="border:none;border-top:1px solid #e5e7eb;margin:16px 0;" />
     <p style="font-size:12px;color:#94a3b8;margin:0;">KW Living Portal • Automated confirmation</p>
@@ -54,8 +54,20 @@ function escapeICS(s) {
     .replace(/,/g, "\\,");
 }
 
-function toICSUTC(d) {
-  const pad = (n) => String(n).padStart(2, "0");
+function pad(n) { return String(n).padStart(2, "0"); }
+function toLocalYMDHMS(d) {
+  // returns yyyymmddThhmmss in LOCAL time (for TZID lines)
+  return (
+    d.getFullYear() +
+    pad(d.getMonth() + 1) +
+    pad(d.getDate()) +
+    "T" +
+    pad(d.getHours()) +
+    pad(d.getMinutes()) +
+    pad(d.getSeconds())
+  );
+}
+function toUTCYMDHMS(d) {
   return (
     d.getUTCFullYear() +
     pad(d.getUTCMonth() + 1) +
@@ -69,15 +81,16 @@ function toICSUTC(d) {
 }
 
 function buildICS({ ev, organizerEmail, attendee }) {
+  // Build using TZID (America/Toronto) + VTIMEZONE
   const uid = `${ev.id || "event"}@kw-living-portal`;
-  const now = new Date();
-  const dtstamp = toICSUTC(now);
+  const now = new Date(); // for DTSTAMP
 
-  const dtStart = ev.startISO ? new Date(ev.startISO) : null;
-  const dtEnd   = ev.endISO ? new Date(ev.endISO) : null;
+  const start = new Date(ev.startISO);
+  const end   = new Date(ev.endISO);
 
-  const DTSTART = dtStart ? toICSUTC(dtStart) : "";
-  const DTEND   = dtEnd ? toICSUTC(dtEnd) : "";
+  const DTSTART = toLocalYMDHMS(start);
+  const DTEND   = toLocalYMDHMS(end);
+  const DTSTAMP = toUTCYMDHMS(now);
 
   const SUMMARY     = escapeICS(ev.title || "");
   const LOCATION    = escapeICS(ev.location || "");
@@ -86,30 +99,74 @@ function buildICS({ ev, organizerEmail, attendee }) {
   const ORGANIZER = `ORGANIZER;CN=KW Living Portal:MAILTO:${organizerEmail}`;
   const ATTENDEE  = `ATTENDEE;CN=${escapeICS(attendee.name || attendee.email)};ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=TRUE:MAILTO:${attendee.email}`;
 
-  // CRLF line endings are important for ICS
-  return [
+  // VTIMEZONE for America/Toronto (EST/EDT)
+  const VTIMEZONE = [
+    "BEGIN:VTIMEZONE",
+    "TZID:America/Toronto",
+    "X-LIC-LOCATION:America/Toronto",
+    "BEGIN:DAYLIGHT",
+    "TZOFFSETFROM:-0500",
+    "TZOFFSETTO:-0400",
+    "TZNAME:EDT",
+    "DTSTART:19700308T020000",
+    "RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=2SU",
+    "END:DAYLIGHT",
+    "BEGIN:STANDARD",
+    "TZOFFSETFROM:-0400",
+    "TZOFFSETTO:-0500",
+    "TZNAME:EST",
+    "DTSTART:19701101T020000",
+    "RRULE:FREQ=YEARLY;BYMONTH=11;BYDAY=1SU",
+    "END:STANDARD",
+    "END:VTIMEZONE"
+  ].join("\r\n");
+
+  // Outlook-friendly extra X- fields
+  const X_MS = [
+    "X-MICROSOFT-CDO-BUSYSTATUS:BUSY",
+    "X-MICROSOFT-DISALLOW-COUNTER:FALSE",
+    "X-MS-OLK-AUTOFILLLOCATION:FALSE",
+    "X-MS-OLK-CONFTYPE:0"
+  ].join("\r\n");
+
+  const VALARM = [
+    "BEGIN:VALARM",
+    "TRIGGER:-PT15M",
+    "ACTION:DISPLAY",
+    "DESCRIPTION:Reminder",
+    "END:VALARM"
+  ].join("\r\n");
+
+  const lines = [
     "BEGIN:VCALENDAR",
     "PRODID:-//KW Living Portal//Event//EN",
     "VERSION:2.0",
     "CALSCALE:GREGORIAN",
     "METHOD:REQUEST",
+    VTIMEZONE,
     "BEGIN:VEVENT",
     `UID:${uid}`,
-    `DTSTAMP:${dtstamp}`,
-    DTSTART ? `DTSTART:${DTSTART}` : "",
-    DTEND ? `DTEND:${DTEND}` : "",
-    `SEQUENCE:0`,
-    `STATUS:CONFIRMED`,
-    `${ORGANIZER}`,
-    `${ATTENDEE}`,
+    `DTSTAMP:${DTSTAMP}`,
+    `DTSTART;TZID=America/Toronto:${DTSTART}`,
+    `DTEND;TZID=America/Toronto:${DTEND}`,
+    "SEQUENCE:0",
+    "STATUS:CONFIRMED",
+    ORGANIZER,
+    ATTENDEE,
     `SUMMARY:${SUMMARY}`,
     `LOCATION:${LOCATION}`,
     `DESCRIPTION:${DESCRIPTION}`,
+    "CLASS:PUBLIC",
     "TRANSP:OPAQUE",
+    X_MS,
+    VALARM,
     "END:VEVENT",
     "END:VCALENDAR",
     ""
-  ].filter(Boolean).join("\r\n");
+  ];
+
+  // CRLF line endings are important
+  return lines.join("\r\n");
 }
 
 // ---------- Handler ----------
@@ -150,15 +207,17 @@ exports.handler = async (event) => {
       to: `${attendee.name || ""} <${attendee.email}>`,
       cc: CC_EMAIL,
       subject: `Registration confirmed: ${ev.title}`,
+      // Provide a plain text fallback (helps some clients)
+      text: `You're registered for: ${ev.title}\nWhen: ${summary.when}\nWhere: ${ev.location || ""}`,
       html,
       replyTo: REPLY_TO,
 
-      // The magic: inline calendar part as an ALTERNATIVE (not an attachment),
-      // with Outlook-friendly header forcing calendar inspector.
+      // 🔑 Inline calendar part as ALTERNATIVE (not an attachment)
       alternatives: [
         {
           content: ics,
-          contentType: 'text/calendar; method=REQUEST; charset="utf-8"',
+          contentType: 'text/calendar; method=REQUEST; charset="UTF-8"; name="invite.ics"',
+          contentDisposition: 'inline; filename="invite.ics"',
           headers: {
             "Content-Class": "urn:content-classes:calendarmessage"
           }
