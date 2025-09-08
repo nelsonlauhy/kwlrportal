@@ -1,234 +1,133 @@
-// /netlify/functions/send-reg-email.js
-// Outlook-friendly meeting request (real invite) with VTIMEZONE + inline text/calendar part
+// /netlify/functions/create-meeting-invite.js
+// Create a meeting via Microsoft Graph and send invites (sendUpdates=all)
 
-const nodemailer = require("nodemailer");
+const crypto = require("crypto");
 
-// ---------- HTML body ----------
-function buildEmailHTML({ attendee, event, summary }) {
-  const safe = (s) => String(s ?? "");
-  const title = safe(event.title);
-  const when  = safe(summary.when);
-  const loc   = safe(event.location);
-  const desc  = safe(event.description);
+// Node 18+ has global fetch
+async function getGraphToken() {
+  const tenant = process.env.MS_TENANT_ID;
+  const clientId = process.env.MS_CLIENT_ID;
+  const clientSecret = process.env.MS_CLIENT_SECRET;
 
-  const detailHTML = event.detailDescription
-    ? `<hr style="border:none;border-top:1px solid #e5e7eb;margin:16px 0;" />
-       <div style="font-size:14px;line-height:1.6;">${event.detailDescription}</div>`
-    : "";
+  const body = new URLSearchParams({
+    grant_type: "client_credentials",
+    client_id: clientId,
+    client_secret: clientSecret,
+    scope: "https://graph.microsoft.com/.default",
+  });
 
-  return `
-  <div style="font-family:Inter,Segoe UI,Arial,sans-serif;max-width:640px;margin:auto;padding:16px;color:#0f172a;">
-    <h2 style="margin:0 0 8px 0;">You're registered: ${title}</h2>
-    <p style="margin:0 0 16px 0;color:#475569;">Hi ${safe(attendee.name)},<br/>Thanks for registering. Here are your event details:</p>
+  const resp = await fetch(`https://login.microsoftonline.com/${tenant}/oauth2/v2.0/token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body,
+  });
 
-    <table role="presentation" style="width:100%;border-collapse:collapse;font-size:14px;">
-      <tr>
-        <td style="padding:8px 0;width:90px;color:#64748b;">When</td>
-        <td style="padding:8px 0;">${when}</td>
-      </tr>
-      <tr>
-        <td style="padding:8px 0;width:90px;color:#64748b;">Where</td>
-        <td style="padding:8px 0;">${loc || "—"}</td>
-      </tr>
-      <tr>
-        <td style="padding:8px 0;width:90px;color:#64748b;">Summary</td>
-        <td style="padding:8px 0;">${desc || "—"}</td>
-      </tr>
-    </table>
-
-    ${detailHTML}
-
-    <p style="margin:16px 0 0 0;color:#475569;">📅 Click <b>Accept</b> / <b>Add to calendar</b> in your mail client.</p>
-
-    <hr style="border:none;border-top:1px solid #e5e7eb;margin:16px 0;" />
-    <p style="font-size:12px;color:#94a3b8;margin:0;">KW Living Portal • Automated confirmation</p>
-  </div>`;
+  if (!resp.ok) {
+    const t = await resp.text();
+    throw new Error(`Token error ${resp.status}: ${t}`);
+  }
+  return resp.json(); // { access_token, token_type, ... }
 }
 
-// ---------- ICS helpers ----------
-function escapeICS(s) {
-  return String(s)
-    .replace(/\\/g, "\\\\")
-    .replace(/\n/g, "\\n")
-    .replace(/;/g, "\\;")
-    .replace(/,/g, "\\,");
+function stripZ(iso) {
+  if (!iso) return null;
+  // Graph expects local-format "YYYY-MM-DDTHH:mm:ss" when you also pass timeZone
+  return iso.replace(/Z$/, "").replace(/\.\d{3}$/, "");
 }
 
-function pad(n) { return String(n).padStart(2, "0"); }
-function toLocalYMDHMS(d) {
-  // returns yyyymmddThhmmss in LOCAL time (for TZID lines)
-  return (
-    d.getFullYear() +
-    pad(d.getMonth() + 1) +
-    pad(d.getDate()) +
-    "T" +
-    pad(d.getHours()) +
-    pad(d.getMinutes()) +
-    pad(d.getSeconds())
-  );
-}
-function toUTCYMDHMS(d) {
-  return (
-    d.getUTCFullYear() +
-    pad(d.getUTCMonth() + 1) +
-    pad(d.getUTCDate()) +
-    "T" +
-    pad(d.getUTCHours()) +
-    pad(d.getUTCMinutes()) +
-    pad(d.getUTCSeconds()) +
-    "Z"
-  );
-}
+function buildEventPayload(attendee, ev, tz) {
+  // organizer mailbox is implied by the /users/{organizer}/events path
+  const startLocal = stripZ(ev.startISO);
+  const endLocal   = stripZ(ev.endISO);
+  const supportEmail = process.env.CC_EMAIL || "itsupport@livingrealtykw.com";
 
-function buildICS({ ev, organizerEmail, attendee }) {
-  // Build using TZID (America/Toronto) + VTIMEZONE
-  const uid = `${ev.id || "event"}@kw-living-portal`;
-  const now = new Date(); // for DTSTAMP
-
-  const start = new Date(ev.startISO);
-  const end   = new Date(ev.endISO);
-
-  const DTSTART = toLocalYMDHMS(start);
-  const DTEND   = toLocalYMDHMS(end);
-  const DTSTAMP = toUTCYMDHMS(now);
-
-  const SUMMARY     = escapeICS(ev.title || "");
-  const LOCATION    = escapeICS(ev.location || "");
-  const DESCRIPTION = escapeICS(ev.description || "");
-
-  const ORGANIZER = `ORGANIZER;CN=KW Living Portal:MAILTO:${organizerEmail}`;
-  const ATTENDEE  = `ATTENDEE;CN=${escapeICS(attendee.name || attendee.email)};ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=TRUE:MAILTO:${attendee.email}`;
-
-  // VTIMEZONE for America/Toronto (EST/EDT)
-  const VTIMEZONE = [
-    "BEGIN:VTIMEZONE",
-    "TZID:America/Toronto",
-    "X-LIC-LOCATION:America/Toronto",
-    "BEGIN:DAYLIGHT",
-    "TZOFFSETFROM:-0500",
-    "TZOFFSETTO:-0400",
-    "TZNAME:EDT",
-    "DTSTART:19700308T020000",
-    "RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=2SU",
-    "END:DAYLIGHT",
-    "BEGIN:STANDARD",
-    "TZOFFSETFROM:-0400",
-    "TZOFFSETTO:-0500",
-    "TZNAME:EST",
-    "DTSTART:19701101T020000",
-    "RRULE:FREQ=YEARLY;BYMONTH=11;BYDAY=1SU",
-    "END:STANDARD",
-    "END:VTIMEZONE"
-  ].join("\r\n");
-
-  // Outlook-friendly extra X- fields
-  const X_MS = [
-    "X-MICROSOFT-CDO-BUSYSTATUS:BUSY",
-    "X-MICROSOFT-DISALLOW-COUNTER:FALSE",
-    "X-MS-OLK-AUTOFILLLOCATION:FALSE",
-    "X-MS-OLK-CONFTYPE:0"
-  ].join("\r\n");
-
-  const VALARM = [
-    "BEGIN:VALARM",
-    "TRIGGER:-PT15M",
-    "ACTION:DISPLAY",
-    "DESCRIPTION:Reminder",
-    "END:VALARM"
-  ].join("\r\n");
-
-  const lines = [
-    "BEGIN:VCALENDAR",
-    "PRODID:-//KW Living Portal//Event//EN",
-    "VERSION:2.0",
-    "CALSCALE:GREGORIAN",
-    "METHOD:REQUEST",
-    VTIMEZONE,
-    "BEGIN:VEVENT",
-    `UID:${uid}`,
-    `DTSTAMP:${DTSTAMP}`,
-    `DTSTART;TZID=America/Toronto:${DTSTART}`,
-    `DTEND;TZID=America/Toronto:${DTEND}`,
-    "SEQUENCE:0",
-    "STATUS:CONFIRMED",
-    ORGANIZER,
-    ATTENDEE,
-    `SUMMARY:${SUMMARY}`,
-    `LOCATION:${LOCATION}`,
-    `DESCRIPTION:${DESCRIPTION}`,
-    "CLASS:PUBLIC",
-    "TRANSP:OPAQUE",
-    X_MS,
-    VALARM,
-    "END:VEVENT",
-    "END:VCALENDAR",
-    ""
+  const attendees = [
+    {
+      emailAddress: { address: attendee.email, name: attendee.name || attendee.email },
+      type: "required",
+    },
+    {
+      emailAddress: { address: supportEmail, name: "IT Support" },
+      type: "optional",
+    },
   ];
 
-  // CRLF line endings are important
-  return lines.join("\r\n");
+  // A per-registration transaction id prevents accidental duplicates if retried
+  const txId = crypto
+    .createHash("sha1")
+    .update(`${ev.id}|${attendee.email}`)
+    .digest("hex");
+
+  return {
+    subject: `Registration confirmed: ${ev.title}`,
+    body: {
+      contentType: "HTML",
+      content: `
+        <div style="font-family:Segoe UI,Arial,sans-serif">
+          <p>Thanks for registering. This meeting request will add the event to your calendar.</p>
+          <p><strong>${ev.title}</strong><br/>
+          ${ev.location || ""}</p>
+        </div>
+      `,
+    },
+    start: { dateTime: startLocal, timeZone: tz }, // ex: "America/Toronto" or "UTC"
+    end:   { dateTime: endLocal,   timeZone: tz },
+    location: { displayName: ev.location || "" },
+    attendees,
+    allowNewTimeProposals: false,
+    isReminderOn: true,
+    reminderMinutesBeforeStart: 15,
+    transactionId: txId,
+    responseRequested: true,
+  };
 }
 
-// ---------- Handler ----------
-exports.handler = async (event) => {
-  if (event.httpMethod !== "POST") {
+exports.handler = async (req) => {
+  if (req.httpMethod !== "POST") {
     return { statusCode: 405, body: "Method Not Allowed" };
   }
 
   try {
-    const body = JSON.parse(event.body || "{}");
-    const { attendee, event: ev, summary } = body;
-
+    const { attendee, event: ev } = JSON.parse(req.body || "{}");
     if (!attendee?.email || !ev?.title || !ev?.startISO || !ev?.endISO) {
       return { statusCode: 400, body: "Missing required fields." };
     }
 
-    // Env vars
-    const O365_USER = process.env.O365_USER; // office@livinggroupinc.com
-    const O365_PASS = process.env.O365_PASS;
-    const CC_EMAIL  = process.env.CC_EMAIL || "itsupport@livingrealtykw.com";
-    const FROM_NAME = process.env.FROM_NAME || "KW Living Portal";
-    const REPLY_TO  = process.env.REPLY_TO || O365_USER;
+    const organizerEmail = process.env.ORGANIZER_EMAIL || process.env.O365_USER;
+    if (!organizerEmail) {
+      return { statusCode: 500, body: "Missing ORGANIZER_EMAIL (or O365_USER) env var." };
+    }
 
-    // SMTP transport (Office 365)
-    const transporter = nodemailer.createTransport({
-      host: "smtp.office365.com",
-      port: 587,
-      secure: false,
-      auth: { user: O365_USER, pass: O365_PASS },
-      tls: { ciphers: "TLSv1.2" },
+    // Choose the time zone you want the meeting to be created in
+    const TIMEZONE = process.env.EVENT_TIMEZONE || "America/Toronto";
+
+    const token = await getGraphToken();
+    const eventBody = buildEventPayload(attendee, ev, TIMEZONE);
+
+    // POST /users/{organizer}/events?sendUpdates=all  -> sends the real meeting invite
+    const url = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(
+      organizerEmail
+    )}/events?sendUpdates=all`;
+
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token.access_token}`,
+        "Content-Type": "application/json",
+        Prefer: `outlook.timezone="${TIMEZONE}"`,
+      },
+      body: JSON.stringify(eventBody),
     });
 
-    const html = buildEmailHTML({ attendee, event: ev, summary });
-    const ics  = buildICS({ ev, organizerEmail: O365_USER, attendee });
+    if (!resp.ok) {
+      const t = await resp.text();
+      throw new Error(`Graph create event ${resp.status}: ${t}`);
+    }
 
-    const mailOptions = {
-      from: `${FROM_NAME} <${O365_USER}>`,
-      to: `${attendee.name || ""} <${attendee.email}>`,
-      cc: CC_EMAIL,
-      subject: `Registration confirmed: ${ev.title}`,
-      // Provide a plain text fallback (helps some clients)
-      text: `You're registered for: ${ev.title}\nWhen: ${summary.when}\nWhere: ${ev.location || ""}`,
-      html,
-      replyTo: REPLY_TO,
-
-      // 🔑 Inline calendar part as ALTERNATIVE (not an attachment)
-      alternatives: [
-        {
-          content: ics,
-          contentType: 'text/calendar; method=REQUEST; charset="UTF-8"; name="invite.ics"',
-          contentDisposition: 'inline; filename="invite.ics"',
-          headers: {
-            "Content-Class": "urn:content-classes:calendarmessage"
-          }
-        }
-      ]
-    };
-
-    await transporter.sendMail(mailOptions);
-    return { statusCode: 200, body: JSON.stringify({ ok: true }) };
+    const data = await resp.json();
+    return { statusCode: 200, body: JSON.stringify({ ok: true, id: data.id }) };
   } catch (err) {
-    console.error("send-reg-email error:", err);
-    return { statusCode: 500, body: JSON.stringify({ ok: false, error: String(err?.message || err) }) };
+    console.error("create-meeting-invite error:", err);
+    return { statusCode: 500, body: JSON.stringify({ ok: false, error: String(err.message || err) }) };
   }
 };

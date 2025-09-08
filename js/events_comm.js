@@ -1,11 +1,11 @@
 // /js/events_comm.js
-// Lightweight email dispatcher for post-registration notifications.
-// Listens for window "event:registered" and calls the Netlify function.
+// After successful registration, try to create a meeting invite via Graph.
+// Fallback to email confirmation if meeting creation fails.
 
 (function () {
-  const API_ENDPOINT = "/.netlify/functions/send-reg-email"; // default Netlify path
+  const MEETING_ENDPOINT = "/.netlify/functions/create-meeting-invite";
+  const EMAIL_ENDPOINT   = "/.netlify/functions/send-reg-email"; // fallback
 
-  // Helpers (duplicated minimally to stay decoupled from events_public.js)
   function toDate(ts) {
     if (!ts) return null;
     if (typeof ts.toDate === "function") return ts.toDate();
@@ -20,24 +20,18 @@
       month: "short",
       day: "numeric",
       hour: "2-digit",
-      minute: "2-digit"
+      minute: "2-digit",
     });
   }
 
-  async function sendEmail(payload) {
-    try {
-      const res = await fetch(API_ENDPOINT, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      if (!res.ok) throw new Error(`Email API failed: ${res.status}`);
-      return await res.json();
-    } catch (err) {
-      console.error("send-reg-email error:", err);
-      // Non-blocking for UX. You can surface a toast here if you want.
-      return { ok: false, error: String(err) };
-    }
+  async function call(endpoint, payload) {
+    const res = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) throw new Error(`${endpoint} -> ${res.status}`);
+    return res.json();
   }
 
   window.addEventListener("event:registered", async (e) => {
@@ -45,32 +39,37 @@
     if (!event || !attendee) return;
 
     const start = toDate(event.start);
-    const end = toDate(event.end);
+    const end   = toDate(event.end);
 
-    // Prepare minimal data; backend will build the final HTML + ICS
     const payload = {
-      attendee: {
-        name: attendee.name,
-        email: attendee.email
-      },
+      attendee: { name: attendee.name, email: attendee.email },
       event: {
         id: event._id,
         title: event.title || "",
         branch: event.branch || "",
         resourceName: event.resourceName || "",
         description: event.description || "",
-        detailDescription: event.detailDescription || "", // trusted HTML from admin side
+        detailDescription: event.detailDescription || "",
         startISO: start ? start.toISOString() : null,
         endISO: end ? end.toISOString() : null,
-        color: event.color || "#3b82f6",
         location: [event.resourceName, event.branch].filter(Boolean).join(" · "),
+        color: event.color || "#3b82f6",
       },
-      // Optional UI-facing summary (for logging/troubleshooting)
-      summary: {
-        when: `${fmtDateTimeLocal(start)} – ${fmtDateTimeLocal(end)}`,
-      },
+      summary: { when: `${fmtDateTimeLocal(start)} – ${fmtDateTimeLocal(end)}` },
     };
 
-    await sendEmail(payload);
+    try {
+      // 1) Try Graph meeting request
+      await call(MEETING_ENDPOINT, payload);
+    } catch (err) {
+      console.error("create-meeting-invite failed, falling back to email:", err);
+      try {
+        // 2) Fallback to email (your existing function)
+        await call(EMAIL_ENDPOINT, payload);
+      } catch (err2) {
+        console.error("send-reg-email also failed:", err2);
+      }
+    }
   });
 })();
+
