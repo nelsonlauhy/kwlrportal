@@ -1,0 +1,13 @@
+{
+  "name": "kwlr-portal",
+  "private": true,
+  "version": "1.0.0",
+  "description": "KW Living Portal – static site + Netlify Functions",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "nodemailer": "^6.9.14"
+  }
+}
