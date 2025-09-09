@@ -9,7 +9,6 @@
   const containerList = document.getElementById("eventsContainer");
   const containerCal  = document.getElementById("calendarContainer");
   const branchFilter  = document.getElementById("branchFilter");
-  const resourceFilter = document.getElementById("resourceFilter");
   const searchInput   = document.getElementById("searchInput");
 
   // View controls
@@ -49,7 +48,6 @@
   // ---------- State ----------
   let allEvents = [];   // raw from firestore (upcoming only)
   let filtered  = [];   // after applying top filters/search
-  let resources = [];   // [{id,name,branch,type}]
   let regTarget = null; // event object being registered
   let unsubscribeEvents = null;
 
@@ -108,15 +106,13 @@
   function applyFilter() {
     const q = (searchInput.value || "").toLowerCase().trim();
     const brSel = (branchFilter.value || "ALL").toUpperCase();
-    const resSel = (resourceFilter.value || "ALL");
 
     filtered = allEvents.filter(ev => {
-      // branch
+      // branch / location
       const br = (ev.branch || "").toUpperCase();
       if (brSel !== "ALL" && br !== brSel) return false;
-      // resource
-      if (resSel !== "ALL" && ev.resourceId !== resSel) return false;
-      // text
+
+      // text search
       if (!q) return true;
       const detailTxt = stripHtmlToText(ev.detailDescription || "");
       const hay = [ev.title, ev.description, ev.resourceName, ev.branch, detailTxt]
@@ -490,23 +486,43 @@
   }
 
   // ---------- Data load ----------
-  async function loadResources() {
-    const col = window.db.collection("resources");
+  async function loadBranches() {
+    // Try to gather distinct branches from `resources` first (since they are curated),
+    // then fall back to distinct branches from upcoming `events` if needed.
+    const set = new Set();
+
     try {
-      const snap = await col.orderBy("branch","asc").orderBy("name","asc").get();
-      resources = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      const resSnap = await window.db.collection("resources").get();
+      resSnap.forEach(d => {
+        const br = (d.data()?.branch || "").trim();
+        if (br) set.add(br);
+      });
     } catch (err) {
-      console.warn("resources index missing; falling back to client sort:", err);
-      const snap = await col.get();
-      resources = snap.docs.map(d => ({ id: d.id, ...d.data() }))
-        .sort((a,b) => (String(a.branch||"").localeCompare(String(b.branch||"")) ||
-                        String(a.name||"").localeCompare(String(b.name||""))));
+      console.warn("Failed to read resources for branches:", err);
     }
 
-    // fill dropdown
-    const opts = [`<option value="ALL">All Resources</option>`]
-      .concat(resources.map(r => `<option value="${esc(r.id)}">${esc(r.name)}</option>`));
-    resourceFilter.innerHTML = opts.join("");
+    if (set.size === 0) {
+      // fallback: look at events (upcoming, public, published)
+      try {
+        const now = new Date();
+        const evSnap = await window.db.collection("events")
+          .where("start", ">=", now).get();
+        evSnap.forEach(d => {
+          const ev = d.data();
+          if (ev?.visibility === "public" && ev?.status === "published") {
+            const br = (ev.branch || "").trim();
+            if (br) set.add(br);
+          }
+        });
+      } catch (err) {
+        console.warn("Failed to read events for branches:", err);
+      }
+    }
+
+    const branches = Array.from(set).sort((a,b)=> a.localeCompare(b));
+    const opts = [`<option value="ALL">All locations</option>`]
+      .concat(branches.map(b => `<option value="${esc(b)}">${esc(b)}</option>`));
+    branchFilter.innerHTML = opts.join("");
   }
 
   function attachEventsListener() {
@@ -696,12 +712,11 @@
       return;
     }
 
-    await loadResources();
+    await loadBranches();
     attachEventsListener();
 
     // Filters/search
     branchFilter.addEventListener("change", applyFilter);
-    resourceFilter.addEventListener("change", applyFilter);
     searchInput.addEventListener("input", () => {
       clearTimeout(searchInput._t);
       searchInput._t = setTimeout(applyFilter, 120);
