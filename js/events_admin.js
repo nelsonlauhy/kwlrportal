@@ -204,6 +204,16 @@
       ? `${remaining}/${capacity} left`
       : (remaining != null ? `${remaining} left` : "");
 
+    // Tag color swatch + hex (if present)
+    const colorHex = e.color ? normalizeHex(e.color) : null;
+    const colorBadge = colorHex
+      ? `<span class="badge text-bg-light border">
+          <span style="display:inline-block;width:12px;height:12px;border-radius:50%;
+                        background:${esc(colorHex)};border:1px solid #cbd5e1;margin-right:.35rem;vertical-align:middle;"></span>
+          ${esc(colorHex)}
+        </span>`
+      : "";
+
     return `
       <div class="event-card">
         <div class="d-flex justify-content-between align-items-start">
@@ -213,6 +223,7 @@
               <span class="me-2"><i class="bi bi-clock"></i> ${esc(dateLine)}</span>
               ${e.resourceName ? `<span class="badge badge-room me-2"><i class="bi bi-building me-1"></i>${esc(e.resourceName)}</span>` : ""}
               ${e.branch ? `<span class="badge badge-branch me-2">${esc(e.branch)}</span>` : ""}
+              ${colorBadge ? `<span class="me-2">${colorBadge}</span>` : ""}
               <span class="badge text-bg-light border">${esc(e.status || "")}</span>
               <span class="badge text-bg-light border">${esc(e.visibility || "")}</span>
             </div>
