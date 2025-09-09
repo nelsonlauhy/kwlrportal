@@ -40,7 +40,7 @@
   const evTitleEl    = document.getElementById("evTitle");
   const evMetaEl     = document.getElementById("evMeta");
   const evDateLineEl = document.getElementById("evDateLine");
-  const evAddressEl  = document.getElementById("evAddress");
+  const evAddressEl  = document.getElementById("evAddress"); // NEW: line in HTML under time
   const evShortDescEl= document.getElementById("evShortDesc");
   const evDetailDescEl = document.getElementById("evDetailDesc");
   const evCapacityEl = document.getElementById("evCapacity");
@@ -51,6 +51,9 @@
   let filtered  = [];   // after applying top filters/search
   let regTarget = null; // event object being registered
   let unsubscribeEvents = null;
+
+  // cache resource docs by id -> data (for address, etc.)
+  const resourceCache = Object.create(null);
 
   // calendar state
   let currentView = "list";    // 'month' | 'week' | 'day' | 'list'
@@ -414,6 +417,23 @@
     `;
   }
 
+  // ---------- Resource fetch (for address) ----------
+  async function fetchResourceData(resourceId) {
+    if (!resourceId) return null;
+    if (resourceCache[resourceId]) return resourceCache[resourceId];
+    try {
+      const snap = await window.db.collection("resources").doc(resourceId).get();
+      if (snap.exists) {
+        const data = snap.data();
+        resourceCache[resourceId] = data;
+        return data;
+      }
+    } catch (err) {
+      console.warn("Failed to load resource:", err);
+    }
+    return null;
+  }
+
   // ---------- Event Details Modal ----------
   function openEventDetails(ev) {
     const s = toDate(ev.start), e = toDate(ev.end);
@@ -442,17 +462,12 @@
 
     if (evDateLineEl) evDateLineEl.textContent = dateLine;
 
-    // reset/hide address first
+    // Address: reset then async fill from resources/{id}.address
     if (evAddressEl) { evAddressEl.style.display = "none"; evAddressEl.textContent = ""; }
-
-    // async load address from resources/{resourceId}.address
     if (evAddressEl && ev.resourceId) {
       fetchResourceData(ev.resourceId).then(data => {
         const addr = data?.address;
-        if (addr && eventModalEl.classList.contains("show")) {
-          evAddressEl.textContent = addr;
-          evAddressEl.style.display = "";
-        } else if (addr) { // modal not yet shown
+        if (addr) {
           evAddressEl.textContent = addr;
           evAddressEl.style.display = "";
         }
