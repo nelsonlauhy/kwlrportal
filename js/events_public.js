@@ -755,6 +755,7 @@
       searchInput._t = setTimeout(applyFilter, 120);
     });
 
+    
     // View switch
     btnMonth.addEventListener("click", () => { currentView="month"; render(); });
     btnWeek.addEventListener("click",  () => { currentView="week";  render(); });
