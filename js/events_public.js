@@ -1,9 +1,7 @@
 // Public Events (Firestore v8)
 // Views: Month / Week / Day / List
 // - Click any event to open DETAILS MODAL with info + Register button (uses #eventModal in your HTML)
-// - Colors rendered from event.color (hex)
-// - detailDescription is trusted HTML (produced by admin side)
-// - Registration uses existing #regModal
+// - Address shown under time; fetched from resources with multiple fallbacks
 (function() {
   // ---------- DOM ----------
   const containerList = document.getElementById("eventsContainer");
@@ -40,7 +38,7 @@
   const evTitleEl    = document.getElementById("evTitle");
   const evMetaEl     = document.getElementById("evMeta");
   const evDateLineEl = document.getElementById("evDateLine");
-  const evAddressEl  = document.getElementById("evAddress"); // NEW: line in HTML under time
+  const evAddressEl  = document.getElementById("evAddress");   // <-- present in your HTML
   const evShortDescEl= document.getElementById("evShortDesc");
   const evDetailDescEl = document.getElementById("evDetailDesc");
   const evCapacityEl = document.getElementById("evCapacity");
@@ -52,7 +50,7 @@
   let regTarget = null; // event object being registered
   let unsubscribeEvents = null;
 
-  // cache resource docs by id -> data (for address, etc.)
+  // cache resource docs by id/name -> data (for address, etc.)
   const resourceCache = Object.create(null);
 
   // calendar state
@@ -85,7 +83,6 @@
   function truncateToDay(d) { const x=new Date(d); x.setHours(0,0,0,0); return x; }
   function monthKey(d) { return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`; }
   function monthLabel(d) { return d.toLocaleString(undefined, { month: "long", year: "numeric" }); }
-
   function normalizeHex(c) {
     if (!c) return "#3b82f6";
     let x = String(c).trim();
@@ -101,7 +98,6 @@
     const yiq = (r*299 + g*587 + b*114) / 1000;
     return yiq >= 150 ? "#000000" : "#ffffff";
   }
-
   function clearRegAlerts() {
     [regWarn, regErr, regOk].forEach(el => { el.classList.add("d-none"); el.textContent=""; });
   }
@@ -417,20 +413,60 @@
     `;
   }
 
-  // ---------- Resource fetch (for address) ----------
-  async function fetchResourceData(resourceId) {
-    if (!resourceId) return null;
-    if (resourceCache[resourceId]) return resourceCache[resourceId];
-    try {
-      const snap = await window.db.collection("resources").doc(resourceId).get();
-      if (snap.exists) {
-        const data = snap.data();
-        resourceCache[resourceId] = data;
-        return data;
-      }
-    } catch (err) {
-      console.warn("Failed to load resource:", err);
+  // ---------- Resource fetch (robust: docId -> field id -> name(+branch)) ----------
+  async function fetchResourceDataByAny(ev) {
+    const rid = ev.resourceId || ev.resourceID || ev.resource || null;
+    const rname = ev.resourceName || null;
+    const rbranch = ev.branch || null;
+
+    // In-memory cache keys
+    if (rid && resourceCache[`id:${rid}`]) return resourceCache[`id:${rid}`];
+    if (rname && resourceCache[`name:${rname}|${rbranch||""}`]) return resourceCache[`name:${rname}|${rbranch||""}`];
+
+    const col = window.db.collection("resources");
+
+    // 1) Try doc(resourceId) directly (if provided)
+    if (rid) {
+      try {
+        const snap = await col.doc(rid).get();
+        if (snap.exists) {
+          const data = snap.data();
+          resourceCache[`id:${rid}`] = data;
+          return data;
+        }
+      } catch (e) { /* ignore */ }
     }
+
+    // 2) Try where('id','==',resourceId) — when the event stores the "id" field, not doc id
+    if (rid) {
+      try {
+        const q = await col.where("id","==",rid).limit(1).get();
+        if (!q.empty) {
+          const data = q.docs[0].data();
+          resourceCache[`id:${rid}`] = data;
+          return data;
+        }
+      } catch (e) { /* ignore */ }
+    }
+
+    // 3) Try match by resourceName (and prefer same branch)
+    if (rname) {
+      try {
+        const q2 = await col.where("name","==",rname).get();
+        if (!q2.empty) {
+          // if multiple, prefer same branch
+          const all = q2.docs.map(d => d.data());
+          let best = all[0];
+          if (rbranch) {
+            const exact = all.find(x => (x.branch||"") === rbranch);
+            if (exact) best = exact;
+          }
+          resourceCache[`name:${rname}|${rbranch||""}`] = best;
+          return best;
+        }
+      } catch (e) { /* ignore */ }
+    }
+
     return null;
   }
 
@@ -462,16 +498,22 @@
 
     if (evDateLineEl) evDateLineEl.textContent = dateLine;
 
-    // Address: reset then async fill from resources/{id}.address
+    // Address: reset/hide first
     if (evAddressEl) { evAddressEl.style.display = "none"; evAddressEl.textContent = ""; }
-    if (evAddressEl && ev.resourceId) {
-      fetchResourceData(ev.resourceId).then(data => {
+
+    // 0) If event already has address field, use immediately
+    if (evAddressEl && ev.address) {
+      evAddressEl.textContent = ev.address;
+      evAddressEl.style.display = "";
+    } else if (evAddressEl) {
+      // 1-3) Robust fetch from resources
+      fetchResourceDataByAny(ev).then(data => {
         const addr = data?.address;
         if (addr) {
           evAddressEl.textContent = addr;
           evAddressEl.style.display = "";
         }
-      });
+      }).catch(()=>{ /* silent */ });
     }
 
     if (evShortDescEl) {
@@ -755,7 +797,6 @@
       searchInput._t = setTimeout(applyFilter, 120);
     });
 
-    
     // View switch
     btnMonth.addEventListener("click", () => { currentView="month"; render(); });
     btnWeek.addEventListener("click",  () => { currentView="week";  render(); });
