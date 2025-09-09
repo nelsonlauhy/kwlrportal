@@ -1,7 +1,7 @@
 // Public Events (Firestore v8)
 // Views: Month / Week / Day / List
-// - Click any event to open DETAILS MODAL with info + Register button (uses #eventModal in your HTML)
-// - Address shown under time; fetched from resources with multiple fallbacks
+// - Address under time; Google Maps link + optional inline embed (no API key)
+// - Branch filter populated from resources
 (function() {
   // ---------- DOM ----------
   const containerList = document.getElementById("eventsContainer");
@@ -19,7 +19,7 @@
   const btnToday = document.getElementById("btnToday");
   const calLabel = document.getElementById("calLabel");
 
-  // Registration modal (already in your HTML)
+  // Registration modal
   const regModalEl = document.getElementById("regModal");
   const regModal   = new bootstrap.Modal(regModalEl);
   const regForm    = document.getElementById("regForm");
@@ -32,30 +32,38 @@
   const regBusy = document.getElementById("regBusy");
   const btnSubmitReg = document.getElementById("btnSubmitReg");
 
-  // Event Details modal (static in your HTML)
+  // Event Details modal
   const eventModalEl = document.getElementById("eventModal");
   const eventModal   = new bootstrap.Modal(eventModalEl);
   const evTitleEl    = document.getElementById("evTitle");
   const evMetaEl     = document.getElementById("evMeta");
   const evDateLineEl = document.getElementById("evDateLine");
-  const evAddressEl  = document.getElementById("evAddress");   // <-- present in your HTML
+
+  // Address + map controls
+  const evAddressRow = document.getElementById("evAddressRow");
+  const evAddressText = document.getElementById("evAddressText");
+  const evMapLink   = document.getElementById("evMapLink");
+  const evMapToggle = document.getElementById("evMapToggle");
+  const evMapEmbed  = document.getElementById("evMapEmbed");
+  const evMapIframe = document.getElementById("evMapIframe");
+
   const evShortDescEl= document.getElementById("evShortDesc");
   const evDetailDescEl = document.getElementById("evDetailDesc");
   const evCapacityEl = document.getElementById("evCapacity");
   const btnOpenRegister = document.getElementById("btnOpenRegister");
 
   // ---------- State ----------
-  let allEvents = [];   // raw from firestore (upcoming only)
-  let filtered  = [];   // after applying top filters/search
-  let regTarget = null; // event object being registered
+  let allEvents = [];
+  let filtered  = [];
+  let regTarget = null;
   let unsubscribeEvents = null;
 
   // cache resource docs by id/name -> data (for address, etc.)
   const resourceCache = Object.create(null);
 
   // calendar state
-  let currentView = "list";    // 'month' | 'week' | 'day' | 'list'
-  let cursorDate  = truncateToDay(new Date()); // reference date for calendar
+  let currentView = "list";
+  let cursorDate  = truncateToDay(new Date());
 
   // ---------- Utils ----------
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, m => (
@@ -108,11 +116,9 @@
     const brSel = (branchFilter.value || "ALL").toUpperCase();
 
     filtered = allEvents.filter(ev => {
-      // branch / location
       const br = (ev.branch || "").toUpperCase();
       if (brSel !== "ALL" && br !== brSel) return false;
 
-      // text search
       if (!q) return true;
       const detailTxt = stripHtmlToText(ev.detailDescription || "");
       const hay = [ev.title, ev.description, ev.resourceName, ev.branch, detailTxt]
@@ -120,7 +126,7 @@
       return hay.some(v => v.includes(q));
     });
 
-    render(); // switch based on currentView
+    render();
   }
 
   // ---------- RENDER DISPATCH ----------
@@ -138,7 +144,7 @@
       return;
     }
 
-    containerList.innerHTML = ""; // hide list
+    containerList.innerHTML = "";
     if (currentView === "month") renderMonth();
     else if (currentView === "week") renderWeek();
     else renderDay();
@@ -153,7 +159,6 @@
         </div>`;
       return;
     }
-    // Group by month of start
     const groups = {};
     for (const e of filtered) {
       const d = toDate(e.start);
@@ -168,7 +173,6 @@
       for (const e of g.events) parts.push(renderEventCard(e));
     });
     containerList.innerHTML = parts.join("");
-    // Clicks handled via document delegation
   }
 
   function renderEventCard(e) {
@@ -220,9 +224,7 @@
     if (start && now > start) return false;
     return true;
   }
-  function overlaps(evStart, evEnd, a, b) {
-    return evStart < b && evEnd > a;
-  }
+  function overlaps(evStart, evEnd, a, b) { return evStart < b && evEnd > a; }
   function eventsInRange(rangeStart, rangeEnd) {
     return filtered.filter(ev => {
       const s = toDate(ev.start); const e = toDate(ev.end);
@@ -231,18 +233,18 @@
     });
   }
 
-  // ---------- MONTH VIEW ----------
+  // ---------- MONTH / WEEK / DAY ----------
   function renderMonth() {
     const year = cursorDate.getFullYear();
-    const month = cursorDate.getMonth(); // 0-based
+    const month = cursorDate.getMonth();
 
     calLabel.textContent = cursorDate.toLocaleString(undefined,{month:"long", year:"numeric"});
 
     const firstOfMonth = new Date(year, month, 1);
-    const startDow = firstOfMonth.getDay(); // 0 Sun
+    const startDow = firstOfMonth.getDay();
     const gridStart = new Date(firstOfMonth);
     gridStart.setDate(firstOfMonth.getDate() - startDow);
-    const gridEnd = new Date(gridStart); gridEnd.setDate(gridStart.getDate() + 42); // 6 weeks
+    const gridEnd = new Date(gridStart); gridEnd.setDate(gridStart.getDate() + 42);
 
     const evs = eventsInRange(gridStart, gridEnd);
 
@@ -271,7 +273,7 @@
         const color = normalizeHex(e.color || "#3b82f6");
         const txt = idealTextColor(color);
         const disable = !canRegister(e) ? "full" : "";
-        return `<button class="month-evt ${disable}" data-id="${esc(e._id)}" 
+        return `<button class="month-evt ${disable}" data-id="${esc(e._id)}"
                         title="${esc(e.title || "")}"
                         style="background:${esc(color)};border-color:${esc(color)};color:${esc(txt)};">
                   ${esc(e.title || "Event")}
@@ -295,7 +297,6 @@
     `;
   }
 
-  // ---------- WEEK VIEW ----------
   function renderWeek() {
     const start = new Date(cursorDate);
     start.setDate(start.getDate() - start.getDay());
@@ -325,7 +326,7 @@
         const s = toDate(e.start), ee = toDate(e.end);
         const startHour = Math.max(0, (s.getHours() - hours[0]) + s.getMinutes()/60);
         const durHours = Math.max(0.7, ((ee - s) / (1000*60*60)));
-        const top = Math.min(hours.length-0.7, startHour) * 44; // 44px per slot
+        const top = Math.min(hours.length-0.7, startHour) * 44;
         const height = Math.min(hours.length*44 - top - 4, Math.max(20, durHours*44 - 6));
         const full = !canRegister(e) ? "full" : "";
         const color = normalizeHex(e.color || "#3b82f6");
@@ -364,7 +365,6 @@
     `;
   }
 
-  // ---------- DAY VIEW ----------
   function renderDay() {
     const start = truncateToDay(cursorDate);
     const end = new Date(start); end.setDate(start.getDate()+1);
@@ -372,7 +372,7 @@
     calLabel.textContent = fmtDate(start);
 
     const evs = eventsInRange(start, end).sort((a,b)=> toDate(a.start)-toDate(b.start));
-    const hours = Array.from({length:13}, (_,i)=> i+7); // 07:00 - 19:00
+    const hours = Array.from({length:13}, (_,i)=> i+7);
 
     const slots = hours.map(()=>`<div class="time-slot"></div>`).join("");
     const pills = evs.map(e=>{
@@ -413,19 +413,17 @@
     `;
   }
 
-  // ---------- Resource fetch (robust: docId -> field id -> name(+branch)) ----------
+  // ---------- Resource fetch (robust) ----------
   async function fetchResourceDataByAny(ev) {
     const rid = ev.resourceId || ev.resourceID || ev.resource || null;
     const rname = ev.resourceName || null;
     const rbranch = ev.branch || null;
 
-    // In-memory cache keys
     if (rid && resourceCache[`id:${rid}`]) return resourceCache[`id:${rid}`];
     if (rname && resourceCache[`name:${rname}|${rbranch||""}`]) return resourceCache[`name:${rname}|${rbranch||""}`];
 
     const col = window.db.collection("resources");
 
-    // 1) Try doc(resourceId) directly (if provided)
     if (rid) {
       try {
         const snap = await col.doc(rid).get();
@@ -434,10 +432,9 @@
           resourceCache[`id:${rid}`] = data;
           return data;
         }
-      } catch (e) { /* ignore */ }
+      } catch (_) {}
     }
 
-    // 2) Try where('id','==',resourceId) — when the event stores the "id" field, not doc id
     if (rid) {
       try {
         const q = await col.where("id","==",rid).limit(1).get();
@@ -446,15 +443,13 @@
           resourceCache[`id:${rid}`] = data;
           return data;
         }
-      } catch (e) { /* ignore */ }
+      } catch (_) {}
     }
 
-    // 3) Try match by resourceName (and prefer same branch)
     if (rname) {
       try {
         const q2 = await col.where("name","==",rname).get();
         if (!q2.empty) {
-          // if multiple, prefer same branch
           const all = q2.docs.map(d => d.data());
           let best = all[0];
           if (rbranch) {
@@ -464,13 +459,51 @@
           resourceCache[`name:${rname}|${rbranch||""}`] = best;
           return best;
         }
-      } catch (e) { /* ignore */ }
+      } catch (_) {}
     }
 
     return null;
   }
 
   // ---------- Event Details Modal ----------
+  function setMapUIForAddress(addr) {
+    if (!evAddressRow) return;
+
+    if (addr) {
+      evAddressRow.classList.remove("d-none");
+      evAddressText.textContent = addr;
+
+      const q = encodeURIComponent(addr);
+      if (evMapLink) {
+        evMapLink.href = `https://www.google.com/maps?q=${q}`;
+      }
+
+      if (evMapToggle) {
+        evMapToggle.textContent = "Show map";
+        evMapEmbed.classList.add("d-none");
+        if (evMapIframe) evMapIframe.removeAttribute("src");
+
+        evMapToggle.onclick = () => {
+          const hidden = evMapEmbed.classList.contains("d-none");
+          if (hidden) {
+            if (!evMapIframe.getAttribute("src")) {
+              evMapIframe.src = `https://www.google.com/maps?q=${q}&output=embed`;
+            }
+            evMapEmbed.classList.remove("d-none");
+            evMapToggle.textContent = "Hide map";
+          } else {
+            evMapEmbed.classList.add("d-none");
+            evMapToggle.textContent = "Show map";
+          }
+        };
+      }
+    } else {
+      evAddressRow.classList.add("d-none");
+      evAddressText.textContent = "";
+      if (evMapIframe) evMapIframe.removeAttribute("src");
+    }
+  }
+
   function openEventDetails(ev) {
     const s = toDate(ev.start), e = toDate(ev.end);
     const dateLine = `${fmtDateTime(s)} – ${fmtDateTime(e)}`;
@@ -498,49 +531,32 @@
 
     if (evDateLineEl) evDateLineEl.textContent = dateLine;
 
-    // Address: reset/hide first
-    if (evAddressEl) { evAddressEl.style.display = "none"; evAddressEl.textContent = ""; }
-
-    // 0) If event already has address field, use immediately
-    if (evAddressEl && ev.address) {
-      evAddressEl.textContent = ev.address;
-      evAddressEl.style.display = "";
-    } else if (evAddressEl) {
-      // 1-3) Robust fetch from resources
+    // Address pipeline: event.address -> resource.address -> hide
+    if (ev.address) {
+      setMapUIForAddress(ev.address);
+    } else {
+      setMapUIForAddress(null);
       fetchResourceDataByAny(ev).then(data => {
-        const addr = data?.address;
-        if (addr) {
-          evAddressEl.textContent = addr;
-          evAddressEl.style.display = "";
-        }
-      }).catch(()=>{ /* silent */ });
+        const addr = data?.address || null;
+        setMapUIForAddress(addr);
+      });
     }
 
     if (evShortDescEl) {
-      if (ev.description) {
-        evShortDescEl.textContent = ev.description;
-        evShortDescEl.style.display = "";
-      } else {
-        evShortDescEl.style.display = "none";
-      }
+      if (ev.description) { evShortDescEl.textContent = ev.description; evShortDescEl.style.display = ""; }
+      else { evShortDescEl.style.display = "none"; }
     }
 
     if (evDetailDescEl) {
-      if (ev.detailDescription) {
-        evDetailDescEl.innerHTML = ev.detailDescription; // trusted HTML from admin
-        evDetailDescEl.style.display = "";
-      } else {
-        evDetailDescEl.style.display = "none";
-      }
+      if (ev.detailDescription) { evDetailDescEl.innerHTML = ev.detailDescription; evDetailDescEl.style.display = ""; }
+      else { evDetailDescEl.style.display = "none"; }
     }
 
     if (evCapacityEl) evCapacityEl.textContent = remainTxt || "";
 
-    // Register button enable/disable
     if (btnOpenRegister) {
       btnOpenRegister.disabled = !canReg;
       btnOpenRegister.onclick = () => {
-        // prepare reg form
         regTarget = ev;
         regEventSummary.innerHTML = `
           <div><strong>${esc(ev.title || "")}</strong></div>
@@ -562,10 +578,7 @@
 
   // ---------- Data load ----------
   async function loadBranches() {
-    // Try to gather distinct branches from `resources` first (since they are curated),
-    // then fall back to distinct branches from upcoming `events` if needed.
     const set = new Set();
-
     try {
       const resSnap = await window.db.collection("resources").get();
       resSnap.forEach(d => {
@@ -577,11 +590,9 @@
     }
 
     if (set.size === 0) {
-      // fallback: look at events (upcoming, public, published)
       try {
         const now = new Date();
-        const evSnap = await window.db.collection("events")
-          .where("start", ">=", now).get();
+        const evSnap = await window.db.collection("events").where("start", ">=", now).get();
         evSnap.forEach(d => {
           const ev = d.data();
           if (ev?.visibility === "public" && ev?.status === "published") {
@@ -607,7 +618,6 @@
     const col = window.db.collection("events");
 
     try {
-      // Preferred (needs composite index: visibility asc, status asc, start asc)
       unsubscribeEvents = col
         .where("visibility","==","public")
         .where("status","==","published")
@@ -716,15 +726,10 @@
 
       regOk.classList.remove("d-none");
       regOk.textContent = "Registration successful! Check your email.";
-      regWarn.classList.add("d-none");
       regErr.classList.add("d-none");
 
-      // Tell the comms module to send the email (keeps this file small)
       window.dispatchEvent(new CustomEvent("event:registered", {
-        detail: {
-          event: regTarget,
-          attendee: { name, email }
-        }
+        detail: { event: regTarget, attendee: { name, email } }
       }));
 
       setTimeout(() => regModal.hide(), 1200);
@@ -740,33 +745,21 @@
   });
 
   // ---------- View navigation ----------
-  function gotoToday() {
-    cursorDate = truncateToDay(new Date());
+  function gotoToday(){ cursorDate = truncateToDay(new Date()); render(); }
+  function prevPeriod(){
+    if (currentView === "month"){ const d=new Date(cursorDate); d.setMonth(d.getMonth()-1); cursorDate=truncateToDay(d); }
+    else if (currentView === "week"){ const d=new Date(cursorDate); d.setDate(d.getDate()-7); cursorDate=truncateToDay(d); }
+    else if (currentView === "day"){ const d=new Date(cursorDate); d.setDate(d.getDate()-1); cursorDate=truncateToDay(d); }
     render();
   }
-  function prevPeriod() {
-    if (currentView === "month") {
-      const d = new Date(cursorDate); d.setMonth(d.getMonth()-1); cursorDate = truncateToDay(d);
-    } else if (currentView === "week") {
-      const d = new Date(cursorDate); d.setDate(d.getDate()-7); cursorDate = truncateToDay(d);
-    } else if (currentView === "day") {
-      const d = new Date(cursorDate); d.setDate(d.getDate()-1); cursorDate = truncateToDay(d);
-    }
-    render();
-  }
-  function nextPeriod() {
-    if (currentView === "month") {
-      const d = new Date(cursorDate); d.setMonth(d.getMonth()+1); cursorDate = truncateToDay(d);
-    } else if (currentView === "week") {
-      const d = new Date(cursorDate); d.setDate(d.getDate()+7); cursorDate = truncateToDay(d);
-    } else if (currentView === "day") {
-      const d = new Date(cursorDate); d.setDate(d.getDate()+1); cursorDate = truncateToDay(d);
-    }
+  function nextPeriod(){
+    if (currentView === "month"){ const d=new Date(cursorDate); d.setMonth(d.getMonth()+1); cursorDate=truncateToDay(d); }
+    else if (currentView === "week"){ const d=new Date(cursorDate); d.setDate(d.getDate()+7); cursorDate=truncateToDay(d); }
+    else if (currentView === "day"){ const d=new Date(cursorDate); d.setDate(d.getDate()+1); cursorDate=truncateToDay(d); }
     render();
   }
 
   // ---------- Event Delegation for Clicks ----------
-  // Works for: list cards (.event-card), month buttons (.month-evt), week/day pills (.evt-pill)
   document.addEventListener("click", (ev) => {
     const card = ev.target.closest(".event-card");
     const monthBtn = ev.target.closest(".month-evt");
@@ -790,22 +783,19 @@
     await loadBranches();
     attachEventsListener();
 
-    // Filters/search
     branchFilter.addEventListener("change", applyFilter);
     searchInput.addEventListener("input", () => {
       clearTimeout(searchInput._t);
       searchInput._t = setTimeout(applyFilter, 120);
     });
 
-    // View switch
     btnMonth.addEventListener("click", () => { currentView="month"; render(); });
-    btnWeek.addEventListener("click",  () => { currentView="week";  render(); });
-    btnDay.addEventListener("click",   () => { currentView="day";   render(); });
-    btnList.addEventListener("click",  () => { currentView="list";  render(); });
+    btnWeek .addEventListener("click", () => { currentView="week";  render(); });
+    btnDay  .addEventListener("click", () => { currentView="day";   render(); });
+    btnList .addEventListener("click", () => { currentView="list";  render(); });
 
-    // Date nav
     btnToday.addEventListener("click", gotoToday);
-    btnPrev.addEventListener("click", prevPeriod);
-    btnNext.addEventListener("click", nextPeriod);
+    btnPrev .addEventListener("click", prevPeriod);
+    btnNext .addEventListener("click", nextPeriod);
   });
 })();
