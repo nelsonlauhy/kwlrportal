@@ -5,12 +5,12 @@
 // - Conflict detection (branch + resource overlap)
 // - Registration windows per occurrence via DAYS-before-start
 // - Back-fill "Reg Opens/Closes (days)" when editing an existing event
-// - Combined filter: Location (Branch — Resource) + Search
+// - Combined filter: Location (Branch — Resource ONLY) + Search
 
 (function() {
   // ---------- DOM ----------
   const containerList   = document.getElementById("eventsContainer");
-  const locationFilter  = document.getElementById("locationFilter"); // NEW combined filter
+  const locationFilter  = document.getElementById("locationFilter"); // Combined filter (resource only)
   const searchInput     = document.getElementById("searchInput");
   const listLabel       = document.getElementById("listLabel");
 
@@ -115,6 +115,7 @@
   // Convert plain text → HTML (auto-link + preserve newlines)
   function plainToHtml(text) {
     const escText = esc(text || "");
+       // link http(s) and www.
     const urlRegex = /((?:https?:\/\/|www\.)[^\s<]+)/gi;
     const linked = escText.replace(urlRegex, (m) => {
       const href = m.startsWith("www.") ? `https://${m}` : m;
@@ -132,22 +133,17 @@
     editErrInline.classList.remove("d-none");
   }
 
-  // ---------- Combined Filter (Location) + Search ----------
+  // ---------- Combined Filter (Resource only) + Search ----------
   function applyFilter() {
     const q = (searchInput.value || "").toLowerCase().trim();
-    const locSel = (locationFilter?.value || "ALL"); // "ALL" | "BR:WB" | "RS:<resourceId>"
+    const locSel = (locationFilter?.value || "ALL"); // "ALL" | "RS:<resourceId>"
 
     filtered = allEvents.filter(ev => {
-      // Location filter
+      // If a specific resource is selected, filter by resourceId
       if (locSel !== "ALL") {
-        if (locSel.startsWith("BR:")) {
-          const br = locSel.slice(3); // "WB"
-          const evBr = (ev.branch || "").toUpperCase();
-          if (evBr !== br) return false;
-        } else if (locSel.startsWith("RS:")) {
-          const rid = locSel.slice(3);
-          if ((ev.resourceId || "") !== rid) return false;
-        }
+        if (!locSel.startsWith("RS:")) return false;
+        const rid = locSel.slice(3);
+        if ((ev.resourceId || "") !== rid) return false;
       }
 
       // Search text
@@ -157,7 +153,6 @@
           ev.description,
           ev.resourceName,
           ev.branch
-          // add ev.detailDescriptionPlain if you store one
         ].map(v => (v || "").toString().toLowerCase());
         if (!hay.some(v => v.includes(q))) return false;
       }
@@ -237,23 +232,13 @@
     `;
   }
 
-  // ---------- Populate Location filter ----------
+  // ---------- Populate Location filter (Resource-only) ----------
   function populateLocationFilter(resources) {
     if (!locationFilter) return;
 
-    // Unique branches
-    const branches = Array.from(new Set(resources.map(r => (r.branch || "").toUpperCase())))
-      .filter(Boolean)
-      .sort();
-
     const opts = [`<option value="ALL">All Locations</option>`];
 
-    // Branch-only options
-    branches.forEach(br => {
-      opts.push(`<option value="BR:${esc(br)}">${esc(br)} — All resources</option>`);
-    });
-
-    // Resource options: "BR — Name"
+    // Sort by branch then name
     const byBranchThenName = [...resources].sort((a,b) =>
       String(a.branch||"").localeCompare(String(b.branch||"")) ||
       String(a.name||"").localeCompare(String(b.name||""))
@@ -287,7 +272,7 @@
       .concat(resources.map(r => `<option value="${esc(r.id)}">${esc(r.name)} (${esc(r.branch||"-")})</option>`));
     f_resourceId.innerHTML = opts.join("");
 
-    // Populate combined filter (branch + resource)
+    // Populate combined filter (resource-only)
     populateLocationFilter(resources);
   }
 
@@ -725,7 +710,7 @@
 
       const overlap = snap.docs
         .map(d => ({ id: d.id, ...d.data() }))
-        .filter(ev => ev.id !== ignoreId && ev._id !== ignoreId) // support both shapes
+        .filter(ev => ev.id !== ignoreId && ev._id !== ignoreId)
         .some(ev => {
           const s = toDate(ev.start), e = toDate(ev.end);
           if (!s || !e) return false;
