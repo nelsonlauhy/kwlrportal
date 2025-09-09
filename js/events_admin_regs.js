@@ -1,133 +1,181 @@
-// /netlify/functions/create-meeting-invite.js
-// Create a meeting via Microsoft Graph and send invites (sendUpdates=all)
+// js/events_admin_regs.js
+// Injects a "Registrations" button into each admin event card and shows a modal listing attendees.
+// Works with either collection name: "eventRegistrations" (preferred) or legacy typo "eventRegidtrations".
+// No require(), no bundler needed.
 
-const crypto = require("crypto");
+(function(){
+  // quick fingerprint so you can confirm the correct file is loading
+  console.log("[events_admin_regs] loaded v1.1");
 
-// Node 18+ has global fetch
-async function getGraphToken() {
-  const tenant = process.env.MS_TENANT_ID;
-  const clientId = process.env.MS_CLIENT_ID;
-  const clientSecret = process.env.MS_CLIENT_SECRET;
+  const container = document.getElementById("eventsContainer");
+  const modalEl = document.getElementById("regListModal");
+  if (!container || !modalEl) return;
 
-  const body = new URLSearchParams({
-    grant_type: "client_credentials",
-    client_id: clientId,
-    client_secret: clientSecret,
-    scope: "https://graph.microsoft.com/.default",
-  });
+  const modal   = new bootstrap.Modal(modalEl);
+  const regEventTitle = document.getElementById("regEventTitle");
+  const regEventMeta  = document.getElementById("regEventMeta");
+  const regListBody   = document.getElementById("regListBody");
+  const regListCounts = document.getElementById("regListCounts");
+  const regListStatus = document.getElementById("regListStatus");
+  const btnCopyEmails = document.getElementById("btnCopyEmails");
 
-  const resp = await fetch(`https://login.microsoftonline.com/${tenant}/oauth2/v2.0/token`, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body,
-  });
+  // Observe list changes and enhance cards by injecting a "Registrations" button
+  const observer = new MutationObserver(() => enhanceCards());
+  observer.observe(container, { childList: true, subtree: true });
+  document.addEventListener("DOMContentLoaded", enhanceCards);
 
-  if (!resp.ok) {
-    const t = await resp.text();
-    throw new Error(`Token error ${resp.status}: ${t}`);
-  }
-  return resp.json(); // { access_token, token_type, ... }
-}
+  function enhanceCards() {
+    const cards = container.querySelectorAll(".event-card");
+    cards.forEach(card => {
+      const id = extractEventId(card);
+      if (!id) return;
 
-function stripZ(iso) {
-  if (!iso) return null;
-  // Graph expects local-format "YYYY-MM-DDTHH:mm:ss" when you also pass timeZone
-  return iso.replace(/Z$/, "").replace(/\.\d{3}$/, "");
-}
+      const right = card.querySelector(".text-end") || card; // fallback: append to card
+      if (right.querySelector(".btn-view-reg")) return; // already added
 
-function buildEventPayload(attendee, ev, tz) {
-  // organizer mailbox is implied by the /users/{organizer}/events path
-  const startLocal = stripZ(ev.startISO);
-  const endLocal   = stripZ(ev.endISO);
-  const supportEmail = process.env.CC_EMAIL || "itsupport@livingrealtykw.com";
+      const btn = document.createElement("button");
+      btn.className = "btn btn-outline-primary btn-sm me-1 btn-view-reg";
+      btn.type = "button";
+      btn.dataset.id = id;
+      btn.innerHTML = `<i class="bi bi-people me-1"></i>Registrations`;
+      btn.addEventListener("click", () => openRegistrations(card, id));
 
-  const attendees = [
-    {
-      emailAddress: { address: attendee.email, name: attendee.name || attendee.email },
-      type: "required",
-    },
-    {
-      emailAddress: { address: supportEmail, name: "IT Support" },
-      type: "optional",
-    },
-  ];
-
-  // A per-registration transaction id prevents accidental duplicates if retried
-  const txId = crypto
-    .createHash("sha1")
-    .update(`${ev.id}|${attendee.email}`)
-    .digest("hex");
-
-  return {
-    subject: `Registration confirmed: ${ev.title}`,
-    body: {
-      contentType: "HTML",
-      content: `
-        <div style="font-family:Segoe UI,Arial,sans-serif">
-          <p>Thanks for registering. This meeting request will add the event to your calendar.</p>
-          <p><strong>${ev.title}</strong><br/>
-          ${ev.location || ""}</p>
-        </div>
-      `,
-    },
-    start: { dateTime: startLocal, timeZone: tz }, // ex: "America/Toronto" or "UTC"
-    end:   { dateTime: endLocal,   timeZone: tz },
-    location: { displayName: ev.location || "" },
-    attendees,
-    allowNewTimeProposals: false,
-    isReminderOn: true,
-    reminderMinutesBeforeStart: 15,
-    transactionId: txId,
-    responseRequested: true,
-  };
-}
-
-exports.handler = async (req) => {
-  if (req.httpMethod !== "POST") {
-    return { statusCode: 405, body: "Method Not Allowed" };
-  }
-
-  try {
-    const { attendee, event: ev } = JSON.parse(req.body || "{}");
-    if (!attendee?.email || !ev?.title || !ev?.startISO || !ev?.endISO) {
-      return { statusCode: 400, body: "Missing required fields." };
-    }
-
-    const organizerEmail = process.env.ORGANIZER_EMAIL || process.env.O365_USER;
-    if (!organizerEmail) {
-      return { statusCode: 500, body: "Missing ORGANIZER_EMAIL (or O365_USER) env var." };
-    }
-
-    // Choose the time zone you want the meeting to be created in
-    const TIMEZONE = process.env.EVENT_TIMEZONE || "America/Toronto";
-
-    const token = await getGraphToken();
-    const eventBody = buildEventPayload(attendee, ev, TIMEZONE);
-
-    // POST /users/{organizer}/events?sendUpdates=all  -> sends the real meeting invite
-    const url = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(
-      organizerEmail
-    )}/events?sendUpdates=all`;
-
-    const resp = await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token.access_token}`,
-        "Content-Type": "application/json",
-        Prefer: `outlook.timezone="${TIMEZONE}"`,
-      },
-      body: JSON.stringify(eventBody),
+      // Insert before Delete if present, else append
+      const delBtn = right.querySelector("[data-action='delete']");
+      if (delBtn && delBtn.parentElement === right) right.insertBefore(btn, delBtn);
+      else right.appendChild(btn);
     });
-
-    if (!resp.ok) {
-      const t = await resp.text();
-      throw new Error(`Graph create event ${resp.status}: ${t}`);
-    }
-
-    const data = await resp.json();
-    return { statusCode: 200, body: JSON.stringify({ ok: true, id: data.id }) };
-  } catch (err) {
-    console.error("create-meeting-invite error:", err);
-    return { statusCode: 500, body: JSON.stringify({ ok: false, error: String(err.message || err) }) };
   }
-};
+
+  function extractEventId(card) {
+    return (card.querySelector("[data-action='edit']")?.getAttribute("data-id"))
+        || (card.querySelector("[data-action='delete']")?.getAttribute("data-id"))
+        || null;
+  }
+
+  async function openRegistrations(card, eventId) {
+    const title = (card.querySelector(".event-title")?.textContent || "").trim();
+    const meta  = (card.querySelector(".event-meta")?.textContent || "").trim();
+
+    regEventTitle.textContent = title || eventId;
+    regEventMeta.textContent  = meta;
+
+    regListBody.innerHTML = `<tr><td colspan="5" class="text-center text-muted py-4">
+      <div class="spinner-border spinner-border-sm me-2"></div> Loading…
+    </td></tr>`;
+    regListCounts.textContent = "";
+    regListStatus.textContent = "";
+
+    modal.show();
+
+    try {
+      // Try preferred collection first; fallback to legacy typo if empty
+      let regs = await fetchRegs("eventRegistrations", eventId);
+      if (!regs.length) regs = await fetchRegs("eventRegidtrations", eventId);
+
+      if (!regs.length) {
+        regListBody.innerHTML = `<tr><td colspan="5" class="text-center text-muted py-4">No registrations found.</td></tr>`;
+        regListCounts.textContent = "0 registrations";
+        enableCopy([]);
+        return;
+      }
+
+      // Sort by createdAt desc on client to avoid composite index requirement
+      regs.sort((a, b) => (toDate(b.createdAt) - toDate(a.createdAt)));
+
+      const rows = [];
+      const emails = [];
+      let idx = 1;
+
+      regs.forEach(r => {
+        const name  = (r.attendeeName || "").toString();
+        const email = (r.attendeeEmail || "").toString();
+        const status= (r.status || "").toString();
+        const at    = toDate(r.createdAt);
+        const atStr = at ? fmtDateTime(at) : "";
+
+        if (email) emails.push(email);
+
+        rows.push(`
+          <tr>
+            <td class="text-muted">${idx++}</td>
+            <td>${esc(name)}</td>
+            <td><a href="mailto:${esc(email)}">${esc(email)}</a></td>
+            <td>${esc(status)}</td>
+            <td class="text-nowrap">${esc(atStr)}</td>
+          </tr>
+        `);
+      });
+
+      regListBody.innerHTML = rows.join("");
+      regListCounts.textContent = `${rows.length} registration${rows.length===1?"":"s"}`;
+      enableCopy(emails);
+
+    } catch (err) {
+      console.error("registrations load error:", err);
+      regListBody.innerHTML = `<tr><td colspan="5" class="text-danger py-4 text-center">Failed to load registrations.</td></tr>`;
+      regListStatus.textContent = err.message || "Error loading registrations.";
+      enableCopy([]);
+    }
+  }
+
+  async function fetchRegs(collectionName, eventId) {
+    try {
+      const snap = await window.db
+        .collection(collectionName)
+        .where("eventId","==", eventId)
+        // .orderBy("createdAt","desc") // removed to avoid index requirement
+        .get();
+      if (snap.empty) return [];
+      return snap.docs.map(d => d.data() || {});
+    } catch (err) {
+      console.warn(`fetchRegs(${collectionName}) failed:`, err);
+      return [];
+    }
+  }
+
+  function enableCopy(emails) {
+    if (!btnCopyEmails) return;
+    btnCopyEmails.onclick = async () => {
+      const text = emails.join(", ");
+      try {
+        await navigator.clipboard.writeText(text);
+        toast("Emails copied.");
+      } catch {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.position = "fixed";
+        ta.style.left = "-9999px";
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand("copy"); toast("Emails copied."); }
+        catch { toast("Copy failed."); }
+        finally { document.body.removeChild(ta); }
+      }
+    };
+  }
+
+  function toast(msg) {
+    if (!regListStatus) return;
+    regListStatus.textContent = msg;
+    setTimeout(() => { regListStatus.textContent = ""; }, 2000);
+  }
+
+  // Utilities
+  function esc(s) {
+    return String(s ?? "").replace(/[&<>"']/g, m => (
+      { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[m]
+    ));
+  }
+  function toDate(ts) {
+    if (!ts) return null;
+    if (typeof ts.toDate === "function") return ts.toDate();
+    const d = new Date(ts);
+    return isNaN(d) ? null : d;
+    }
+  function fmtDateTime(d) {
+    if (!d) return "";
+    const pad = (n) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+})();
