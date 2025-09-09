@@ -1,9 +1,8 @@
 // /netlify/functions/send-reg-email.js
-// Netlify Function: send post-registration confirmation via Office 365 SMTP
+// Fallback confirmation email (METHOD:REQUEST calendar part), no CC to IT.
 
 const nodemailer = require("nodemailer");
 
-// Build basic HTML — server-side for consistency/safety
 function buildEmailHTML({ attendee, event, summary }) {
   const safe = (s) => String(s ?? "");
   const title = safe(event.title);
@@ -11,7 +10,6 @@ function buildEmailHTML({ attendee, event, summary }) {
   const loc   = safe(event.location);
   const desc  = safe(event.description);
 
-  // detailDescription is trusted admin HTML; include if present
   const detailHTML = event.detailDescription
     ? `<hr style="border:none;border-top:1px solid #e5e7eb;margin:16px 0;" />
        <div style="font-size:14px;line-height:1.6;">${event.detailDescription}</div>`
@@ -23,73 +21,18 @@ function buildEmailHTML({ attendee, event, summary }) {
     <p style="margin:0 0 16px 0;color:#475569;">Hi ${safe(attendee.name)},<br/>Thanks for registering. Here are your event details:</p>
 
     <table role="presentation" style="width:100%;border-collapse:collapse;font-size:14px;">
-      <tr>
-        <td style="padding:8px 0;width:90px;color:#64748b;">When</td>
-        <td style="padding:8px 0;">${when}</td>
-      </tr>
-      <tr>
-        <td style="padding:8px 0;width:90px;color:#64748b;">Where</td>
-        <td style="padding:8px 0;">${loc || "—"}</td>
-      </tr>
-      <tr>
-        <td style="padding:8px 0;width:90px;color:#64748b;">Summary</td>
-        <td style="padding:8px 0;">${desc || "—"}</td>
-      </tr>
+      <tr><td style="padding:8px 0;width:90px;color:#64748b;">When</td><td style="padding:8px 0;">${when}</td></tr>
+      <tr><td style="padding:8px 0;width:90px;color:#64748b;">Where</td><td style="padding:8px 0;">${loc || "—"}</td></tr>
+      <tr><td style="padding:8px 0;width:90px;color:#64748b;">Summary</td><td style="padding:8px 0;">${desc || "—"}</td></tr>
     </table>
 
     ${detailHTML}
 
-    <p style="margin:16px 0 0 0;color:#475569;">An iCalendar invite is attached—add it to your calendar.</p>
-    <p style="margin:8px 0 0 0;color:#94a3b8;font-size:12px;">If you have questions, reply to this email.</p>
+    <p style="margin:16px 0 0 0;color:#475569;">📅 This email includes a calendar invite — click <b>Accept</b> to add it.</p>
 
     <hr style="border:none;border-top:1px solid #e5e7eb;margin:16px 0;" />
     <p style="font-size:12px;color:#94a3b8;margin:0;">KW Living Portal • Automated confirmation</p>
   </div>`;
-}
-
-// Build a simple ICS (UTC times); consumers map to local TZ automatically.
-function buildICS({ event }) {
-  const uid = `${event.id || "event"}@kw-living-portal`;
-  const dtStart = event.startISO ? new Date(event.startISO) : null;
-  const dtEnd   = event.endISO ? new Date(event.endISO) : null;
-
-  const toICSUTC = (d) => {
-    const pad = (n) => String(n).padStart(2, "0");
-    return [
-      d.getUTCFullYear(),
-      pad(d.getUTCMonth() + 1),
-      pad(d.getUTCDate()),
-      "T",
-      pad(d.getUTCHours()),
-      pad(d.getUTCMinutes()),
-      pad(d.getUTCSeconds()),
-      "Z",
-    ].join("");
-  };
-
-  const DTSTART = dtStart ? toICSUTC(dtStart) : "";
-  const DTEND   = dtEnd ? toICSUTC(dtEnd) : "";
-  const SUMMARY = (event.title || "").replace(/\n/g, " ");
-  const LOCATION = (event.location || "").replace(/\n/g, " ");
-  const DESCRIPTION = (event.description || "").replace(/\n/g, " ");
-
-  return [
-    "BEGIN:VCALENDAR",
-    "VERSION:2.0",
-    "PRODID:-//KW Living Portal//Event//EN",
-    "CALSCALE:GREGORIAN",
-    "METHOD:PUBLISH",
-    "BEGIN:VEVENT",
-    `UID:${uid}`,
-    DTSTART ? `DTSTART:${DTSTART}` : "",
-    DTEND ? `DTEND:${DTEND}` : "",
-    `SUMMARY:${escapeICS(SUMMARY)}`,
-    `LOCATION:${escapeICS(LOCATION)}`,
-    `DESCRIPTION:${escapeICS(DESCRIPTION)}`,
-    "END:VEVENT",
-    "END:VCALENDAR",
-    "",
-  ].filter(Boolean).join("\r\n");
 }
 
 function escapeICS(s) {
@@ -100,23 +43,68 @@ function escapeICS(s) {
     .replace(/,/g, "\\,");
 }
 
-exports.handler = async (event) => {
-  if (event.httpMethod !== "POST") {
+function pad(n){return String(n).padStart(2,"0");}
+function toUTCYMDHMS(d){
+  return d.getUTCFullYear()+pad(d.getUTCMonth()+1)+pad(d.getUTCDate())+"T"+pad(d.getUTCHours())+pad(d.getUTCMinutes())+pad(d.getUTCSeconds())+"Z";
+}
+
+function buildICS({ event, organizerEmail, attendee }) {
+  const uid = `${event.id || "event"}@kw-living-portal`;
+  const now = new Date();
+  const dtstamp = toUTCYMDHMS(now);
+
+  const start = new Date(event.startISO);
+  const end   = new Date(event.endISO);
+  const DTSTART = toUTCYMDHMS(start);
+  const DTEND   = toUTCYMDHMS(end);
+
+  const SUMMARY = escapeICS(event.title || "");
+  const LOCATION = escapeICS(event.location || "");
+  const DESCRIPTION = escapeICS(event.description || "");
+
+  const ORGANIZER = `ORGANIZER;CN=KW Living Portal:MAILTO:${organizerEmail}`;
+  const ATTENDEE  = `ATTENDEE;CN=${escapeICS(attendee.name || attendee.email)};ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=TRUE:MAILTO:${attendee.email}`;
+
+  return [
+    "BEGIN:VCALENDAR",
+    "PRODID:-//KW Living Portal//Event//EN",
+    "VERSION:2.0",
+    "CALSCALE:GREGORIAN",
+    "METHOD:REQUEST",
+    "BEGIN:VEVENT",
+    `UID:${uid}`,
+    `DTSTAMP:${dtstamp}`,
+    `DTSTART:${DTSTART}`,
+    `DTEND:${DTEND}`,
+    "SEQUENCE:0",
+    "STATUS:CONFIRMED",
+    ORGANIZER,
+    ATTENDEE,
+    `SUMMARY:${SUMMARY}`,
+    `LOCATION:${LOCATION}`,
+    `DESCRIPTION:${DESCRIPTION}`,
+    "TRANSP:OPAQUE",
+    "END:VEVENT",
+    "END:VCALENDAR",
+    ""
+  ].join("\r\n");
+}
+
+exports.handler = async (req) => {
+  if (req.httpMethod !== "POST") {
     return { statusCode: 405, body: "Method Not Allowed" };
   }
 
   try {
-    const body = JSON.parse(event.body || "{}");
+    const body = JSON.parse(req.body || "{}");
     const { attendee, event: ev, summary } = body;
 
     if (!attendee?.email || !ev?.title || !ev?.startISO || !ev?.endISO) {
       return { statusCode: 400, body: "Missing required fields." };
     }
 
-    // ENV VARS: set in Netlify dashboard (never commit secrets)
-    const O365_USER = process.env.O365_USER; // office@livinggroupinc.com
-    const O365_PASS = process.env.O365_PASS; // hdvdfyzbvdhmfckz
-    const CC_EMAIL  = process.env.CC_EMAIL || "itsupport@livingrealtykw.com";
+    const O365_USER = process.env.O365_USER;
+    const O365_PASS = process.env.O365_PASS;
     const FROM_NAME = process.env.FROM_NAME || "KW Living Portal";
     const REPLY_TO  = process.env.REPLY_TO || O365_USER;
 
@@ -129,35 +117,30 @@ exports.handler = async (event) => {
     });
 
     const html = buildEmailHTML({ attendee, event: ev, summary });
-    const ics  = buildICS({ event: ev });
+    const ics  = buildICS({ event: ev, organizerEmail: O365_USER, attendee });
 
     const mailOptions = {
       from: `${FROM_NAME} <${O365_USER}>`,
       to: `${attendee.name || ""} <${attendee.email}>`,
-      cc: CC_EMAIL,
       subject: `Registration confirmed: ${ev.title}`,
+      text: `You're registered for: ${ev.title}\nWhen: ${summary.when}\nWhere: ${ev.location || ""}`,
       html,
       replyTo: REPLY_TO,
-      attachments: [
+      alternatives: [
         {
-          filename: "event.ics",
           content: ics,
-          contentType: "text/calendar; charset=utf-8; method=PUBLISH",
-        },
-      ],
+          contentType: 'text/calendar; method=REQUEST; charset="UTF-8"; name="invite.ics"',
+          contentDisposition: 'inline; filename="invite.ics"',
+          headers: { "Content-Class": "urn:content-classes:calendarmessage" }
+        }
+      ]
     };
 
     await transporter.sendMail(mailOptions);
-
-    return {
-      statusCode: 200,
-      body: JSON.stringify({ ok: true }),
-    };
+    return { statusCode: 200, body: JSON.stringify({ ok: true }) };
   } catch (err) {
     console.error("send-reg-email error:", err);
-    return {
-      statusCode: 500,
-      body: JSON.stringify({ ok: false, error: String(err?.message || err) }),
-    };
+    return { statusCode: 500, body: JSON.stringify({ ok: false, error: String(err?.message || err) }) };
   }
 };
+

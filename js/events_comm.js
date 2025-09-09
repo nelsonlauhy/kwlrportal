@@ -1,10 +1,12 @@
 // /js/events_comm.js
 // After successful registration, try to create a meeting invite via Graph.
 // Fallback to email confirmation if meeting creation fails.
+// Always send a separate notification to IT Support (non-blocking).
 
 (function () {
   const MEETING_ENDPOINT = "/.netlify/functions/create-meeting-invite";
   const EMAIL_ENDPOINT   = "/.netlify/functions/send-reg-email"; // fallback
+  const NOTIFY_ENDPOINT  = "/.netlify/functions/notify-registration"; // new
 
   function toDate(ts) {
     if (!ts) return null;
@@ -58,18 +60,34 @@
       summary: { when: `${fmtDateTimeLocal(start)} – ${fmtDateTimeLocal(end)}` },
     };
 
+    let invitedVia = "none";
+
     try {
-      // 1) Try Graph meeting request
+      // Primary: real meeting invite via Graph
       await call(MEETING_ENDPOINT, payload);
+      invitedVia = "graph";
     } catch (err) {
       console.error("create-meeting-invite failed, falling back to email:", err);
       try {
-        // 2) Fallback to email (your existing function)
+        // Fallback: email confirmation
         await call(EMAIL_ENDPOINT, payload);
+        invitedVia = "email";
       } catch (err2) {
         console.error("send-reg-email also failed:", err2);
       }
     }
+
+    // Fire-and-forget IT notification (don’t block UX)
+    try {
+      const notifyPayload = {
+        attendee: payload.attendee,
+        event: payload.event,
+        invitedVia, // "graph" | "email" | "none"
+      };
+      // Do not await; but you can await if you prefer
+      call(NOTIFY_ENDPOINT, notifyPayload).catch(console.warn);
+    } catch (err3) {
+      console.warn("notify-registration failed:", err3);
+    }
   });
 })();
-
