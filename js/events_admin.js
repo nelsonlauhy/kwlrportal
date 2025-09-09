@@ -5,14 +5,14 @@
 // - Conflict detection (branch + resource overlap)
 // - Registration windows per occurrence via DAYS-before-start
 // - Back-fill "Reg Opens/Closes (days)" when editing an existing event
+// - Combined filter: Location (Branch — Resource) + Search
 
 (function() {
   // ---------- DOM ----------
-  const containerList = document.getElementById("eventsContainer");
-  const branchFilter  = document.getElementById("branchFilter");
-  const resourceFilter= document.getElementById("resourceFilter");
-  const searchInput   = document.getElementById("searchInput");
-  const listLabel     = document.getElementById("listLabel");
+  const containerList   = document.getElementById("eventsContainer");
+  const locationFilter  = document.getElementById("locationFilter"); // NEW combined filter
+  const searchInput     = document.getElementById("searchInput");
+  const listLabel       = document.getElementById("listLabel");
 
   const btnNew   = document.getElementById("btnNew");
 
@@ -132,20 +132,37 @@
     editErrInline.classList.remove("d-none");
   }
 
-  // ---------- Filters / Search ----------
+  // ---------- Combined Filter (Location) + Search ----------
   function applyFilter() {
     const q = (searchInput.value || "").toLowerCase().trim();
-    const brSel = (branchFilter.value || "ALL").toUpperCase();
-    const resSel = (resourceFilter.value || "ALL");
+    const locSel = (locationFilter?.value || "ALL"); // "ALL" | "BR:WB" | "RS:<resourceId>"
 
     filtered = allEvents.filter(ev => {
-      const br = (ev.branch || "").toUpperCase();
-      if (brSel !== "ALL" && br !== brSel) return false;
-      if (resSel !== "ALL" && ev.resourceId !== resSel) return false;
-      if (!q) return true;
-      const hay = [ev.title, ev.description, ev.resourceName, ev.branch]
-        .map(v => (v || "").toString().toLowerCase());
-      return hay.some(v => v.includes(q));
+      // Location filter
+      if (locSel !== "ALL") {
+        if (locSel.startsWith("BR:")) {
+          const br = locSel.slice(3); // "WB"
+          const evBr = (ev.branch || "").toUpperCase();
+          if (evBr !== br) return false;
+        } else if (locSel.startsWith("RS:")) {
+          const rid = locSel.slice(3);
+          if ((ev.resourceId || "") !== rid) return false;
+        }
+      }
+
+      // Search text
+      if (q) {
+        const hay = [
+          ev.title,
+          ev.description,
+          ev.resourceName,
+          ev.branch
+          // add ev.detailDescriptionPlain if you store one
+        ].map(v => (v || "").toString().toLowerCase());
+        if (!hay.some(v => v.includes(q))) return false;
+      }
+
+      return true;
     });
 
     renderList();
@@ -220,6 +237,37 @@
     `;
   }
 
+  // ---------- Populate Location filter ----------
+  function populateLocationFilter(resources) {
+    if (!locationFilter) return;
+
+    // Unique branches
+    const branches = Array.from(new Set(resources.map(r => (r.branch || "").toUpperCase())))
+      .filter(Boolean)
+      .sort();
+
+    const opts = [`<option value="ALL">All Locations</option>`];
+
+    // Branch-only options
+    branches.forEach(br => {
+      opts.push(`<option value="BR:${esc(br)}">${esc(br)} — All resources</option>`);
+    });
+
+    // Resource options: "BR — Name"
+    const byBranchThenName = [...resources].sort((a,b) =>
+      String(a.branch||"").localeCompare(String(b.branch||"")) ||
+      String(a.name||"").localeCompare(String(b.name||""))
+    );
+
+    byBranchThenName.forEach(r => {
+      const br = (r.branch || "").toUpperCase();
+      const nm = r.name || r.id || "Resource";
+      opts.push(`<option value="RS:${esc(r.id)}">${esc(br)} — ${esc(nm)}</option>`);
+    });
+
+    locationFilter.innerHTML = opts.join("");
+  }
+
   // ---------- Resources & Events load ----------
   async function loadResources() {
     const col = window.db.collection("resources");
@@ -233,14 +281,14 @@
         .sort((a,b) => (String(a.branch||"").localeCompare(String(b.branch||"")) ||
                         String(a.name||"").localeCompare(String(b.name||""))));
     }
+
+    // Populate edit form resource dropdown
     const opts = [`<option value="">-- select --</option>`]
       .concat(resources.map(r => `<option value="${esc(r.id)}">${esc(r.name)} (${esc(r.branch||"-")})</option>`));
     f_resourceId.innerHTML = opts.join("");
 
-    // top filter dropdown
-    const fopts = [`<option value="ALL">All Resources</option>`]
-      .concat(resources.map(r => `<option value="${esc(r.id)}">${esc(r.name)}</option>`));
-    resourceFilter.innerHTML = fopts.join("");
+    // Populate combined filter (branch + resource)
+    populateLocationFilter(resources);
   }
 
   function attachEventsListener() {
@@ -346,8 +394,8 @@
       function daysBefore(start, other) {
         if (!start || !other) return null;
         const ms = start.getTime() - other.getTime();
-        if (ms <= 0) return 0; // same day or after -> 0 days before
-        return Math.round(ms / (24*60*60*1000)); // use Math.floor if you prefer
+        if (ms <= 0) return 0;
+        return Math.round(ms / (24*60*60*1000));
       }
 
       const openDays = daysBefore(startDate, opensAt);
@@ -692,8 +740,7 @@
   }
 
   // ---------- Top filters/search ----------
-  branchFilter.addEventListener("change", applyFilter);
-  resourceFilter.addEventListener("change", applyFilter);
+  locationFilter?.addEventListener("change", applyFilter);
   searchInput.addEventListener("input", () => {
     clearTimeout(searchInput._t);
     searchInput._t = setTimeout(applyFilter, 120);
