@@ -40,6 +40,7 @@
   const evTitleEl    = document.getElementById("evTitle");
   const evMetaEl     = document.getElementById("evMeta");
   const evDateLineEl = document.getElementById("evDateLine");
+  const evAddressEl  = document.getElementById("evAddress");
   const evShortDescEl= document.getElementById("evShortDesc");
   const evDetailDescEl = document.getElementById("evDetailDesc");
   const evCapacityEl = document.getElementById("evCapacity");
@@ -440,6 +441,23 @@
     }
 
     if (evDateLineEl) evDateLineEl.textContent = dateLine;
+
+    // reset/hide address first
+    if (evAddressEl) { evAddressEl.style.display = "none"; evAddressEl.textContent = ""; }
+
+    // async load address from resources/{resourceId}.address
+    if (evAddressEl && ev.resourceId) {
+      fetchResourceData(ev.resourceId).then(data => {
+        const addr = data?.address;
+        if (addr && eventModalEl.classList.contains("show")) {
+          evAddressEl.textContent = addr;
+          evAddressEl.style.display = "";
+        } else if (addr) { // modal not yet shown
+          evAddressEl.textContent = addr;
+          evAddressEl.style.display = "";
+        }
+      });
+    }
 
     if (evShortDescEl) {
       if (ev.description) {
