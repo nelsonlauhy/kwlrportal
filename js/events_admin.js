@@ -219,9 +219,9 @@
             <div class="event-title">${esc(e.title || "Untitled Event")}</div>
             <div class="event-meta mt-1">
               <span class="me-2"><i class="bi bi-clock"></i> ${esc(dateLine)}</span>
+              ${colorBadge}
               ${e.resourceName ? `<span class="badge badge-room me-2"><i class="bi bi-building me-1"></i>${esc(e.resourceName)}</span>` : ""}
               ${e.branch ? `<span class="badge badge-branch me-2">${esc(e.branch)}</span>` : ""}
-              ${colorBadge}
               <span class="badge text-bg-light border">${esc(e.status || "")}</span>
               <span class="badge text-bg-light border">${esc(e.visibility || "")}</span>
             </div>
