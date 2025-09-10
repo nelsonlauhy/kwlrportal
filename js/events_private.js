@@ -1,7 +1,10 @@
 // Internal Events (Firestore v8)
-// Shows BOTH visibility: "private" and "public" (published, upcoming),
-// plus a Visibility filter (All / Private / Public).
-// Keeps address + Google Maps link + optional inline map.
+// Shows BOTH visibility: "private" and "public" (published, upcoming)
+// Adds robust map handling with new `hmapsUrl` field:
+//   - Always show a Google Maps LINK (priority: hmapsUrl > mapsUrl > placeId > lat/lng > address)
+//   - Only show inline EMBED when we have precise data (placeId or lat/lng) or an Embed API key
+// Optional fields supported on event or resource (event takes precedence):
+//   hmapsUrl, mapsUrl, mapsPlaceId, lat, lng, address
 (function() {
   // ---------- DOM ----------
   const containerList = document.getElementById("eventsContainer");
@@ -52,6 +55,13 @@
   const evDetailDescEl = document.getElementById("evDetailDesc");
   const evCapacityEl = document.getElementById("evCapacity");
   const btnOpenRegister = document.getElementById("btnOpenRegister");
+
+  // ---------- Config ----------
+  // Optional: set in firebaseConfig.js to enable precise embed:
+  //   window.MAPS_EMBED_API_KEY = "YOUR_GOOGLE_MAPS_EMBED_API_KEY";
+  const MAPS_EMBED_API_KEY = (typeof window !== "undefined" && window.MAPS_EMBED_API_KEY) ? String(window.MAPS_EMBED_API_KEY) : null;
+  // "auto": show embed when precise (placeId/latlng) or API key + address; "link": link-only
+  const MAP_MODE = "auto";
 
   // ---------- State ----------
   let allEvents = [];
@@ -107,8 +117,128 @@
     const yiq = (r*299 + g*587 + b*114) / 1000;
     return yiq >= 150 ? "#000000" : "#ffffff";
   }
+  function ensureHttps(url) {
+    let s = String(url || "").trim();
+    if (!s) return "";
+    if (s.startsWith("ttps://")) s = "h" + s; // fix missing 'h'
+    if (!/^https?:\/\//i.test(s)) s = "https://" + s;
+    return s;
+  }
   function clearRegAlerts() {
     [regWarn, regErr, regOk].forEach(el => { el.classList.add("d-none"); el.textContent=""; });
+  }
+
+  // ---------- Map helpers ----------
+  function pickAddrMeta(ev, res) {
+    // Event fields take priority; then resource; then null
+    const meta = {
+      address     : ev.address ?? res?.address ?? null,
+      // NEW: high-accuracy deep link (short link). Event overrides resource if present.
+      hmapsUrl    : ensureHttps(ev.hmapsUrl ?? res?.hmapsUrl ?? ""),
+      mapsUrl     : ensureHttps(ev.mapsUrl  ?? res?.mapsUrl  ?? ""),
+      mapsPlaceId : ev.mapsPlaceId ?? res?.mapsPlaceId ?? null,
+      lat         : (ev.lat ?? res?.lat ?? null),
+      lng         : (ev.lng ?? res?.lng ?? null),
+      label       : (ev.resourceName || ev.title || res?.name || "Location")
+    };
+    if (meta.lat != null) meta.lat = Number(meta.lat);
+    if (meta.lng != null) meta.lng = Number(meta.lng);
+    if (!meta.hmapsUrl) delete meta.hmapsUrl;
+    if (!meta.mapsUrl)  delete meta.mapsUrl;
+    return meta;
+  }
+
+  function buildMapTargets(meta) {
+    // Always return a rock-solid link; embed only when precise (or acceptable).
+    const labelPart = meta.label ? encodeURIComponent(meta.label) : "";
+    const addrPart  = meta.address ? encodeURIComponent(meta.address) : "";
+
+    // Link priority: hmapsUrl > mapsUrl > placeId > lat/lng > address
+    let linkUrl = "";
+    if (meta.hmapsUrl) {
+      linkUrl = meta.hmapsUrl;
+    } else if (meta.mapsUrl) {
+      linkUrl = meta.mapsUrl;
+    } else if (meta.mapsPlaceId) {
+      linkUrl = `https://www.google.com/maps/place/?q=place_id:${encodeURIComponent(meta.mapsPlaceId)}`;
+    } else if (isFinite(meta.lat) && isFinite(meta.lng)) {
+      linkUrl = `https://www.google.com/maps?q=${meta.lat},${meta.lng}`;
+    } else if (meta.address) {
+      linkUrl = `https://www.google.com/maps?q=${labelPart ? labelPart + "%20" : ""}${addrPart}`;
+    }
+
+    // Embed target (optional)
+    let embedUrl = null;
+    if (MAP_MODE !== "link") {
+      if (MAPS_EMBED_API_KEY && meta.mapsPlaceId) {
+        embedUrl = `https://www.google.com/maps/embed/v1/place?key=${encodeURIComponent(MAPS_EMBED_API_KEY)}&q=place_id:${encodeURIComponent(meta.mapsPlaceId)}`;
+      } else if (MAPS_EMBED_API_KEY && isFinite(meta.lat) && isFinite(meta.lng)) {
+        embedUrl = `https://www.google.com/maps/embed/v1/view?key=${encodeURIComponent(MAPS_EMBED_API_KEY)}&center=${meta.lat},${meta.lng}&zoom=16&maptype=roadmap`;
+      } else if (meta.address) {
+        // Fallback; could be slightly imprecise
+        embedUrl = `https://www.google.com/maps?q=${addrPart}&output=embed`;
+      }
+    }
+
+    return { linkUrl, embedUrl, hasEmbed: !!embedUrl };
+  }
+
+  function setMapUI(meta) {
+    if (!evAddressRow) return;
+
+    const nothing =
+      !meta.address && !meta.hmapsUrl && !meta.mapsUrl &&
+      !(isFinite(meta.lat) && isFinite(meta.lng)) && !meta.mapsPlaceId;
+
+    if (nothing) {
+      evAddressRow.classList.add("d-none");
+      evAddressText.textContent = "";
+      evMapEmbed?.classList.add("d-none");
+      evMapToggle?.classList.add("d-none");
+      if (evMapIframe) evMapIframe.removeAttribute("src");
+      return;
+    }
+
+    evAddressRow.classList.remove("d-none");
+    evAddressText.textContent = meta.address || meta.label || "";
+
+    const targets = buildMapTargets(meta);
+
+    if (evMapLink) {
+      if (targets.linkUrl) {
+        evMapLink.href = targets.linkUrl;
+        evMapLink.classList.remove("disabled");
+      } else {
+        evMapLink.removeAttribute("href");
+        evMapLink.classList.add("disabled");
+      }
+    }
+
+    if (!targets.hasEmbed) {
+      evMapEmbed?.classList.add("d-none");
+      evMapToggle?.classList.add("d-none");
+      if (evMapIframe) evMapIframe.removeAttribute("src");
+    } else {
+      evMapToggle?.classList.remove("d-none");
+      if (evMapToggle) {
+        evMapToggle.textContent = "Show map";
+        evMapEmbed?.classList.add("d-none");
+        if (evMapIframe) evMapIframe.removeAttribute("src");
+        evMapToggle.onclick = () => {
+          const hidden = evMapEmbed.classList.contains("d-none");
+          if (hidden) {
+            if (evMapIframe && !evMapIframe.getAttribute("src")) {
+              evMapIframe.src = targets.embedUrl;
+            }
+            evMapEmbed.classList.remove("d-none");
+            evMapToggle.textContent = "Hide map";
+          } else {
+            evMapEmbed.classList.add("d-none");
+            evMapToggle.textContent = "Show map";
+          }
+        };
+      }
+    }
   }
 
   // ---------- Filters/Search ----------
@@ -223,10 +353,8 @@
   function canRegister(ev) {
     const now = new Date();
     if (ev.status !== "published") return false;
-    // Allow both public and private on the internal page
     const v = (ev.visibility || "").toLowerCase();
     if (v !== "public" && v !== "private") return false;
-
     if (ev.allowRegistration === false) return false;
     const opens = toDate(ev.regOpensAt);
     const closes = toDate(ev.regClosesAt);
@@ -478,45 +606,6 @@
     return null;
   }
 
-  // ---------- Address & Map UI ----------
-  function setMapUIForAddress(addr) {
-    if (!evAddressRow) return;
-
-    if (addr) {
-      evAddressRow.classList.remove("d-none");
-      evAddressText.textContent = addr;
-
-      const q = encodeURIComponent(addr);
-      if (evMapLink) {
-        evMapLink.href = `https://www.google.com/maps?q=${q}`;
-      }
-
-      if (evMapToggle) {
-        evMapToggle.textContent = "Show map";
-        evMapEmbed.classList.add("d-none");
-        if (evMapIframe) evMapIframe.removeAttribute("src");
-
-        evMapToggle.onclick = () => {
-          const hidden = evMapEmbed.classList.contains("d-none");
-          if (hidden) {
-            if (!evMapIframe.getAttribute("src")) {
-              evMapIframe.src = `https://www.google.com/maps?q=${q}&output=embed`;
-            }
-            evMapEmbed.classList.remove("d-none");
-            evMapToggle.textContent = "Hide map";
-          } else {
-            evMapEmbed.classList.add("d-none");
-            evMapToggle.textContent = "Show map";
-          }
-        };
-      }
-    } else {
-      evAddressRow.classList.add("d-none");
-      evAddressText.textContent = "";
-      if (evMapIframe) evMapIframe.removeAttribute("src");
-    }
-  }
-
   // ---------- Event Details Modal ----------
   function openEventDetails(ev) {
     const s = toDate(ev.start), e = toDate(ev.end);
@@ -545,15 +634,22 @@
 
     if (evDateLineEl) evDateLineEl.textContent = dateLine;
 
-    // Address pipeline: event.address -> resource.address -> hide
-    if (ev.address) {
-      setMapUIForAddress(ev.address);
+    // Address / map: event → resource → hide
+    evAddressRow?.classList.add("d-none");
+    evAddressText.textContent = "";
+    evMapEmbed?.classList.add("d-none");
+    evMapToggle?.classList.add("d-none");
+    if (evMapIframe) evMapIframe.removeAttribute("src");
+
+    const applyMeta = (resData) => {
+      const meta = pickAddrMeta(ev, resData);
+      setMapUI(meta);
+    };
+
+    if (ev.address || ev.hmapsUrl || ev.mapsUrl || ev.mapsPlaceId || (isFinite(ev.lat) && isFinite(ev.lng))) {
+      applyMeta(null);
     } else {
-      setMapUIForAddress(null);
-      fetchResourceDataByAny(ev).then(data => {
-        const addr = data?.address || null;
-        setMapUIForAddress(addr);
-      });
+      fetchResourceDataByAny(ev).then(applyMeta).catch(() => setMapUI({}));
     }
 
     if (evShortDescEl) {
@@ -632,7 +728,7 @@
     const col = window.db.collection("events");
 
     try {
-      // Preferred (requires composite index): visibility in ["public","private"], status == "published", start >= now, orderBy start
+      // Preferred: visibility in ["public","private"], status == "published", start >= now, orderBy start
       unsubscribeEvents = col
         .where("visibility", "in", ["public","private"])
         .where("status","==","published")
@@ -661,7 +757,6 @@
         .orderBy("start", "asc")
         .onSnapshot(snap => {
           const rows = snap.docs.map(d => ({ _id: d.id, ...d.data() }));
-          // Keep upcoming, published, and only public/private
           allEvents = rows.filter(ev =>
             ev.status === "published" &&
             (ev.visibility === "public" || ev.visibility === "private")
