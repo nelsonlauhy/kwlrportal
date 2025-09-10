@@ -1,7 +1,8 @@
 // Public Events (Firestore v8)
 // Views: Month / Week / Day / List
-// - Address under time; Google Maps link + optional inline embed (no API key)
-// - Branch filter populated from resources
+// - Filter by branch (All locations), search
+// - Click event to open modal with address, reliable Google Maps LINK (hmapsUrl preferred),
+//   and optional inline EMBED only when we have placeId or lat/lng (or an Embed API key).
 (function() {
   // ---------- DOM ----------
   const containerList = document.getElementById("eventsContainer");
@@ -19,7 +20,7 @@
   const btnToday = document.getElementById("btnToday");
   const calLabel = document.getElementById("calLabel");
 
-  // Registration modal
+  // Registration modal (already in your HTML)
   const regModalEl = document.getElementById("regModal");
   const regModal   = new bootstrap.Modal(regModalEl);
   const regForm    = document.getElementById("regForm");
@@ -38,27 +39,31 @@
   const evTitleEl    = document.getElementById("evTitle");
   const evMetaEl     = document.getElementById("evMeta");
   const evDateLineEl = document.getElementById("evDateLine");
-
-  // Address + map controls
-  const evAddressRow = document.getElementById("evAddressRow");
-  const evAddressText = document.getElementById("evAddressText");
-  const evMapLink   = document.getElementById("evMapLink");
-  const evMapToggle = document.getElementById("evMapToggle");
-  const evMapEmbed  = document.getElementById("evMapEmbed");
-  const evMapIframe = document.getElementById("evMapIframe");
-
   const evShortDescEl= document.getElementById("evShortDesc");
   const evDetailDescEl = document.getElementById("evDetailDesc");
   const evCapacityEl = document.getElementById("evCapacity");
   const btnOpenRegister = document.getElementById("btnOpenRegister");
 
+  // Address + map controls (new IDs — ensure they exist in HTML)
+  const evAddressRow  = document.getElementById("evAddressRow");
+  const evAddressText = document.getElementById("evAddressText");
+  const evMapLink     = document.getElementById("evMapLink");
+  const evMapToggle   = document.getElementById("evMapToggle");
+  const evMapEmbed    = document.getElementById("evMapEmbed");
+  const evMapIframe   = document.getElementById("evMapIframe");
+
+  // ---------- Config ----------
+  // Optional: set in firebaseConfig.js to enable precise embed:
+  //   window.MAPS_EMBED_API_KEY = "YOUR_KEY";
+  const MAPS_EMBED_API_KEY = (typeof window !== "undefined" && window.MAPS_EMBED_API_KEY) ? String(window.MAPS_EMBED_API_KEY) : null;
+  const MAP_MODE = "auto"; // "auto" | "link"
+
   // ---------- State ----------
   let allEvents = [];
   let filtered  = [];
-  let regTarget = null;
   let unsubscribeEvents = null;
 
-  // cache resource docs by id/name -> data (for address, etc.)
+  // cache resources for address/mapping
   const resourceCache = Object.create(null);
 
   // calendar state
@@ -69,45 +74,111 @@
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, m => (
     { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[m]
   ));
-  function stripHtmlToText(html) {
-    const tmp = document.createElement("div"); tmp.innerHTML = html || "";
-    return (tmp.textContent || tmp.innerText || "").trim();
+  function stripHtmlToText(html) { const tmp=document.createElement("div"); tmp.innerHTML=html||""; return (tmp.textContent||tmp.innerText||"").trim(); }
+  function toDate(ts){ if(!ts) return null; if(typeof ts.toDate==="function") return ts.toDate(); const d=new Date(ts); return isNaN(d)?null:d; }
+  function fmtDateTime(d){ if(!d) return ""; const pad=n=>String(n).padStart(2,"0"); return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;}
+  function fmtDate(d){ if(!d) return ""; return d.toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric",year:"numeric"});}
+  function truncateToDay(d){ const x=new Date(d); x.setHours(0,0,0,0); return x; }
+  function monthKey(d){ return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`; }
+  function monthLabel(d){ return d.toLocaleString(undefined,{month:"long",year:"numeric"}); }
+  function normalizeHex(c){ if(!c) return "#3b82f6"; let x=String(c).trim(); if(!x.startsWith("#")) x="#"+x; if(x.length===4) x="#"+x[1]+x[1]+x[2]+x[2]+x[3]+x[3]; return x.toLowerCase(); }
+  function idealTextColor(bgHex){ const h=normalizeHex(bgHex).slice(1); const r=parseInt(h.substring(0,2),16), g=parseInt(h.substring(2,4),16), b=parseInt(h.substring(4,6),16); const yiq=(r*299+g*587+b*114)/1000; return yiq>=150?"#000000":"#ffffff"; }
+  function ensureHttps(url){ let s=String(url||"").trim(); if(!s) return ""; if(s.startsWith("ttps://")) s="h"+s; if(!/^https?:\/\//i.test(s)) s="https://"+s; return s; }
+  function clearRegAlerts(){ [regWarn, regErr, regOk].forEach(el => { el.classList.add("d-none"); el.textContent=""; }); }
+
+  // ---------- Map helpers ----------
+  function pickAddrMeta(ev, res) {
+    const meta = {
+      address     : ev.address ?? res?.address ?? null,
+      hmapsUrl    : ensureHttps(ev.hmapsUrl ?? res?.hmapsUrl ?? ""),
+      mapsUrl     : ensureHttps(ev.mapsUrl  ?? res?.mapsUrl  ?? ""),
+      mapsPlaceId : ev.mapsPlaceId ?? res?.mapsPlaceId ?? null,
+      lat         : (ev.lat ?? res?.lat ?? null),
+      lng         : (ev.lng ?? res?.lng ?? null),
+      label       : (ev.resourceName || ev.title || res?.name || "Location")
+    };
+    if (meta.lat != null) meta.lat = Number(meta.lat);
+    if (meta.lng != null) meta.lng = Number(meta.lng);
+    if (!meta.hmapsUrl) delete meta.hmapsUrl;
+    if (!meta.mapsUrl)  delete meta.mapsUrl;
+    return meta;
   }
-  function toDate(ts) {
-    if (!ts) return null;
-    if (typeof ts.toDate === "function") return ts.toDate();
-    const d = new Date(ts);
-    return isNaN(d) ? null : d;
+
+  function buildMapTargets(meta) {
+    const labelPart = meta.label ? encodeURIComponent(meta.label) : "";
+    const addrPart  = meta.address ? encodeURIComponent(meta.address) : "";
+
+    // Link priority: hmapsUrl > mapsUrl > placeId > lat/lng > address
+    let linkUrl = "";
+    if (meta.hmapsUrl) linkUrl = meta.hmapsUrl;
+    else if (meta.mapsUrl) linkUrl = meta.mapsUrl;
+    else if (meta.mapsPlaceId) linkUrl = `https://www.google.com/maps/place/?q=place_id:${encodeURIComponent(meta.mapsPlaceId)}`;
+    else if (isFinite(meta.lat) && isFinite(meta.lng)) linkUrl = `https://www.google.com/maps?q=${meta.lat},${meta.lng}`;
+    else if (meta.address) linkUrl = `https://www.google.com/maps?q=${labelPart ? labelPart + "%20" : ""}${addrPart}`;
+
+    // Embed target (optional, can be imprecise without Place/coords)
+    let embedUrl = null;
+    if (MAP_MODE !== "link") {
+      if (MAPS_EMBED_API_KEY && meta.mapsPlaceId) {
+        embedUrl = `https://www.google.com/maps/embed/v1/place?key=${encodeURIComponent(MAPS_EMBED_API_KEY)}&q=place_id:${encodeURIComponent(meta.mapsPlaceId)}`;
+      } else if (MAPS_EMBED_API_KEY && isFinite(meta.lat) && isFinite(meta.lng)) {
+        embedUrl = `https://www.google.com/maps/embed/v1/view?key=${encodeURIComponent(MAPS_EMBED_API_KEY)}&center=${meta.lat},${meta.lng}&zoom=16&maptype=roadmap`;
+      } else if (meta.address) {
+        embedUrl = `https://www.google.com/maps?q=${addrPart}&output=embed`;
+      }
+    }
+    return { linkUrl, embedUrl, hasEmbed: !!embedUrl };
   }
-  function fmtDateTime(d) {
-    if (!d) return "";
-    const pad = (n) => String(n).padStart(2, "0");
-    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-  }
-  function fmtDate(d) {
-    if (!d) return "";
-    return d.toLocaleDateString(undefined, { weekday:"short", month:"short", day:"numeric", year:"numeric" });
-  }
-  function truncateToDay(d) { const x=new Date(d); x.setHours(0,0,0,0); return x; }
-  function monthKey(d) { return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`; }
-  function monthLabel(d) { return d.toLocaleString(undefined, { month: "long", year: "numeric" }); }
-  function normalizeHex(c) {
-    if (!c) return "#3b82f6";
-    let x = String(c).trim();
-    if (!x.startsWith("#")) x = "#" + x;
-    if (x.length === 4) x = "#" + x[1]+x[1]+x[2]+x[2]+x[3]+x[3];
-    return x.toLowerCase();
-  }
-  function idealTextColor(bgHex) {
-    const h = normalizeHex(bgHex).slice(1);
-    const r = parseInt(h.substring(0,2), 16);
-    const g = parseInt(h.substring(2,4), 16);
-    const b = parseInt(h.substring(4,6), 16);
-    const yiq = (r*299 + g*587 + b*114) / 1000;
-    return yiq >= 150 ? "#000000" : "#ffffff";
-  }
-  function clearRegAlerts() {
-    [regWarn, regErr, regOk].forEach(el => { el.classList.add("d-none"); el.textContent=""; });
+
+  function setMapUI(meta) {
+    if (!evAddressRow) return; // requires new HTML block
+
+    const nothing =
+      !meta.address && !meta.hmapsUrl && !meta.mapsUrl &&
+      !(isFinite(meta.lat) && isFinite(meta.lng)) && !meta.mapsPlaceId;
+
+    if (nothing) {
+      evAddressRow.classList.add("d-none");
+      evAddressText.textContent = "";
+      evMapEmbed?.classList.add("d-none");
+      evMapToggle?.classList.add("d-none");
+      if (evMapIframe) evMapIframe.removeAttribute("src");
+      return;
+    }
+
+    evAddressRow.classList.remove("d-none");
+    evAddressText.textContent = meta.address || meta.label || "";
+
+    const targets = buildMapTargets(meta);
+
+    if (evMapLink) {
+      if (targets.linkUrl) { evMapLink.href = targets.linkUrl; evMapLink.classList.remove("disabled"); }
+      else { evMapLink.removeAttribute("href"); evMapLink.classList.add("disabled"); }
+    }
+
+    if (!targets.hasEmbed) {
+      evMapEmbed?.classList.add("d-none");
+      evMapToggle?.classList.add("d-none");
+      if (evMapIframe) evMapIframe.removeAttribute("src");
+    } else {
+      evMapToggle?.classList.remove("d-none");
+      if (evMapToggle) {
+        evMapToggle.textContent = "Show map";
+        evMapEmbed?.classList.add("d-none");
+        if (evMapIframe) evMapIframe.removeAttribute("src");
+        evMapToggle.onclick = () => {
+          const hidden = evMapEmbed.classList.contains("d-none");
+          if (hidden) {
+            if (evMapIframe && !evMapIframe.getAttribute("src")) evMapIframe.src = targets.embedUrl;
+            evMapEmbed.classList.remove("d-none");
+            evMapToggle.textContent = "Hide map";
+          } else {
+            evMapEmbed.classList.add("d-none");
+            evMapToggle.textContent = "Show map";
+          }
+        };
+      }
+    }
   }
 
   // ---------- Filters/Search ----------
@@ -161,8 +232,7 @@
     }
     const groups = {};
     for (const e of filtered) {
-      const d = toDate(e.start);
-      if (!d) continue;
+      const d = toDate(e.start); if (!d) continue;
       const key = monthKey(d);
       (groups[key] ||= { label: monthLabel(d), events: [] }).events.push(e);
     }
@@ -176,14 +246,12 @@
   }
 
   function renderEventCard(e) {
-    const start = toDate(e.start);
-    const end   = toDate(e.end);
+    const start = toDate(e.start), end = toDate(e.end);
     const dateLine = `${fmtDateTime(start)} – ${fmtDateTime(end)}`;
     const remaining = (typeof e.remaining === "number") ? e.remaining : null;
     const capacity  = (typeof e.capacity === "number") ? e.capacity : null;
-    const remainTxt = (remaining != null && capacity != null)
-      ? `${remaining}/${capacity} seats left`
-      : (remaining != null ? `${remaining} seats left` : "");
+    const remainTxt = (remaining != null && capacity != null) ? `${remaining}/${capacity} seats left`
+                      : (remaining != null ? `${remaining} seats left` : "");
     const color = normalizeHex(e.color || "#3b82f6");
 
     return `
@@ -213,62 +281,50 @@
   // ---------- CALENDAR SHARED ----------
   function canRegister(ev) {
     const now = new Date();
-    if (ev.status !== "published" || ev.visibility !== "public") return false;
+    if (ev.status !== "published" || (ev.visibility || "").toLowerCase() !== "public") return false;
     if (ev.allowRegistration === false) return false;
-    const opens = toDate(ev.regOpensAt);
-    const closes = toDate(ev.regClosesAt);
+    const opens = toDate(ev.regOpensAt), closes = toDate(ev.regClosesAt);
     if (opens && now < opens) return false;
     if (closes && now > closes) return false;
     if (typeof ev.remaining === "number" && ev.remaining <= 0) return false;
-    const start = toDate(ev.start);
-    if (start && now > start) return false;
+    const start = toDate(ev.start); if (start && now > start) return false;
     return true;
   }
-  function overlaps(evStart, evEnd, a, b) { return evStart < b && evEnd > a; }
+  function overlaps(a,b,c,d){ return a<b && b>c && a<d; } // not used directly
   function eventsInRange(rangeStart, rangeEnd) {
     return filtered.filter(ev => {
-      const s = toDate(ev.start); const e = toDate(ev.end);
+      const s = toDate(ev.start), e = toDate(ev.end);
       if (!s || !e) return false;
-      return overlaps(s, e, rangeStart, rangeEnd);
+      return s < rangeEnd && e > rangeStart;
     });
   }
 
   // ---------- MONTH / WEEK / DAY ----------
   function renderMonth() {
-    const year = cursorDate.getFullYear();
-    const month = cursorDate.getMonth();
-
-    calLabel.textContent = cursorDate.toLocaleString(undefined,{month:"long", year:"numeric"});
-
+    const year = cursorDate.getFullYear(), month = cursorDate.getMonth();
+    calLabel.textContent = cursorDate.toLocaleString(undefined,{month:"long",year:"numeric"});
     const firstOfMonth = new Date(year, month, 1);
-    const startDow = firstOfMonth.getDay();
-    const gridStart = new Date(firstOfMonth);
-    gridStart.setDate(firstOfMonth.getDate() - startDow);
+    const gridStart = new Date(firstOfMonth); gridStart.setDate(firstOfMonth.getDate() - firstOfMonth.getDay());
     const gridEnd = new Date(gridStart); gridEnd.setDate(gridStart.getDate() + 42);
-
     const evs = eventsInRange(gridStart, gridEnd);
 
     const dayMap = {};
     for (const ev of evs) {
-      const d = truncateToDay(toDate(ev.start));
-      const key = d.toISOString();
-      (dayMap[key] ||= []).push(ev);
+      const d = truncateToDay(toDate(ev.start)).toISOString();
+      (dayMap[d] ||= []).push(ev);
     }
 
     const weekdays = [];
-    for (let i=0;i<7;i++) {
-      const d = new Date(gridStart); d.setDate(gridStart.getDate()+i);
-      weekdays.push(`<div class="month-head">${d.toLocaleDateString(undefined,{weekday:"short"})}</div>`);
-    }
+    for (let i=0;i<7;i++){ const d=new Date(gridStart); d.setDate(gridStart.getDate()+i);
+      weekdays.push(`<div class="month-head">${d.toLocaleDateString(undefined,{weekday:"short"})}</div>`); }
 
     const cells = [];
     let iter = new Date(gridStart);
     for (let i=0;i<42;i++) {
-      const isOtherMonth = iter.getMonth() !== month;
+      const isOther = iter.getMonth() !== month;
       const key = truncateToDay(iter).toISOString();
       const items = (dayMap[key] || []).sort((a,b)=> toDate(a.start)-toDate(b.start));
       const dayNum = iter.getDate();
-
       const evHtml = items.map(e=>{
         const color = normalizeHex(e.color || "#3b82f6");
         const txt = idealTextColor(color);
@@ -281,51 +337,37 @@
       }).join("");
 
       cells.push(`
-        <div class="month-cell ${isOtherMonth?'other':''}">
+        <div class="month-cell ${isOther?'other':''}">
           <div class="month-day">${dayNum}</div>
           ${evHtml}
-        </div>
-      `);
+        </div>`);
       iter.setDate(iter.getDate()+1);
     }
 
-    containerCal.innerHTML = `
-      <div class="month-grid">
-        ${weekdays.join("")}
-        ${cells.join("")}
-      </div>
-    `;
+    containerCal.innerHTML = `<div class="month-grid">${weekdays.join("")}${cells.join("")}</div>`;
   }
 
   function renderWeek() {
-    const start = new Date(cursorDate);
-    start.setDate(start.getDate() - start.getDay());
-    start.setHours(0,0,0,0);
+    const start = new Date(cursorDate); start.setDate(start.getDate()-start.getDay()); start.setHours(0,0,0,0);
     const end = new Date(start); end.setDate(start.getDate()+7);
-
-    calLabel.textContent =
-      `${start.toLocaleDateString(undefined,{month:"short",day:"numeric"})} – ${new Date(end-1).toLocaleDateString(undefined,{month:"short",day:"numeric",year:"numeric"})}`;
-
+    calLabel.textContent = `${start.toLocaleDateString(undefined,{month:"short",day:"numeric"})} – ${new Date(end-1).toLocaleDateString(undefined,{month:"short",day:"numeric",year:"numeric"})}`;
     const evs = eventsInRange(start, end);
-    const hours = Array.from({length:13}, (_,i)=> i+7); // 07:00 - 19:00
+    const hours = Array.from({length:13}, (_,i)=> i+7);
 
     const cols = [];
     for (let d=0; d<7; d++) {
       const dayDate = new Date(start); dayDate.setDate(start.getDate()+d);
       const dayStart = new Date(dayDate);
       const dayEnd = new Date(dayDate); dayEnd.setDate(dayEnd.getDate()+1);
-
       const dayEvents = evs.filter(e => {
-        const s = toDate(e.start), ee = toDate(e.end);
-        return overlaps(s, ee, dayStart, dayEnd);
+        const s=toDate(e.start), ee=toDate(e.end); return s < dayEnd && ee > dayStart;
       }).sort((a,b)=> toDate(a.start)-toDate(b.start));
 
       const slots = hours.map(()=>`<div class="time-slot"></div>`).join("");
-
       const pills = dayEvents.map(e=>{
-        const s = toDate(e.start), ee = toDate(e.end);
-        const startHour = Math.max(0, (s.getHours() - hours[0]) + s.getMinutes()/60);
-        const durHours = Math.max(0.7, ((ee - s) / (1000*60*60)));
+        const s=toDate(e.start), ee=toDate(e.end);
+        const startHour = Math.max(0, (s.getHours()-hours[0]) + s.getMinutes()/60);
+        const durHours  = Math.max(0.7, ((ee - s) / (1000*60*60)));
         const top = Math.min(hours.length-0.7, startHour) * 44;
         const height = Math.min(hours.length*44 - top - 4, Math.max(20, durHours*44 - 6));
         const full = !canRegister(e) ? "full" : "";
@@ -333,42 +375,30 @@
         const txt = idealTextColor(color);
         return `<button class="evt-pill ${full}" data-id="${esc(e._id)}"
                        style="top:${top+2}px;height:${height}px;background:${esc(color)};border-color:${esc(color)};color:${esc(txt)}"
-                       title="${esc(e.title || "")}">
-                  ${esc(e.title || "Event")}
-                </button>`;
+                       title="${esc(e.title || "")}">${esc(e.title || "Event")}</button>`;
       }).join("");
 
-      cols.push(`
-        <div class="time-col position-relative">
-          ${slots}
-          ${pills}
-        </div>
-      `);
+      cols.push(`<div class="time-col position-relative">${slots}${pills}</div>`);
     }
 
     const heads = ['','Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map((name,idx)=>{
       if (idx===0) return `<div class="time-head"></div>`;
-      const d = new Date(start); d.setDate(start.getDate()+idx-1);
+      const d=new Date(start); d.setDate(start.getDate()+idx-1);
       return `<div class="time-head">${name}<br><span class="muted">${d.getMonth()+1}/${d.getDate()}</span></div>`;
     }).join("");
-
     const labels = hours.map(h=>`<div class="slot-label">${String(h).padStart(2,"0")}:00</div>`).join("");
 
     containerCal.innerHTML = `
       <div class="time-grid">
         ${heads}
-        <div class="time-col">
-          ${labels}
-        </div>
+        <div class="time-col">${labels}</div>
         ${cols.join("")}
-      </div>
-    `;
+      </div>`;
   }
 
   function renderDay() {
     const start = truncateToDay(cursorDate);
     const end = new Date(start); end.setDate(start.getDate()+1);
-
     calLabel.textContent = fmtDate(start);
 
     const evs = eventsInRange(start, end).sort((a,b)=> toDate(a.start)-toDate(b.start));
@@ -376,9 +406,9 @@
 
     const slots = hours.map(()=>`<div class="time-slot"></div>`).join("");
     const pills = evs.map(e=>{
-      const s = toDate(e.start), ee = toDate(e.end);
-      const startHour = Math.max(0, (s.getHours() - hours[0]) + s.getMinutes()/60);
-      const durHours = Math.max(0.7, ((ee - s) / (1000*60*60)));
+      const s=toDate(e.start), ee=toDate(e.end);
+      const startHour = Math.max(0, (s.getHours()-hours[0]) + s.getMinutes()/60);
+      const durHours  = Math.max(0.7, ((ee - s) / (1000*60*60)));
       const top = Math.min(hours.length-0.7, startHour) * 44;
       const height = Math.min(hours.length*44 - top - 4, Math.max(20, durHours*44 - 6));
       const full = !canRegister(e) ? "full" : "";
@@ -386,34 +416,25 @@
       const txt = idealTextColor(color);
       return `<button class="evt-pill ${full}" data-id="${esc(e._id)}"
                      style="top:${top+2}px;height:${height}px;background:${esc(color)};border-color:${esc(color)};color:${esc(txt)}"
-                     title="${esc(e.title || "")}">
-                ${esc(e.title || "Event")}
-              </button>`;
+                     title="${esc(e.title || "")}">${esc(e.title || "Event")}</button>`;
     }).join("");
 
-    const head = `
-      <div class="time-head"></div>
-      <div class="time-head" style="grid-column: span 7; text-align:left;">
-        ${fmtDate(start)}
-      </div>`;
-
+    const head = `<div class="time-head"></div>
+      <div class="time-head" style="grid-column: span 7; text-align:left;">${fmtDate(start)}</div>`;
     const labels = hours.map(h=>`<div class="slot-label">${String(h).padStart(2,"0")}:00</div>`).join("");
 
     containerCal.innerHTML = `
       <div class="time-grid">
         ${head}
-        <div class="time-col">
-          ${labels}
-        </div>
+        <div class="time-col">${labels}</div>
         <div class="time-col position-relative" style="grid-column: span 7;">
           ${slots}
           ${pills}
         </div>
-      </div>
-    `;
+      </div>`;
   }
 
-  // ---------- Resource fetch (robust) ----------
+  // ---------- Resource fetch ----------
   async function fetchResourceDataByAny(ev) {
     const rid = ev.resourceId || ev.resourceID || ev.resource || null;
     const rname = ev.resourceName || null;
@@ -425,133 +446,71 @@
     const col = window.db.collection("resources");
 
     if (rid) {
-      try {
-        const snap = await col.doc(rid).get();
-        if (snap.exists) {
-          const data = snap.data();
-          resourceCache[`id:${rid}`] = data;
-          return data;
-        }
-      } catch (_) {}
+      try { const snap = await col.doc(rid).get();
+        if (snap.exists) { const data = snap.data(); resourceCache[`id:${rid}`]=data; return data; } } catch(_){}
     }
-
     if (rid) {
-      try {
-        const q = await col.where("id","==",rid).limit(1).get();
-        if (!q.empty) {
-          const data = q.docs[0].data();
-          resourceCache[`id:${rid}`] = data;
-          return data;
-        }
-      } catch (_) {}
+      try { const q = await col.where("id","==",rid).limit(1).get();
+        if (!q.empty){ const data=q.docs[0].data(); resourceCache[`id:${rid}`]=data; return data; } } catch(_){}
     }
-
     if (rname) {
-      try {
-        const q2 = await col.where("name","==",rname).get();
-        if (!q2.empty) {
-          const all = q2.docs.map(d => d.data());
-          let best = all[0];
-          if (rbranch) {
-            const exact = all.find(x => (x.branch||"") === rbranch);
-            if (exact) best = exact;
-          }
-          resourceCache[`name:${rname}|${rbranch||""}`] = best;
-          return best;
-        }
-      } catch (_) {}
+      try { const q2 = await col.where("name","==",rname).get();
+        if (!q2.empty){ const all=q2.docs.map(d=>d.data()); let best=all[0];
+          if (rbranch){ const exact=all.find(x => (x.branch||"")===rbranch); if (exact) best=exact; }
+          resourceCache[`name:${rname}|${rbranch||""}`]=best; return best; } } catch(_){}
     }
-
     return null;
   }
 
   // ---------- Event Details Modal ----------
-  function setMapUIForAddress(addr) {
-    if (!evAddressRow) return;
-
-    if (addr) {
-      evAddressRow.classList.remove("d-none");
-      evAddressText.textContent = addr;
-
-      const q = encodeURIComponent(addr);
-      if (evMapLink) {
-        evMapLink.href = `https://www.google.com/maps?q=${q}`;
-      }
-
-      if (evMapToggle) {
-        evMapToggle.textContent = "Show map";
-        evMapEmbed.classList.add("d-none");
-        if (evMapIframe) evMapIframe.removeAttribute("src");
-
-        evMapToggle.onclick = () => {
-          const hidden = evMapEmbed.classList.contains("d-none");
-          if (hidden) {
-            if (!evMapIframe.getAttribute("src")) {
-              evMapIframe.src = `https://www.google.com/maps?q=${q}&output=embed`;
-            }
-            evMapEmbed.classList.remove("d-none");
-            evMapToggle.textContent = "Hide map";
-          } else {
-            evMapEmbed.classList.add("d-none");
-            evMapToggle.textContent = "Show map";
-          }
-        };
-      }
-    } else {
-      evAddressRow.classList.add("d-none");
-      evAddressText.textContent = "";
-      if (evMapIframe) evMapIframe.removeAttribute("src");
-    }
-  }
-
   function openEventDetails(ev) {
     const s = toDate(ev.start), e = toDate(ev.end);
     const dateLine = `${fmtDateTime(s)} – ${fmtDateTime(e)}`;
-    const remainTxt = (typeof ev.remaining === "number" && typeof ev.capacity === "number")
-      ? `${ev.remaining}/${ev.capacity} seats left`
-      : (typeof ev.remaining === "number" ? `${ev.remaining} seats left` : "");
+    const remainTxt = (typeof ev.remaining === "number" && typeof ev.capacity === "number") ? `${ev.remaining}/${ev.capacity} seats left`
+                    : (typeof ev.remaining === "number" ? `${ev.remaining} seats left` : "");
     const canReg = canRegister(ev);
     const color = normalizeHex(ev.color || "#3b82f6");
 
     if (evTitleEl) {
       evTitleEl.innerHTML = `
         <span class="me-2" style="display:inline-block;width:.9rem;height:.9rem;border-radius:50%;background:${esc(color)};vertical-align:baseline;"></span>
-        ${esc(ev.title || "Event Details")}
-      `;
+        ${esc(ev.title || "Event Details")}`;
     }
-
     if (evMetaEl) {
       evMetaEl.innerHTML = `
         ${ev.resourceName ? `<span class="badge badge-room"><i class="bi bi-building me-1"></i>${esc(ev.resourceName)}</span>` : ""}
         ${ev.branch ? `<span class="badge badge-branch">${esc(ev.branch)}</span>` : ""}
         ${ev.status ? `<span class="badge text-bg-light border">${esc(ev.status)}</span>` : ""}
-        ${ev.visibility ? `<span class="badge text-bg-light border">${esc(ev.visibility)}</span>` : ""}
-      `;
+        ${ev.visibility ? `<span class="badge text-bg-light border">${esc(ev.visibility)}</span>` : ""}`;
     }
-
     if (evDateLineEl) evDateLineEl.textContent = dateLine;
 
-    // Address pipeline: event.address -> resource.address -> hide
-    if (ev.address) {
-      setMapUIForAddress(ev.address);
+    // Address / map: event → resource → hide
+    evAddressRow?.classList.add("d-none");
+    evAddressText.textContent = "";
+    evMapEmbed?.classList.add("d-none");
+    evMapToggle?.classList.add("d-none");
+    if (evMapIframe) evMapIframe.removeAttribute("src");
+
+    const applyMeta = (resData) => {
+      const meta = pickAddrMeta(ev, resData);
+      setMapUI(meta);
+    };
+
+    if (ev.address || ev.hmapsUrl || ev.mapsUrl || ev.mapsPlaceId || (isFinite(ev.lat) && isFinite(ev.lng))) {
+      applyMeta(null);
     } else {
-      setMapUIForAddress(null);
-      fetchResourceDataByAny(ev).then(data => {
-        const addr = data?.address || null;
-        setMapUIForAddress(addr);
-      });
+      fetchResourceDataByAny(ev).then(applyMeta).catch(() => setMapUI({}));
     }
 
     if (evShortDescEl) {
       if (ev.description) { evShortDescEl.textContent = ev.description; evShortDescEl.style.display = ""; }
       else { evShortDescEl.style.display = "none"; }
     }
-
     if (evDetailDescEl) {
       if (ev.detailDescription) { evDetailDescEl.innerHTML = ev.detailDescription; evDetailDescEl.style.display = ""; }
       else { evDetailDescEl.style.display = "none"; }
     }
-
     if (evCapacityEl) evCapacityEl.textContent = remainTxt || "";
 
     if (btnOpenRegister) {
@@ -561,18 +520,12 @@
         regEventSummary.innerHTML = `
           <div><strong>${esc(ev.title || "")}</strong></div>
           <div class="text-secondary small">${esc(ev.resourceName || "")} · ${esc(ev.branch || "")}</div>
-          <div class="text-secondary small">${esc(fmtDateTime(s))} – ${esc(fmtDateTime(e))}</div>
-        `;
-        attendeeName.value = "";
-        attendeeEmail.value = "";
-        clearRegAlerts();
-        btnSubmitReg.disabled = false;
-        regBusy.classList.add("d-none");
-        eventModal.hide();
-        regModal.show();
+          <div class="text-secondary small">${esc(fmtDateTime(s))} – ${esc(fmtDateTime(e))}</div>`;
+        attendeeName.value = ""; attendeeEmail.value = "";
+        clearRegAlerts(); btnSubmitReg.disabled = false; regBusy.classList.add("d-none");
+        eventModal.hide(); regModal.show();
       };
     }
-
     eventModal.show();
   }
 
@@ -581,13 +534,8 @@
     const set = new Set();
     try {
       const resSnap = await window.db.collection("resources").get();
-      resSnap.forEach(d => {
-        const br = (d.data()?.branch || "").trim();
-        if (br) set.add(br);
-      });
-    } catch (err) {
-      console.warn("Failed to read resources for branches:", err);
-    }
+      resSnap.forEach(d => { const br=(d.data()?.branch||"").trim(); if (br) set.add(br); });
+    } catch (err) { console.warn("Failed to read resources for branches:", err); }
 
     if (set.size === 0) {
       try {
@@ -596,13 +544,10 @@
         evSnap.forEach(d => {
           const ev = d.data();
           if (ev?.visibility === "public" && ev?.status === "published") {
-            const br = (ev.branch || "").trim();
-            if (br) set.add(br);
+            const br=(ev.branch||"").trim(); if (br) set.add(br);
           }
         });
-      } catch (err) {
-        console.warn("Failed to read events for branches:", err);
-      }
+      } catch (err) { console.warn("Failed to read events for branches:", err); }
     }
 
     const branches = Array.from(set).sort((a,b)=> a.localeCompare(b));
@@ -613,10 +558,7 @@
 
   function attachEventsListener() {
     if (typeof unsubscribeEvents === "function") { unsubscribeEvents(); unsubscribeEvents = null; }
-
-    const now = new Date();
-    const col = window.db.collection("events");
-
+    const now = new Date(); const col = window.db.collection("events");
     try {
       unsubscribeEvents = col
         .where("visibility","==","public")
@@ -626,24 +568,15 @@
         .onSnapshot(snap => {
           allEvents = snap.docs.map(d => ({ _id: d.id, ...d.data() }));
           applyFilter();
-        }, err => {
-          console.warn("events preferred query error; falling back:", err);
-          fallbackEventsListener();
-        });
-    } catch (err) {
-      console.warn("events preferred query threw; falling back:", err);
-      fallbackEventsListener();
-    }
+        }, err => { console.warn("events preferred query error; falling back:", err); fallbackEventsListener(); });
+    } catch (err) { console.warn("events preferred query threw; falling back:", err); fallbackEventsListener(); }
   }
 
   function fallbackEventsListener() {
-    const now = new Date();
-    const col = window.db.collection("events");
-
+    const now = new Date(); const col = window.db.collection("events");
     try {
       unsubscribeEvents = col
-        .where("start", ">=", now)
-        .orderBy("start", "asc")
+        .where("start", ">=", now).orderBy("start","asc")
         .onSnapshot(snap => {
           const rows = snap.docs.map(d => ({ _id: d.id, ...d.data() }));
           allEvents = rows.filter(ev => ev.visibility === "public" && ev.status === "published");
@@ -667,18 +600,12 @@
 
   // ---------- Registration submit ----------
   regForm.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    clearRegAlerts();
-    btnSubmitReg.disabled = true;
-    regBusy.classList.remove("d-none");
-
+    e.preventDefault(); clearRegAlerts(); btnSubmitReg.disabled = true; regBusy.classList.remove("d-none");
     try {
       if (!regTarget) throw new Error("No event selected.");
       const name = attendeeName.value.trim();
       const email = attendeeEmail.value.trim().toLowerCase();
-      if (!name || !email || !/^\S+@\S+\.\S+$/.test(email)) {
-        throw new Error("Please enter a valid name and email.");
-      }
+      if (!name || !email || !/^\S+@\S+\.\S+$/.test(email)) throw new Error("Please enter a valid name and email.");
 
       const eventRef = window.db.collection("events").doc(regTarget._id);
       const regId = `${regTarget._id}_${email}`;
@@ -689,9 +616,7 @@
         if (!evSnap.exists) throw new Error("Event not found.");
         const ev = evSnap.data();
 
-        if (ev.status !== "published" || ev.visibility !== "public") {
-          throw new Error("Registration is closed for this event.");
-        }
+        if (ev.status !== "published" || ev.visibility !== "public") throw new Error("Registration is closed for this event.");
         const now = new Date();
         const opens = ev.regOpensAt?.toDate ? ev.regOpensAt.toDate() : (ev.regOpensAt ? new Date(ev.regOpensAt) : null);
         const closes = ev.regClosesAt?.toDate ? ev.regClosesAt.toDate() : (ev.regClosesAt ? new Date(ev.regClosesAt) : null);
@@ -701,13 +626,8 @@
         const start = ev.start?.toDate ? ev.start.toDate() : (ev.start ? new Date(ev.start) : null);
         if (start && now > start) throw new Error("This event has already started.");
 
-        if (regSnap.exists && regSnap.data().status === "registered") {
-          throw new Error("You're already registered for this event.");
-        }
-
-        if (typeof ev.remaining === "number" && ev.remaining <= 0) {
-          throw new Error("This event is full.");
-        }
+        if (regSnap.exists && regSnap.data().status === "registered") throw new Error("You're already registered for this event.");
+        if (typeof ev.remaining === "number" && ev.remaining <= 0) throw new Error("This event is full.");
 
         tx.set(regRef, {
           eventId: eventRef.id,
@@ -718,20 +638,12 @@
           status: "registered",
           createdAt: new Date()
         });
-
-        if (typeof ev.remaining === "number") {
-          tx.update(eventRef, { remaining: ev.remaining - 1 });
-        }
+        if (typeof ev.remaining === "number") tx.update(eventRef, { remaining: ev.remaining - 1 });
       });
 
-      regOk.classList.remove("d-none");
-      regOk.textContent = "Registration successful! Check your email.";
+      regOk.classList.remove("d-none"); regOk.textContent = "Registration successful! Check your email.";
       regErr.classList.add("d-none");
-
-      window.dispatchEvent(new CustomEvent("event:registered", {
-        detail: { event: regTarget, attendee: { name, email } }
-      }));
-
+      window.dispatchEvent(new CustomEvent("event:registered", { detail: { event: regTarget, attendee: { name, email } } }));
       setTimeout(() => regModal.hide(), 1200);
 
     } catch (err) {
@@ -739,8 +651,7 @@
       regErr.textContent = err.message || "Registration failed. Please try again.";
       regErr.classList.remove("d-none");
     } finally {
-      regBusy.classList.add("d-none");
-      btnSubmitReg.disabled = false;
+      regBusy.classList.add("d-none"); btnSubmitReg.disabled = false;
     }
   });
 
@@ -759,7 +670,7 @@
     render();
   }
 
-  // ---------- Event Delegation for Clicks ----------
+  // ---------- Event Delegation ----------
   document.addEventListener("click", (ev) => {
     const card = ev.target.closest(".event-card");
     const monthBtn = ev.target.closest(".month-evt");
@@ -775,25 +686,21 @@
 
   // ---------- Init ----------
   document.addEventListener("DOMContentLoaded", async () => {
-    if (!window.db) {
-      containerList.innerHTML = `<div class="text-danger py-4 text-center">Firestore not initialized.</div>`;
-      return;
-    }
-
+    if (!window.db) { containerList.innerHTML = `<div class="text-danger py-4 text-center">Firestore not initialized.</div>`; return; }
     await loadBranches();
     attachEventsListener();
 
+    // Filters/search
     branchFilter.addEventListener("change", applyFilter);
-    searchInput.addEventListener("input", () => {
-      clearTimeout(searchInput._t);
-      searchInput._t = setTimeout(applyFilter, 120);
-    });
+    searchInput.addEventListener("input", () => { clearTimeout(searchInput._t); searchInput._t = setTimeout(applyFilter, 120); });
 
+    // View switch
     btnMonth.addEventListener("click", () => { currentView="month"; render(); });
     btnWeek .addEventListener("click", () => { currentView="week";  render(); });
     btnDay  .addEventListener("click", () => { currentView="day";   render(); });
     btnList .addEventListener("click", () => { currentView="list";  render(); });
 
+    // Date nav
     btnToday.addEventListener("click", gotoToday);
     btnPrev .addEventListener("click", prevPeriod);
     btnNext .addEventListener("click", nextPeriod);
