@@ -1,13 +1,13 @@
-// Private Events (Firestore v8)
-// Views: Month / Week / Day / List
-// - Shows events where visibility == "private"
-// - Address shown under time; Google Maps link + optional inline embed (no API key)
-// - Branch filter populated from resources
+// Internal Events (Firestore v8)
+// Shows BOTH visibility: "private" and "public" (published, upcoming),
+// plus a Visibility filter (All / Private / Public).
+// Keeps address + Google Maps link + optional inline map.
 (function() {
   // ---------- DOM ----------
   const containerList = document.getElementById("eventsContainer");
   const containerCal  = document.getElementById("calendarContainer");
   const branchFilter  = document.getElementById("branchFilter");
+  const visibilityFilter = document.getElementById("visibilityFilter");
   const searchInput   = document.getElementById("searchInput");
 
   // View controls
@@ -115,11 +115,18 @@
   function applyFilter() {
     const q = (searchInput.value || "").toLowerCase().trim();
     const brSel = (branchFilter.value || "ALL").toUpperCase();
+    const visSel = (visibilityFilter?.value || "ALL").toLowerCase(); // "all" | "private" | "public"
 
     filtered = allEvents.filter(ev => {
+      // branch / location
       const br = (ev.branch || "").toUpperCase();
       if (brSel !== "ALL" && br !== brSel) return false;
 
+      // visibility
+      const v = (ev.visibility || "").toLowerCase();
+      if (visSel !== "all" && v !== visSel) return false;
+
+      // text search
       if (!q) return true;
       const detailTxt = stripHtmlToText(ev.detailDescription || "");
       const hay = [ev.title, ev.description, ev.resourceName, ev.branch, detailTxt]
@@ -181,9 +188,9 @@
     const end   = toDate(e.end);
     const dateLine = `${fmtDateTime(start)} – ${fmtDateTime(end)}`;
     const remaining = (typeof e.remaining === "number") ? e.remaining : null;
-    theCapacity  = (typeof e.capacity === "number") ? e.capacity : null;
-    const remainTxt = (remaining != null && theCapacity != null)
-      ? `${remaining}/${theCapacity} seats left`
+    const capacity  = (typeof e.capacity === "number") ? e.capacity : null;
+    const remainTxt = (remaining != null && capacity != null)
+      ? `${remaining}/${capacity} seats left`
       : (remaining != null ? `${remaining} seats left` : "");
     const color = normalizeHex(e.color || "#3b82f6");
 
@@ -199,6 +206,7 @@
               <span class="me-2"><i class="bi bi-clock"></i> ${esc(dateLine)}</span>
               ${e.resourceName ? `<span class="badge badge-room me-2"><i class="bi bi-building me-1"></i>${esc(e.resourceName)}</span>` : ""}
               ${e.branch ? `<span class="badge badge-branch me-2">${esc(e.branch)}</span>` : ""}
+              ${e.visibility ? `<span class="badge text-bg-light border">${esc(e.visibility)}</span>` : ""}
             </div>
             ${e.description ? `<div class="mt-2 text-secondary">${esc(e.description)}</div>` : ""}
           </div>
@@ -214,7 +222,11 @@
   // ---------- CALENDAR SHARED ----------
   function canRegister(ev) {
     const now = new Date();
-    if (ev.status !== "published" || ev.visibility !== "private") return false;
+    if (ev.status !== "published") return false;
+    // Allow both public and private on the internal page
+    const v = (ev.visibility || "").toLowerCase();
+    if (v !== "public" && v !== "private") return false;
+
     if (ev.allowRegistration === false) return false;
     const opens = toDate(ev.regOpensAt);
     const closes = toDate(ev.regClosesAt);
@@ -597,7 +609,7 @@
         const evSnap = await window.db.collection("events").where("start", ">=", now).get();
         evSnap.forEach(d => {
           const ev = d.data();
-          if (ev?.visibility === "private" && ev?.status === "published") {
+          if (ev?.status === "published") {
             const br = (ev.branch || "").trim();
             if (br) set.add(br);
           }
@@ -620,9 +632,9 @@
     const col = window.db.collection("events");
 
     try {
-      // Composite index: visibility asc, status asc, start asc
+      // Preferred (requires composite index): visibility in ["public","private"], status == "published", start >= now, orderBy start
       unsubscribeEvents = col
-        .where("visibility","==","private")
+        .where("visibility", "in", ["public","private"])
         .where("status","==","published")
         .where("start",">=", now)
         .orderBy("start","asc")
@@ -630,11 +642,11 @@
           allEvents = snap.docs.map(d => ({ _id: d.id, ...d.data() }));
           applyFilter();
         }, err => {
-          console.warn("private events preferred query error; falling back:", err);
+          console.warn("internal events preferred query error; falling back:", err);
           fallbackEventsListener();
         });
     } catch (err) {
-      console.warn("private events preferred query threw; falling back:", err);
+      console.warn("internal events preferred query threw; falling back:", err);
       fallbackEventsListener();
     }
   }
@@ -649,22 +661,29 @@
         .orderBy("start", "asc")
         .onSnapshot(snap => {
           const rows = snap.docs.map(d => ({ _id: d.id, ...d.data() }));
-          allEvents = rows.filter(ev => ev.visibility === "private" && ev.status === "published");
+          // Keep upcoming, published, and only public/private
+          allEvents = rows.filter(ev =>
+            ev.status === "published" &&
+            (ev.visibility === "public" || ev.visibility === "private")
+          );
           applyFilter();
         }, err => {
-          console.error("private events fallback failed; trying one-time get:", err);
+          console.error("internal events fallback failed; trying one-time get:", err);
           col.where("start", ">=", now).orderBy("start","asc").get().then(snap2 => {
             const rows2 = snap2.docs.map(d => ({ _id: d.id, ...d.data() }));
-            allEvents = rows2.filter(ev => ev.visibility === "private" && ev.status === "published");
+            allEvents = rows2.filter(ev =>
+              ev.status === "published" &&
+              (ev.visibility === "public" || ev.visibility === "private")
+            );
             applyFilter();
           }).catch(err2 => {
-            console.error("private events one-time fallback failed:", err2);
-            containerList.innerHTML = `<div class="text-danger py-4 text-center">Failed to load private events.</div>`;
+            console.error("internal events one-time fallback failed:", err2);
+            containerList.innerHTML = `<div class="text-danger py-4 text-center">Failed to load events.</div>`;
           });
         });
     } catch (err) {
-      console.error("private events fallback threw:", err);
-      containerList.innerHTML = `<div class="text-danger py-4 text-center">Failed to load private events.</div>`;
+      console.error("internal events fallback threw:", err);
+      containerList.innerHTML = `<div class="text-danger py-4 text-center">Failed to load events.</div>`;
     }
   }
 
@@ -692,9 +711,14 @@
         if (!evSnap.exists) throw new Error("Event not found.");
         const ev = evSnap.data();
 
-        if (ev.status !== "published" || ev.visibility !== "private") {
+        if (ev.status !== "published") {
           throw new Error("Registration is closed for this event.");
         }
+        const v = (ev.visibility || "").toLowerCase();
+        if (v !== "public" && v !== "private") {
+          throw new Error("Registration is not available for this event.");
+        }
+
         const now = new Date();
         const opens = ev.regOpensAt?.toDate ? ev.regOpensAt.toDate() : (ev.regOpensAt ? new Date(ev.regOpensAt) : null);
         const closes = ev.regClosesAt?.toDate ? ev.regClosesAt.toDate() : (ev.regClosesAt ? new Date(ev.regClosesAt) : null);
@@ -786,17 +810,21 @@
     await loadBranches();
     attachEventsListener();
 
+    // Filters/search
     branchFilter.addEventListener("change", applyFilter);
+    visibilityFilter.addEventListener("change", applyFilter);
     searchInput.addEventListener("input", () => {
       clearTimeout(searchInput._t);
       searchInput._t = setTimeout(applyFilter, 120);
     });
 
+    // View switch
     btnMonth.addEventListener("click", () => { currentView="month"; render(); });
     btnWeek .addEventListener("click", () => { currentView="week";  render(); });
     btnDay  .addEventListener("click", () => { currentView="day";   render(); });
     btnList .addEventListener("click", () => { currentView="list";  render(); });
 
+    // Date nav
     btnToday.addEventListener("click", gotoToday);
     btnPrev .addEventListener("click", prevPeriod);
     btnNext .addEventListener("click", nextPeriod);

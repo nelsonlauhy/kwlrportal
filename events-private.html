@@ -16,13 +16,14 @@
   <style>
     .page-title { display:flex; align-items:center; gap:.5rem; }
     .page-title img.logo { height:50px; width:auto; display:block; }
-    .filter-control { height: 38px; padding: 0.375rem 0.75rem; font-size:.95rem; line-height:1.5; border-radius:.5rem; }
+    .filter-control { height:38px; padding:0.375rem 0.75rem; font-size:.95rem; line-height:1.5; border-radius:.5rem; }
     .control-row { display:flex; align-items:center; gap:.5rem; flex-wrap:nowrap; }
     #branchFilter { width:180px; }
+    #visibilityFilter { width:150px; }
     #searchInput  { width:260px; }
     @media (max-width:576px){
       .control-row{flex-wrap:wrap!important;}
-      #branchFilter,#searchInput{width:100%;flex:1 1 100%;}
+      #branchFilter,#visibilityFilter,#searchInput{width:100%;flex:1 1 100%;}
     }
 
     /* List view */
@@ -77,6 +78,12 @@
           <option value="ALL">All locations</option>
         </select>
 
+        <select id="visibilityFilter" class="form-select filter-control">
+          <option value="ALL">All visibilities</option>
+          <option value="private">Private</option>
+          <option value="public">Public</option>
+        </select>
+
         <input id="searchInput" class="form-control filter-control" placeholder="Search title, room, description…" />
       </div>
     </div>
@@ -106,7 +113,7 @@
     <!-- List container -->
     <div id="eventsContainer" class="d-grid" style="gap:1rem;">
       <div class="text-center text-muted py-4">
-        <div class="spinner-border spinner-border-sm me-2"></div> Loading private events…
+        <div class="spinner-border spinner-border-sm me-2"></div> Loading events…
       </div>
     </div>
   </main>
