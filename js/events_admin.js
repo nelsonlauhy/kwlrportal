@@ -71,8 +71,9 @@
   let filtered = [];
   let editingId = null; // _id when editing a single event
   let pendingDeleteId = null;
-
   let unsubscribeEvents = null;
+  let editDetailHTMLOriginal = "";
+  let editDetailTouched = false;
 
   // ---------- Utils ----------
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, m => (
@@ -122,6 +123,21 @@
       return `<a href="${href}" target="_blank" rel="noopener">${m}</a>`;
     });
     return linked.replace(/\n/g, "<br>");
+  }
+
+  // Turn stored HTML into plaintext for textarea display, preserving line breaks.
+  function htmlToPlainForTextarea(html) {
+    if (!html) return "";
+    // Normalize common block boundaries to newlines, then strip tags, then decode entities.
+    const tmp = document.createElement("div");
+    const normalized = String(html)
+      .replace(/<\s*br\s*\/?>/gi, "\n")
+      .replace(/<\/\s*(p|div|li|h[1-6])\s*>/gi, "\n");
+    tmp.innerHTML = normalized;
+    // textContent will drop tags but preserve the \n we injected
+    const text = tmp.textContent || "";
+    // Collapse excessive blank lines but keep intentional ones
+    return text.replace(/\r\n/g, "\n").replace(/\n{3,}/g, "\n\n");
   }
 
   function clearEditErrors() {
@@ -329,6 +345,8 @@
     f_description.value = "";
     f_detailDescription.value = "";
     f_detailPreview.innerHTML = "";
+    editDetailHTMLOriginal = "";
+    editDetailTouched = false;
 
     f_allowRegistration.value = "true";
     f_capacity.value = "";
@@ -350,7 +368,12 @@
     f_repeatCount.value = "1";
     f_repeatUntil.value = "";
 
-    if (!editingId) { editModal.show(); return; }
+    if (!editingId) { 
+      // New event: preview follows textarea (currently empty)
+      f_detailPreview.innerHTML = "";
+      editModal.show(); 
+      return; 
+    }
 
     const ev = allEvents.find(x => x._id === editingId);
     if (!ev) { showInlineError("Event not found."); return; }
@@ -364,8 +387,13 @@
     f_start.value = inputValueFromDate(toDate(ev.start));
     f_end.value = inputValueFromDate(toDate(ev.end));
     f_description.value = ev.description || "";
-    f_detailDescription.value = textFromHtml(ev.detailDescription || "");
-    f_detailPreview.innerHTML = ev.detailDescription || "";
+
+    // Preserve the original HTML and show a plaintext view in the textarea
+    editDetailHTMLOriginal = ev.detailDescription || "";
+    editDetailTouched = false; // we'll only regenerate HTML if user types
+    f_detailDescription.value = htmlToPlainForTextarea(editDetailHTMLOriginal);
+    // Preview shows the exact original HTML (so links & <br> look correct)
+    f_detailPreview.innerHTML = editDetailHTMLOriginal;
 
     f_allowRegistration.value = (ev.allowRegistration === false) ? "false" : "true";
     f_capacity.value = (ev.capacity ?? "");
@@ -380,32 +408,25 @@
       f_color.value = "#3b82f6";
     }
 
-    // --- Back-calc "days before start" for reg windows (if present) ---
     (function backfillRegDays() {
       const startDate = toDate(ev.start);
       const opensAt = toDate(ev.regOpensAt);
       const closesAt = toDate(ev.regClosesAt);
-
       function daysBefore(start, other) {
         if (!start || !other) return null;
         const ms = start.getTime() - other.getTime();
         if (ms <= 0) return 0;
         return Math.round(ms / (24*60*60*1000));
       }
-
       const openDays = daysBefore(startDate, opensAt);
       const closeDays = daysBefore(startDate, closesAt);
-
-      if (openDays !== null && !Number.isNaN(openDays)) {
-        f_regOpensDays.value = String(openDays);
-      }
-      if (closeDays !== null && !Number.isNaN(closeDays)) {
-        f_regClosesDays.value = String(closeDays);
-      }
+      if (openDays !== null && !Number.isNaN(openDays)) f_regOpensDays.value = String(openDays);
+      if (closeDays !== null && !Number.isNaN(closeDays)) f_regClosesDays.value = String(closeDays);
     })();
 
     editModal.show();
   }
+
 
   function textFromHtml(html) {
     const div = document.createElement("div");
@@ -472,6 +493,7 @@
 
   // ---------- Detail preview ----------
   f_detailDescription.addEventListener("input", () => {
+    editDetailTouched = true;
     f_detailPreview.innerHTML = plainToHtml(f_detailDescription.value);
   });
 
@@ -521,7 +543,9 @@
 
       // Descriptions
       const description = f_description.value.trim();
-      const detailDescriptionHtml = plainToHtml(f_detailDescription.value);
+      const detailDescriptionHtml = editingId
+        ? (editDetailTouched ? plainToHtml(f_detailDescription.value) : editDetailHTMLOriginal)
+        : plainToHtml(f_detailDescription.value);
 
       // Recurrence
       const repeat = f_repeat.value;           // none/daily/weekly/monthly
