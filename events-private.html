@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Private Events · KW Living Portal</title>
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/x-icon" href="/images/logo.ico" />
+
+  <!-- Bootstrap CSS & Icons -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+  <link href="./css/styles.css" rel="stylesheet">
+
+  <style>
+    .page-title { display:flex; align-items:center; gap:.5rem; }
+    .page-title img.logo { height:50px; width:auto; display:block; }
+    .filter-control { height: 38px; padding: 0.375rem 0.75rem; font-size:.95rem; line-height:1.5; border-radius:.5rem; }
+    .control-row { display:flex; align-items:center; gap:.5rem; flex-wrap:nowrap; }
+    #branchFilter { width:180px; }
+    #searchInput  { width:260px; }
+    @media (max-width:576px){
+      .control-row{flex-wrap:wrap!important;}
+      #branchFilter,#searchInput{width:100%;flex:1 1 100%;}
+    }
+
+    /* List view */
+    .month-header { font-weight:700; font-size:1.1rem; margin:1.25rem 0 .5rem; color:#334155; }
+    .event-card { border:1px solid #e9ecef; border-radius:.75rem; padding:1rem; background:#fff; cursor:pointer; }
+    .event-card:hover { background:#fafcff; }
+    .event-title { font-weight:700; }
+    .event-meta { color:#6c757d; font-size:.9rem; }
+    .badge-branch { background:#eef2ff; color:#3730a3; }
+    .badge-room   { background:#ecfeff; color:#155e75; }
+
+    /* Calendar shell */
+    .cal-toolbar{ display:flex; align-items:center; gap:.5rem; flex-wrap:wrap; }
+    .cal-label{ font-weight:600; min-width:180px; }
+
+    /* Month grid */
+    .month-grid{ display:grid; grid-template-columns:repeat(7,1fr); border:1px solid #e9ecef; border-radius:.75rem; overflow:hidden; }
+    .month-head{ background:#f8fafc; font-weight:600; font-size:.9rem; padding:.5rem; border-right:1px solid #e9ecef; }
+    .month-head:last-child{ border-right:0; }
+    .month-cell{ min-height:120px; border-right:1px solid #f1f5f9; border-top:1px solid #f1f5f9; padding:.35rem; background:#fff; }
+    .month-cell.other{ background:#fafafa; color:#94a3b8; }
+    .month-day{ font-size:.85rem; font-weight:600; }
+    .month-evt{ display:block; font-size:.8rem; padding:.2rem .35rem; margin:.25rem 0; border-radius:.35rem; border:1px solid #e2e8f0; background:#ffffff; text-align:left; cursor:pointer; color:#111827; }
+    .month-evt.full{ opacity:.6; }
+
+    /* Week/Day */
+    .time-grid{ display:grid; grid-template-columns:80px repeat(7,1fr); border:1px solid #e9ecef; border-radius:.75rem; overflow:hidden;}
+    .time-head{ background:#f8fafc; font-weight:600; font-size:.9rem; padding:.5rem; border-right:1px solid #e9ecef; text-align:center;}
+    .time-col{ border-right:1px solid #f1f5f9; }
+    .time-slot{ border-top:1px dashed #f1f5f9; height:44px; position:relative; }
+    .slot-label{ font-size:.8rem; color:#64748b; padding:.25rem .5rem; border-top:1px dashed #e2e8f0; height:44px; }
+    .evt-pill{ position:absolute; left:6px; right:6px; top:2px; padding:.25rem .35rem; font-size:.8rem; border-radius:.4rem; background:#e6f4ff; border:1px solid #bfdbfe; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; cursor:pointer; color:#111827;}
+    .evt-pill.full{ background:#f1f5f9; border-color:#e2e8f0; }
+
+    /* Modal helpers */
+    .event-detail-meta .badge { margin-right:.35rem; }
+    .muted{ color:#94a3b8; }
+  </style>
+</head>
+<body class="bg-light">
+
+  <main class="container py-4">
+    <!-- Header -->
+    <div class="d-flex align-items-center justify-content-between flex-wrap mb-3" style="row-gap:.5rem;">
+      <h3 class="page-title mb-0">
+        <img src="/images/logos.png" alt="KW Living" class="logo me-2">
+        <span><i class="bi bi-shield-lock me-1"></i>Private Events</span>
+      </h3>
+
+      <div class="control-row">
+        <select id="branchFilter" class="form-select filter-control">
+          <option value="ALL">All locations</option>
+        </select>
+
+        <input id="searchInput" class="form-control filter-control" placeholder="Search title, room, description…" />
+      </div>
+    </div>
+
+    <!-- View Switch + Date Nav -->
+    <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap" style="row-gap:.5rem;">
+      <div class="btn-group" role="group" aria-label="View">
+        <button class="btn btn-outline-secondary btn-sm" id="btnMonth">Month</button>
+        <button class="btn btn-outline-secondary btn-sm" id="btnWeek">Week</button>
+        <button class="btn btn-outline-secondary btn-sm" id="btnDay">Day</button>
+        <button class="btn btn-outline-secondary btn-sm active" id="btnList">List</button>
+      </div>
+
+      <div class="cal-toolbar">
+        <div class="btn-group btn-group-sm" role="group">
+          <button class="btn btn-outline-secondary" id="btnPrev"><i class="bi bi-chevron-left"></i></button>
+          <button class="btn btn-outline-secondary" id="btnToday">Today</button>
+          <button class="btn btn-outline-secondary" id="btnNext"><i class="bi bi-chevron-right"></i></button>
+        </div>
+        <span class="cal-label" id="calLabel">Upcoming</span>
+      </div>
+    </div>
+
+    <!-- Calendar/List container -->
+    <div id="calendarContainer" class="mb-4"></div>
+
+    <!-- List container -->
+    <div id="eventsContainer" class="d-grid" style="gap:1rem;">
+      <div class="text-center text-muted py-4">
+        <div class="spinner-border spinner-border-sm me-2"></div> Loading private events…
+      </div>
+    </div>
+  </main>
+
+  <!-- Event Details Modal -->
+  <div class="modal fade" id="eventModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title"><span id="evTitle"></span></h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+
+        <div class="modal-body">
+          <div class="event-detail-meta mb-2 text-secondary small" id="evMeta"></div>
+          <div class="mb-3 small text-secondary" id="evDateLine"></div>
+
+          <!-- Address + map actions -->
+          <div id="evAddressRow" class="mb-3 d-none">
+            <div class="d-flex align-items-center gap-2 small">
+              <i class="bi bi-geo-alt text-secondary"></i>
+              <span id="evAddressText" class="text-secondary"></span>
+              <a id="evMapLink" class="btn btn-outline-secondary btn-sm px-2 py-1" target="_blank" rel="noopener" title="Open in Google Maps">
+                <i class="bi bi-map"></i>
+              </a>
+              <button id="evMapToggle" type="button" class="btn btn-link btn-sm p-0 text-decoration-none">Show map</button>
+            </div>
+            <div id="evMapEmbed" class="ratio ratio-16x9 mt-2 d-none">
+              <iframe id="evMapIframe" loading="lazy" referrerpolicy="no-referrer-when-downgrade" allowfullscreen></iframe>
+            </div>
+          </div>
+
+          <!-- Plain description -->
+          <div class="mb-3" id="evShortDesc" style="display:none;"></div>
+
+          <!-- Rich detailDescription (HTML allowed) -->
+          <div class="border-top pt-3" id="evDetailDesc" style="display:none;"></div>
+        </div>
+
+        <div class="modal-footer">
+          <div class="me-auto small text-muted" id="evCapacity"></div>
+          <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Close</button>
+          <button type="button" class="btn btn-primary btn-sm" id="btnOpenRegister">
+            <i class="bi bi-pencil-square me-1"></i> Register
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Registration Modal -->
+  <div class="modal fade" id="regModal" tabindex="-1" aria-labelledby="regModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <form class="modal-content" id="regForm">
+        <div class="modal-header">
+          <h5 class="modal-title" id="regModalLabel">Register for Event</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+
+        <div class="modal-body">
+          <div id="regEventSummary" class="mb-3 small text-muted"></div>
+
+          <div class="mb-3">
+            <label class="form-label">Your Name</label>
+            <input type="text" class="form-control" id="attendeeName" required maxlength="80">
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Your Email</label>
+            <input type="email" class="form-control" id="attendeeEmail" required maxlength="120" inputmode="email">
+            <div class="form-text">We’ll send your confirmation here.</div>
+          </div>
+
+          <div class="alert alert-warning d-none" id="regWarn"></div>
+          <div class="alert alert-danger d-none" id="regErr"></div>
+          <div class="alert alert-success d-none" id="regOk">Registration successful! Check your email.</div>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Close</button>
+          <button type="submit" class="btn btn-primary btn-sm" id="btnSubmitReg">
+            <span class="spinner-border spinner-border-sm me-1 d-none" id="regBusy"></span>
+            Register
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Bootstrap + Firebase v8 -->
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+
+  <!-- Your Firebase config (defines window.db) -->
+  <script src="./js/firebaseConfig.js"></script>
+
+  <!-- Page Logic (private) -->
+  <script src="./js/events_private.js" defer></script>
+
+  <!-- Email comms (reuse) -->
+  <script src="./js/events_comm.js" defer></script>
+</body>
+</html>
