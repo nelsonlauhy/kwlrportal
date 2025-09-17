@@ -6,6 +6,7 @@
 // - Registration windows per occurrence via DAYS-before-start
 // - Back-fill "Reg Opens/Closes (days)" when editing an existing event
 // - Combined filter: Location (Branch — Resource ONLY) + Search
+// - "Open registration now" checkbox -> auto-calc days from now; unchecks on manual change
 
 (function() {
   // ---------- DOM ----------
@@ -46,6 +47,7 @@
   const f_visibility = document.getElementById("f_visibility");
   const f_colorPreset = document.getElementById("f_colorPreset");
   const f_color = document.getElementById("f_color");
+  const f_regOpenNow = document.getElementById("f_regOpenNow"); // NEW
 
   // Recurrence fields
   const f_repeat = document.getElementById("f_repeat");
@@ -116,7 +118,7 @@
   // Convert plain text → HTML (auto-link + preserve newlines)
   function plainToHtml(text) {
     const escText = esc(text || "");
-       // link http(s) and www.
+    // link http(s) and www.
     const urlRegex = /((?:https?:\/\/|www\.)[^\s<]+)/gi;
     const linked = escText.replace(urlRegex, (m) => {
       const href = m.startsWith("www.") ? `https://${m}` : m;
@@ -128,15 +130,12 @@
   // Turn stored HTML into plaintext for textarea display, preserving line breaks.
   function htmlToPlainForTextarea(html) {
     if (!html) return "";
-    // Normalize common block boundaries to newlines, then strip tags, then decode entities.
     const tmp = document.createElement("div");
     const normalized = String(html)
       .replace(/<\s*br\s*\/?>/gi, "\n")
       .replace(/<\/\s*(p|div|li|h[1-6])\s*>/gi, "\n");
     tmp.innerHTML = normalized;
-    // textContent will drop tags but preserve the \n we injected
     const text = tmp.textContent || "";
-    // Collapse excessive blank lines but keep intentional ones
     return text.replace(/\r\n/g, "\n").replace(/\n{3,}/g, "\n\n");
   }
 
@@ -164,12 +163,8 @@
 
       // Search text
       if (q) {
-        const hay = [
-          ev.title,
-          ev.description,
-          ev.resourceName,
-          ev.branch
-        ].map(v => (v || "").toString().toLowerCase());
+        const hay = [ev.title, ev.description, ev.resourceName, ev.branch]
+          .map(v => (v || "").toString().toLowerCase());
         if (!hay.some(v => v.includes(q))) return false;
       }
 
@@ -256,7 +251,6 @@
       </div>
     `;
   }
-
 
   // ---------- Populate Location filter (Resource-only) ----------
   function populateLocationFilter(resources) {
@@ -353,6 +347,7 @@
     f_remaining.value = "";
     f_regOpensDays.value = "7";
     f_regClosesDays.value = "1";
+    if (f_regOpenNow) f_regOpenNow.checked = false; // NEW
 
     f_visibility.value = "public";
     f_colorPreset.value = "#3b82f6";
@@ -368,11 +363,10 @@
     f_repeatCount.value = "1";
     f_repeatUntil.value = "";
 
-    if (!editingId) { 
-      // New event: preview follows textarea (currently empty)
+    if (!editingId) {
       f_detailPreview.innerHTML = "";
-      editModal.show(); 
-      return; 
+      editModal.show();
+      return;
     }
 
     const ev = allEvents.find(x => x._id === editingId);
@@ -390,9 +384,8 @@
 
     // Preserve the original HTML and show a plaintext view in the textarea
     editDetailHTMLOriginal = ev.detailDescription || "";
-    editDetailTouched = false; // we'll only regenerate HTML if user types
+    editDetailTouched = false;
     f_detailDescription.value = htmlToPlainForTextarea(editDetailHTMLOriginal);
-    // Preview shows the exact original HTML (so links & <br> look correct)
     f_detailPreview.innerHTML = editDetailHTMLOriginal;
 
     f_allowRegistration.value = (ev.allowRegistration === false) ? "false" : "true";
@@ -422,11 +415,20 @@
       const closeDays = daysBefore(startDate, closesAt);
       if (openDays !== null && !Number.isNaN(openDays)) f_regOpensDays.value = String(openDays);
       if (closeDays !== null && !Number.isNaN(closeDays)) f_regClosesDays.value = String(closeDays);
+
+      // Reflect "open now" if registration already opened
+      if (f_regOpenNow) {
+        if (opensAt && opensAt <= new Date()) {
+          f_regOpenNow.checked = true;
+          recalcRegOpensDaysFromNow(); // keep days aligned to "now"
+        } else {
+          f_regOpenNow.checked = false;
+        }
+      }
     })();
 
     editModal.show();
   }
-
 
   function textFromHtml(html) {
     const div = document.createElement("div");
@@ -491,6 +493,28 @@
     repeatUntilWrap.style.display = isCount ? "none" : "";
   });
 
+  // ---------- "Open registration now" helpers & bindings ----------
+  function recalcRegOpensDaysFromNow() {
+    const start = dtLocalFromInput(f_start.value);
+    if (!start) return;
+    const now = new Date();
+    let days = Math.ceil((start.getTime() - now.getTime()) / (24*60*60*1000));
+    if (days < 0) days = 0;
+    f_regOpensDays.value = String(days);
+  }
+
+  if (f_regOpenNow) {
+    f_regOpenNow.addEventListener("change", () => {
+      if (f_regOpenNow.checked) recalcRegOpensDaysFromNow();
+    });
+    f_start.addEventListener("change", () => {
+      if (f_regOpenNow.checked) recalcRegOpensDaysFromNow();
+    });
+    f_regOpensDays.addEventListener("input", () => {
+      if (f_regOpenNow.checked) f_regOpenNow.checked = false;
+    });
+  }
+
   // ---------- Detail preview ----------
   f_detailDescription.addEventListener("input", () => {
     editDetailTouched = true;
@@ -528,6 +552,11 @@
       const end = dtLocalFromInput(f_end.value);
       if (!title || !branch || !resourceId || !start || !end || end <= start) {
         throw new Error("Please fill Title, Branch, Resource, Start/End (End must be after Start).");
+      }
+
+      // If "Open now" is checked, make sure days reflect now before reading values
+      if (f_regOpenNow?.checked) {
+        recalcRegOpensDaysFromNow();
       }
 
       // Registration & visibility
