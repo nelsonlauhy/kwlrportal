@@ -8,7 +8,8 @@
 // - Combined filter: Location (Resource-only) + Search
 // - "Open registration now" auto-calc
 // - Banner constraints: JPEG/PNG, ≤10MB, recommended 2160x1080
-// - List view shows banner thumbnail when available (no banner shown if missing)
+// - List view shows banner thumbnail when available (No Banner placeholder otherwise)
+// - Actions (Remaining + Registrations + Edit + Delete) aligned on the right
 
 (function() {
   // ---------- DOM ----------
@@ -68,7 +69,7 @@
   const delBusy = document.getElementById("delBusy");
   const btnDoDelete = document.getElementById("btnDoDelete");
 
-  // Banner elements (NEW)
+  // Banner elements (Edit modal)
   const f_bannerPreview      = document.getElementById("f_bannerPreview");
   const f_bannerPlaceholder  = document.getElementById("f_bannerPlaceholder");
   const f_bannerFile         = document.getElementById("f_bannerFile");
@@ -87,7 +88,7 @@
   let editDetailHTMLOriginal = "";
   let editDetailTouched = false;
 
-  // Banner state (NEW)
+  // Banner state (Edit modal)
   let pendingBannerFile = null;       // File selected but not yet uploaded
   let pendingBannerMeta = null;       // {width,height,type,size}
   let existingBannerPath = null;      // path in storage for current event
@@ -95,7 +96,6 @@
   let flagRemoveBanner = false;       // user clicked remove
 
   // ---------- Storage (force correct bucket) ----------
-  // If firebaseConfig.js sets window.storage, use it; otherwise init here:
   const STORAGE_BUCKET_URL = "gs://kwlrintranet.firebasestorage.app";
   const storage = (window.storage && typeof window.storage.ref === "function")
     ? window.storage
@@ -163,7 +163,7 @@
   function clearEditErrors() { [editErr, editErrInline, editOk].forEach(el => { el.classList.add("d-none"); el.textContent=""; }); }
   function showInlineError(msg) { editErrInline.textContent = msg; editErrInline.classList.remove("d-none"); }
 
-  // ---------- Banner URL resolver for list thumbnails (NEW) ----------
+  // ---------- Banner URL resolver for list thumbnails ----------
   const _bannerUrlCache = new Map();
   function resolveBannerUrl(evt) {
     try {
@@ -240,24 +240,20 @@
     containerList.querySelectorAll("[data-action='delete']").forEach(btn=>{
       btn.addEventListener("click", ()=> openDelete(btn.getAttribute("data-id")));
     });
+    containerList.querySelectorAll("[data-action='registrations']").forEach(btn=>{
+      // If your events_admin_regs.js attaches its own listener, this is harmless.
+      btn.addEventListener("click", ()=> openRegistrations(btn.getAttribute("data-id")));
+    });
 
-    // Resolve thumbnails asynchronously after DOM paint
+    // Resolve thumbnails after DOM paint
     filtered.forEach(e => {
       resolveBannerUrl(e).then(url => {
         const mount = document.getElementById(`thumb-${e._id}`);
         if (!mount) return;
         if (url) {
-          const img = new Image();
-          img.className = "event-thumb";
-          img.alt = "Banner";
-          img.loading = "lazy";
-          img.src = url;
-          // Replace placeholder with image
-          mount.replaceWith(img);
-          img.id = `thumb-${e._id}`; // keep id if needed later
+          mount.innerHTML = `<img class="event-thumb" loading="lazy" alt="Banner" src="${esc(url)}">`;
         } else {
-          // No banner: remove mount so nothing remains in DOM (also hidden by CSS if left)
-          mount.remove();
+          mount.innerHTML = `<div class="event-thumb-placeholder">No Banner</div>`;
         }
       });
     });
@@ -277,13 +273,14 @@
       ? `<span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:${esc(colorHex)};border:1px solid #cbd5e1;vertical-align:middle;margin-right:.4rem;"></span>`
       : "";
 
-    // LEFT: banner mount (placeholder). JS will replace with <img> if URL resolves.
-    const thumb =
-      `<div class="event-thumb-placeholder" id="thumb-${esc(e._id)}" aria-label="No banner"></div>`;
+    // LEFT: thumbnail column (always present)
+    const leftCol = `<div class="thumb-col" id="thumb-${esc(e._id)}">
+        <div class="event-thumb-placeholder">No Banner</div>
+      </div>`;
 
-    // RIGHT: main body (grid placement handled by CSS in HTML)
-    const body = `
-      <div class="flex-grow-1">
+    // MIDDLE: content column
+    const middleCol = `
+      <div class="event-content">
         <div class="event-title">${esc(e.title || "Untitled Event")}</div>
         <div class="event-meta mt-1">
           <span class="me-2"><i class="bi bi-clock"></i> ${esc(dateLine)}</span>
@@ -294,9 +291,16 @@
           <span class="badge text-bg-light border">${esc(e.visibility || "")}</span>
         </div>
         ${e.description ? `<div class="mt-2 text-secondary">${esc(e.description)}</div>` : ""}
+      </div>`;
 
-        <div class="mt-2 d-flex align-items-center gap-2">
-          ${remainTxt ? `<div class="small text-muted me-2">${esc(remainTxt)}</div>` : ""}
+    // RIGHT: actions column (Remaining + Registrations + Edit + Delete)
+    const rightCol = `
+      <div class="event-actions">
+        ${remainTxt ? `<div class="small text-muted">${esc(remainTxt)}</div>` : ""}
+        <div class="btn-group">
+          <button class="btn btn-outline-primary btn-sm" data-action="registrations" data-id="${esc(e._id)}">
+            <i class="bi bi-people me-1"></i>Registrations
+          </button>
           <button class="btn btn-outline-secondary btn-sm" data-action="edit" data-id="${esc(e._id)}">
             <i class="bi bi-pencil-square me-1"></i>Edit
           </button>
@@ -309,8 +313,9 @@
     return `
       <div class="event-card">
         <div class="event-row">
-          ${thumb}
-          ${body}
+          ${leftCol}
+          ${middleCol}
+          ${rightCol}
         </div>
       </div>
     `;
@@ -417,7 +422,7 @@
     f_repeatCount.value = "1";
     f_repeatUntil.value = "";
 
-    // Reset banner UI/state (NEW)
+    // Reset banner UI/state
     resetBannerStateAndUI();
 
     if (!editingId) {
@@ -428,7 +433,7 @@
     const ev = allEvents.find(x => x._id === editingId);
     if (!ev) { showInlineError("Event not found."); return; }
 
-    // Fill form for single event edit
+    // Fill form
     f_title.value = ev.title || "";
     f_status.value = ev.status || "draft";
     f_branch.value = ev.branch || "";
@@ -457,10 +462,7 @@
     }
 
     backfillRegDays(ev);
-
-    // Load banner UI from event (NEW)
     loadBannerFromEvent(ev);
-
     editModal.show();
   }
 
@@ -522,7 +524,6 @@
     delBusy.classList.remove("d-none");
     try {
       await window.db.collection("events").doc(pendingDeleteId).delete();
-      // Optional: also delete banner (needs reading doc first to get path).
       delModal.hide();
     } catch (err) {
       console.error("delete error:", err);
@@ -604,7 +605,7 @@
 
     if (f_bannerPreview) {
       f_bannerPreview.src = "";
-      f_bannerPreview.style.display = "none"; // hidden by default
+      f_bannerPreview.style.display = "none";
     }
     if (f_bannerPlaceholder) f_bannerPlaceholder.style.display = "";
     f_bannerRemove.classList.add("d-none");
@@ -736,7 +737,7 @@
   async function deleteBannerAtPath(path) {
     if (!path) return;
     try {
-      const ref = storage.ref().child(path); // use forced bucket
+      const ref = storage.ref().child(path);
       await ref.delete();
     } catch (err) {
       console.warn("delete banner failed:", err);
@@ -758,7 +759,7 @@
       return;
     }
     pendingBannerFile = file;
-    flagRemoveBanner = false; // selecting a new file cancels "remove" intent
+    flagRemoveBanner = false;
     await previewBannerFile(file);
   });
 
@@ -785,7 +786,6 @@
     editBusy.classList.remove("d-none");
 
     try {
-      // Basic fields
       const title = f_title.value.trim();
       const status = f_status.value;
       const branch = f_branch.value;
@@ -799,7 +799,6 @@
 
       if (f_regOpenNow?.checked) recalcRegOpensDaysFromNow();
 
-      // Registration & visibility
       const allowRegistration = (f_allowRegistration.value === "true");
       const capacity = f_capacity.value ? Number(f_capacity.value) : null;
       const remaining = f_remaining.value ? Number(f_remaining.value) : null;
@@ -807,16 +806,12 @@
       const closesDays = Number(f_regClosesDays.value || 0);
       const visibility = f_visibility.value;
 
-      // Color
       const color = normalizeHex(f_color.value || "#3b82f6");
-
-      // Descriptions
       const description = f_description.value.trim();
       const detailDescriptionHtml = editingId
         ? (editDetailTouched ? plainToHtml(f_detailDescription.value) : editDetailHTMLOriginal)
         : plainToHtml(f_detailDescription.value);
 
-      // Recurrence
       const repeat = f_repeat.value;           // none/daily/weekly/monthly
       const interval = Math.max(1, Number(f_interval.value || 1));
       const endType = f_repeatEndType.value;   // count/until
@@ -895,10 +890,10 @@
         throw new Error("No occurrences generated. Check your repeat settings.");
       }
 
-      // If we have a banner file for new events, upload ONCE and reuse metadata
+      // Upload banner once and reuse metadata
       let newBannerData = null;
       if (pendingBannerFile) {
-        const groupId = window.db.collection("_").doc().id; // unique id for the banner
+        const groupId = window.db.collection("_").doc().id; // unique id
         const up = await uploadBannerToStorage(pendingBannerFile, groupId);
         newBannerData = {
           bannerUrl: up.url,
@@ -1011,7 +1006,7 @@
       const startDow = start.getDay();
       let weekStart = new Date(start);
       weekStart.setHours(0,0,0,0);
-      weekStart.setDate(weekStart.getDate() - startDow); // to Sunday
+      weekStart.setDate(weekStart.getDate() - startDow);
       while (made < limitCount) {
         for (const dow of (weekdays.length ? weekdays : [startDow])) {
           const occStart = new Date(weekStart);
@@ -1065,6 +1060,21 @@
     } catch (err) {
       console.warn("conflict check failed; allowing save:", err);
       return null; // fail-open
+    }
+  }
+
+  // ---------- Registration modal open (hook) ----------
+  function openRegistrations(eventId) {
+    // If your events_admin_regs.js provides its own binding,
+    // this stub keeps things safe. You can integrate or remove as needed.
+    const trigger = document.getElementById("btnCopyEmails"); // any element in reg modal
+    if (window && window.bootstrap && document.getElementById("regListModal")) {
+      // If you have a function there to load registrations, call it here.
+      // window.loadRegistrationsForEvent?.(eventId);
+      const m = new bootstrap.Modal(document.getElementById("regListModal"));
+      m.show();
+    } else {
+      console.log("Open registrations for", eventId);
     }
   }
 

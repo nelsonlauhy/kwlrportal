@@ -182,3 +182,84 @@ td.col-name {
     aspect-ratio: 16 / 9;  /* keep ratio when it grows full width */
   }
 }
+
+/* ===== Events list: uniform card layout ===== */
+
+/* 3-column grid: [thumb | content | actions] */
+.event-row {
+  display: grid;
+  grid-template-columns: 96px 1fr auto;
+  gap: 12px;
+  align-items: start;
+}
+
+/* Thumbnail (real image) */
+.event-thumb {
+  width: 96px;
+  height: 54px;
+  border-radius: .5rem;
+  object-fit: cover;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  display: block;
+}
+
+/* When there is no banner, show a neat placeholder */
+.thumb-col,
+.event-thumb-placeholder {
+  width: 96px;
+  height: 54px;
+  border-radius: .5rem;
+}
+
+.event-thumb-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: .725rem;
+  color: #64748b;
+  background: repeating-linear-gradient(
+    45deg,
+    #f8fafc,
+    #f8fafc 8px,
+    #f1f5f9 8px,
+    #f1f5f9 16px
+  );
+  border: 1px dashed #cbd5e1;
+}
+
+/* Middle column (text) */
+.event-content {
+  min-width: 0; /* allow wrapping */
+}
+
+/* Right column (capacity + buttons) */
+.event-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: .5rem;
+}
+.event-actions .btn-group { gap: .5rem; }
+.event-actions .btn { white-space: nowrap; }
+
+/* Small polish */
+.event-title { font-weight: 700; }
+.event-meta { color:#6c757d; font-size:.9rem; }
+
+/* Mobile stacking */
+@media (max-width: 576px) {
+  .event-row {
+    grid-template-columns: 1fr;
+  }
+  .thumb-col,
+  .event-thumb,
+  .event-thumb-placeholder {
+    width: 100%;
+    height: auto;
+    aspect-ratio: 16 / 9;
+  }
+  .event-actions {
+    align-items: flex-start;   /* actions align left on mobile */
+  }
+}
