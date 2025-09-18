@@ -29,7 +29,7 @@
     .weekday-pill { user-select:none; }
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","Courier New", monospace; }
 
-    /* Banner preview box */
+    /* Banner preview box (edit modal) */
     .banner-box {
       width: 320px;
       aspect-ratio: 2 / 1; /* matches 2160x1080 */
@@ -40,6 +40,35 @@
       overflow: hidden;
     }
     .banner-box img { max-width: 100%; max-height: 100%; display: none; }
+
+    /* === Event list thumbnail (NEW for list view) === */
+    .event-row {
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+    }
+    .event-thumb {
+      flex: 0 0 96px;
+      width: 96px;
+      height: 54px; /* compact 16:9 box */
+      border-radius: .5rem;
+      object-fit: cover;
+      background: #f1f5f9;
+      border: 1px solid #e2e8f0;
+    }
+    .event-thumb-placeholder {
+      flex: 0 0 96px;
+      width: 96px;
+      height: 54px;
+      border-radius: .5rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #f8fafc;
+      color: #94a3b8;
+      border: 1px dashed #e2e8f0;
+      font-size: 1.25rem;
+    }
   </style>
 </head>
 <body class="bg-light">
@@ -60,12 +89,12 @@
     <!-- Filters -->
     <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap" style="row-gap:.5rem;">
       <div class="control-row">
-        <select id="locationFilter" class="form-select filter-control">
+        <select id="locationFilter" class="form-select filter-control" aria-label="Filter by location">
           <option value="ALL">All Locations</option>
           <!-- JS will populate branches and resources -->
         </select>
 
-        <input id="searchInput" class="form-control filter-control" placeholder="Search title, room, description…" />
+        <input id="searchInput" class="form-control filter-control" placeholder="Search title, room, description…" aria-label="Search events" />
       </div>
 
       <div class="text-muted small">
@@ -73,7 +102,7 @@
       </div>
     </div>
 
-    <!-- List container -->
+    <!-- List container (JS will render .event-card with .event-row and .event-thumb) -->
     <div id="eventsContainer" class="d-grid" style="gap:1rem;">
       <div class="text-center text-muted py-4">
         <div class="spinner-border spinner-border-sm me-2"></div> Loading events…
@@ -333,7 +362,7 @@
     </div>
   </div>
 
-  <!-- Registrations Modal (NEW) -->
+  <!-- Registrations Modal -->
   <div class="modal fade" id="regListModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-lg modal-dialog-scrollable">
       <div class="modal-content">
@@ -385,20 +414,17 @@
     </div>
   </div>
 
-  <!-- Bootstrap + Firebase v8 -->
+  <!-- Bootstrap + Firebase v8 (no custom JS here) -->
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
-  <!-- Firebase Storage v8 (NEW) -->
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-storage.js"></script>
 
   <!-- Your Firebase config (defines window.db; ensure it also initializes firebase.app()) -->
   <script src="./js/firebaseConfig.js"></script>
 
-  <!-- Page Logic -->
+  <!-- Page Logic (JS to be provided/updated separately) -->
   <script src="./js/events_admin.js" defer></script>
-
-  <!-- Registrations UI enhancer (NEW, separate file) -->
   <script src="./js/events_admin_regs.js" defer></script>
 </body>
 </html>
