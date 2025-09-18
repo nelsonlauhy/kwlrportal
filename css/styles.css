@@ -95,28 +95,97 @@ td.col-name {
   #officeFilter, #searchInput { flex: 1 1 100%; max-width: 100%; }
 }
 
-/* ===========================
-   Events list (final, unified)
-   =========================== */
+/* --- Event list layout refinements --- */
 
-/* Section header */
-.month-header {
-  font-weight: 700;
-  font-size: 1.1rem;
-  margin: 1.25rem 0 .5rem;
-  color: #334155;
+/* Card scaffolding stays the same */
+.month-header { font-weight:700; font-size:1.1rem; margin:1.25rem 0 .5rem; color:#334155; }
+.event-card { border:1px solid #e9ecef; border-radius:.75rem; padding:1rem; background:#fff; }
+
+/* Row: base = one column (no thumbnail); if a thumbnail is present, switch to 96px + 1fr */
+.event-row {
+  display: grid;
+  grid-template-columns: 1fr;        /* default (no thumb) */
+  gap: 12px;
+  align-items: start;
+}
+.event-row:has(.event-thumb) {
+  grid-template-columns: 96px 1fr;   /* with thumb */
 }
 
-/* Card */
-.event-card {
-  border: 1px solid #e9ecef;
-  border-radius: .75rem;
-  padding: 1rem;
-  background: #fff;
-  position: relative; /* keeps everything within card bounds */
+/* Thumbnail: consistent 16:9 box */
+.event-thumb {
+  width: 96px;
+  height: 54px;
+  border-radius: .5rem;
+  object-fit: cover;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
 }
 
-/* Row grid: [thumb | content | actions] */
+/* Hide any placeholder mounts if they remain in DOM */
+.event-thumb-placeholder { display: none !important; }
+
+/* Right-side content uses CSS Grid to keep actions on the right */
+.event-row .flex-grow-1 {
+  display: grid;
+  grid-template-columns: 1fr auto;   /* content | actions */
+  grid-template-areas:
+    "title   actions"
+    "meta    actions"
+    "desc    actions";
+  align-items: start;
+  column-gap: 12px;
+  row-gap: .35rem;
+}
+
+/* Map the existing DOM nodes (no JS changes needed) */
+.event-row .flex-grow-1 > .event-title { grid-area: title; margin: 0; }
+.event-row .flex-grow-1 > .event-meta   { grid-area: meta; }
+.event-row .flex-grow-1 > .text-secondary { grid-area: desc; margin-top: .35rem !important; }
+
+/* Your buttons/remaining container is the div created by JS with these classes.
+   Pin it to the 'actions' area on the right without needing a custom class. */
+.event-row .flex-grow-1 > .mt-2.d-flex.align-items-center.gap-2 {
+  grid-area: actions;
+  align-self: start;
+  justify-self: end;    /* right edge on desktop */
+  margin-top: 0 !important;
+  gap: .5rem !important;
+}
+
+/* Tighter alignment for the remaining count chip */
+.event-row .flex-grow-1 > .mt-2.d-flex.align-items-center.gap-2 .small.text-muted {
+  margin-right: .25rem;
+}
+
+/* Micro polish */
+.event-title { font-weight:700; }
+.event-meta { color:#6c757d; font-size:.9rem; }
+
+/* Mobile: stack cleanly; actions come under meta */
+@media (max-width: 576px) {
+  .event-row { grid-template-columns: 1fr; }
+  .event-row .flex-grow-1 {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "title"
+      "meta"
+      "actions"
+      "desc";
+  }
+  .event-row .flex-grow-1 > .mt-2.d-flex.align-items-center.gap-2 {
+    justify-self: start;   /* align with text on mobile */
+  }
+  .event-thumb {
+    width: 100%;
+    height: auto;
+    aspect-ratio: 16 / 9;  /* keep ratio when it grows full width */
+  }
+}
+
+/* ===== Events list: uniform card layout ===== */
+
+/* 3-column grid: [thumb | content | actions] */
 .event-row {
   display: grid;
   grid-template-columns: 96px 1fr auto;
@@ -124,7 +193,7 @@ td.col-name {
   align-items: start;
 }
 
-/* Thumbnail (image) */
+/* Thumbnail (real image) */
 .event-thumb {
   width: 96px;
   height: 54px;
@@ -135,7 +204,7 @@ td.col-name {
   display: block;
 }
 
-/* Placeholder when no banner */
+/* When there is no banner, show a neat placeholder */
 .thumb-col,
 .event-thumb-placeholder {
   width: 96px;
@@ -160,15 +229,11 @@ td.col-name {
 }
 
 /* Middle column (text) */
-.event-content { min-width: 0; }
-.event-title { font-weight: 700; }
-.event-meta { color: #6c757d; font-size: .9rem; }
+.event-content {
+  min-width: 0; /* allow wrapping */
+}
 
-/* Room/branch badge colors to match the admin page */
-.badge-room  { background: #ecfeff; color: #155e75; }
-.badge-branch{ background: #eef2ff; color: #3730a3; }
-
-/* Right column (remaining + buttons) */
+/* Right column (capacity + buttons) */
 .event-actions {
   display: flex;
   flex-direction: column;
@@ -177,6 +242,10 @@ td.col-name {
 }
 .event-actions .btn-group { gap: .5rem; }
 .event-actions .btn { white-space: nowrap; }
+
+/* Small polish */
+.event-title { font-weight: 700; }
+.event-meta { color:#6c757d; font-size:.9rem; }
 
 /* Mobile stacking */
 @media (max-width: 576px) {
@@ -191,13 +260,6 @@ td.col-name {
     aspect-ratio: 16 / 9;
   }
   .event-actions {
-    align-items: flex-start; /* align with text on mobile */
+    align-items: flex-start;   /* actions align left on mobile */
   }
-}
-
-/* --- Safety guard: avoid stray legacy buttons outside cards --- */
-#eventsContainer > .btn,
-#eventsContainer > .btn-group,
-#eventsContainer > a.btn {
-  display: none !important;
 }
