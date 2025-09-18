@@ -41,17 +41,14 @@
     }
     .banner-box img { max-width: 100%; max-height: 100%; display: none; }
 
-    /* === Event list media (thumbnail) === */
+    /* === Event list thumbnail (NEW for list view) === */
     .event-row {
-      display: grid;
-      grid-template-columns: 96px 1fr;
+      display: flex;
       gap: 12px;
-      align-items: start;
+      align-items: flex-start;
     }
-    /* Hide the placeholder entirely: if JS doesn't inject an <img>, no banner shows */
-    .event-thumb-placeholder { display: none !important; }
-
     .event-thumb {
+      flex: 0 0 96px;
       width: 96px;
       height: 54px; /* compact 16:9 box */
       border-radius: .5rem;
@@ -59,61 +56,18 @@
       background: #f1f5f9;
       border: 1px solid #e2e8f0;
     }
-
-    /* Right-side content uses CSS Grid to keep actions beside the title on desktop */
-    .event-row .flex-grow-1 {
-      display: grid;
-      grid-template-columns: 1fr auto;       /* content | actions */
-      grid-template-areas:
-        "title   actions"
-        "meta    actions"
-        "desc    actions";
-      align-items: start;
-      column-gap: 12px;
-      row-gap: .25rem;
-    }
-
-    /* Map existing elements (no JS changes needed) */
-    .event-row .flex-grow-1 > .event-title { grid-area: title; margin: 0; }
-    .event-row .flex-grow-1 > .event-meta   { grid-area: meta; }
-
-    /* Description div from JS is `.text-secondary`; pull it into grid and trim top margin */
-    .event-row .flex-grow-1 > .text-secondary { grid-area: desc; margin-top: .25rem !important; }
-
-    /* The action bar is the last child div with buttons; target via :has() */
-    .event-row .flex-grow-1 > .d-flex:has([data-action]) {
-      grid-area: actions;
-      align-self: start;
-      justify-self: end;     /* stick to the right on desktop */
-      margin-top: 0 !important;
-      gap: .5rem;
-    }
-    /* Keep the small remaining figure nicely aligned with buttons */
-    .event-row .flex-grow-1 > .d-flex:has([data-action]) .small.text-muted {
-      margin-right: .25rem;
-    }
-
-    /* Mobile: stack cleanly, put actions under meta, then description */
-    @media (max-width: 576px) {
-      .event-row {
-        grid-template-columns: 1fr; /* thumbnail will naturally stack above if present */
-      }
-      .event-row .flex-grow-1 {
-        grid-template-columns: 1fr; /* single column */
-        grid-template-areas:
-          "title"
-          "meta"
-          "actions"
-          "desc";
-      }
-      .event-row .flex-grow-1 > .d-flex:has([data-action]) {
-        justify-self: start; /* align with text on mobile */
-      }
-      .event-thumb {
-        width: 100%;
-        height: auto;
-        aspect-ratio: 16 / 9; /* keep ratio on mobile */
-      }
+    .event-thumb-placeholder {
+      flex: 0 0 96px;
+      width: 96px;
+      height: 54px;
+      border-radius: .5rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #f8fafc;
+      color: #94a3b8;
+      border: 1px dashed #e2e8f0;
+      font-size: 1.25rem;
     }
   </style>
 </head>
@@ -148,7 +102,7 @@
       </div>
     </div>
 
-    <!-- List container (JS renders .event-card > .event-row with optional .event-thumb image) -->
+    <!-- List container (JS will render .event-card with .event-row and .event-thumb) -->
     <div id="eventsContainer" class="d-grid" style="gap:1rem;">
       <div class="text-center text-muted py-4">
         <div class="spinner-border spinner-border-sm me-2"></div> Loading events…
@@ -285,7 +239,7 @@
               <div class="form-hint">Used as the event background in calendar views.</div>
             </div>
 
-            <!-- Banner Image -->
+            <!-- Banner Image (NEW) -->
             <div class="col-12">
               <label class="form-label d-flex align-items-center gap-2">
                 Banner Image <span class="badge text-bg-light border">optional</span>
@@ -466,10 +420,10 @@
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-storage.js"></script>
 
-  <!-- Your Firebase config -->
+  <!-- Your Firebase config (defines window.db; ensure it also initializes firebase.app()) -->
   <script src="./js/firebaseConfig.js"></script>
 
-  <!-- Page Logic (JS stays unchanged for this step) -->
+  <!-- Page Logic (JS to be provided/updated separately) -->
   <script src="./js/events_admin.js" defer></script>
   <script src="./js/events_admin_regs.js" defer></script>
 </body>
