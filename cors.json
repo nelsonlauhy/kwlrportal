@@ -1,0 +1,8 @@
+[
+  {
+    "origin": ["https://kwlrportal.netlify.app"],
+    "method": ["GET","HEAD","PUT","POST","DELETE","PATCH","OPTIONS"],
+    "responseHeader": ["Content-Type","x-goog-meta-*","x-goog-resumable","Authorization"],
+    "maxAgeSeconds": 3600
+  }
+]

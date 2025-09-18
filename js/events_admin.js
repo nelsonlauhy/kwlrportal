@@ -620,42 +620,54 @@
   }
 
   async function uploadBannerToStorage(file, groupId) {
-    // groupId: for editing use eventId; for creation use a generated id to reuse across occurrences
     const ext = getExtByType(file.type);
     const path = `event-banners/${groupId}.${ext}`;
-    const ref = firebase.storage().ref().child(path);
+    const ref = storage.ref().child(path); // <-- use forced bucket
 
     bannerProgWrap.classList.remove("d-none");
     bannerProg.style.width = "0%";
 
-    const task = ref.put(file, { contentType: file.type });
-    return new Promise((resolve, reject) => {
-      task.on("state_changed",
-        (snap) => {
-          const pct = snap.totalBytes ? (snap.bytesTransferred / snap.totalBytes) * 100 : 0;
-          bannerProg.style.width = `${pct.toFixed(0)}%`;
-        },
-        (err) => {
-          bannerProgWrap.classList.add("d-none");
-          reject(err);
-        },
-        async () => {
-          bannerProg.style.width = "100%";
-          bannerProgWrap.classList.add("d-none");
-          const url = await ref.getDownloadURL();
-          resolve({ url, path });
-        }
-      );
-    });
+    try {
+      const task = ref.put(file, { contentType: file.type });
+      const res = await new Promise((resolve, reject) => {
+        task.on("state_changed",
+          (snap) => {
+            const pct = snap.totalBytes ? (snap.bytesTransferred / snap.totalBytes) * 100 : 0;
+            bannerProg.style.width = `${pct.toFixed(0)}%`;
+          },
+          (err) => reject(err),
+          async () => {
+            try {
+              const url = await ref.getDownloadURL();
+              resolve({ url, path });
+            } catch (e) {
+              reject(e);
+            }
+          }
+        );
+      });
+      bannerProg.style.width = "100%";
+      return res;
+    } catch (err) {
+      bannerProgWrap.classList.add("d-none");
+      const msg = (err && err.code === 'storage/unauthorized')
+        ? "Upload not authorized by Storage Rules."
+        : (String(err).toLowerCase().includes('cors') || String(err).toLowerCase().includes('preflight'))
+          ? "Upload blocked by CORS. Ensure CORS is set on kwlrintranet.firebasestorage.app."
+          : (err && err.message) ? err.message : "Upload failed.";
+      showInlineError(msg);
+      throw err;
+    } finally {
+      setTimeout(() => bannerProgWrap.classList.add("d-none"), 400);
+    }
   }
 
   async function deleteBannerAtPath(path) {
     if (!path) return;
     try {
-      const ref = firebase.storage().ref().child(path);
+      const ref = storage.ref().child(path); // <-- use forced bucket
       await ref.delete();
     } catch (err) {
-      // If file missing or permission denied, just log and continue.
       console.warn("delete banner failed:", err);
     }
   }
