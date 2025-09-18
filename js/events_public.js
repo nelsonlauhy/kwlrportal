@@ -70,6 +70,9 @@
   let currentView = "list";
   let cursorDate  = truncateToDay(new Date());
 
+  // registration target
+  let regTarget = null;
+
   // ---------- Utils ----------
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, m => (
     { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[m]
@@ -83,8 +86,42 @@
   function monthLabel(d){ return d.toLocaleString(undefined,{month:"long",year:"numeric"}); }
   function normalizeHex(c){ if(!c) return "#3b82f6"; let x=String(c).trim(); if(!x.startsWith("#")) x="#"+x; if(x.length===4) x="#"+x[1]+x[1]+x[2]+x[2]+x[3]+x[3]; return x.toLowerCase(); }
   function idealTextColor(bgHex){ const h=normalizeHex(bgHex).slice(1); const r=parseInt(h.substring(0,2),16), g=parseInt(h.substring(2,4),16), b=parseInt(h.substring(4,6),16); const yiq=(r*299+g*587+b*114)/1000; return yiq>=150?"#000000":"#ffffff"; }
-  function ensureHttps(url){ let s=String(url||"").trim(); if(!s) return ""; if(s.startsWith("ttps://")) s="h"+s; if(!/^https?:\/\//i.test(s)) s="https://"+s; return s; }
+  function ensureHttps(url){
+    let s=String(url||"").trim();
+    if(!s) return "";
+    if(s.startsWith("ttps://")) s="h"+s;
+    if(/^gs:\/\//i.test(s)) return ""; // don't attempt gs:// without Storage SDK
+    if(!/^https?:\/\//i.test(s)) s="https://"+s;
+    return s;
+  }
   function clearRegAlerts(){ [regWarn, regErr, regOk].forEach(el => { el.classList.add("d-none"); el.textContent=""; }); }
+
+  // Choose a banner URL from common field names
+  function pickBannerUrl(ev){
+    // normalize nested objects safely
+    const nested = (obj, path) => {
+      try { return path.split(".").reduce((a,k) => (a && a[k] != null ? a[k] : undefined), obj); }
+      catch(_){ return undefined; }
+    };
+    const candidates = [
+      ev.bannerThumbUrl,
+      ev.bannerUrl,
+      nested(ev,"banner.thumbUrl"),
+      nested(ev,"banner.url"),
+      ev.imageThumbUrl,
+      ev.imageUrl,
+      ev.coverThumbUrl,
+      ev.coverUrl,
+      ev.thumbnail,
+      ev.thumbnailUrl
+    ].filter(Boolean);
+
+    for (const raw of candidates){
+      const u = ensureHttps(raw);
+      if (u) return u;
+    }
+    return ""; // no usable url
+  }
 
   // ---------- Map helpers ----------
   function pickAddrMeta(ev, res) {
@@ -228,21 +265,21 @@
         <div class="text-center text-muted py-5">
           <i class="bi bi-calendar-x me-2"></i>No upcoming events match your filters.
         </div>`;
-      return;
+    } else {
+      const groups = {};
+      for (const e of filtered) {
+        const d = toDate(e.start); if (!d) continue;
+        const key = monthKey(d);
+        (groups[key] ||= { label: monthLabel(d), events: [] }).events.push(e);
+      }
+      const parts = [];
+      Object.keys(groups).sort().forEach(key => {
+        const g = groups[key];
+        parts.push(`<div class="month-header">${esc(g.label)}</div>`);
+        for (const e of g.events) parts.push(renderEventCard(e));
+      });
+      containerList.innerHTML = parts.join("");
     }
-    const groups = {};
-    for (const e of filtered) {
-      const d = toDate(e.start); if (!d) continue;
-      const key = monthKey(d);
-      (groups[key] ||= { label: monthLabel(d), events: [] }).events.push(e);
-    }
-    const parts = [];
-    Object.keys(groups).sort().forEach(key => {
-      const g = groups[key];
-      parts.push(`<div class="month-header">${esc(g.label)}</div>`);
-      for (const e of g.events) parts.push(renderEventCard(e));
-    });
-    containerList.innerHTML = parts.join("");
   }
 
   function renderEventCard(e) {
@@ -254,25 +291,39 @@
                       : (remaining != null ? `${remaining} seats left` : "");
     const color = normalizeHex(e.color || "#3b82f6");
 
+    // Determine banner thumbnail (or fallback)
+    const bannerUrl = pickBannerUrl(e);
+    const thumbHtml = bannerUrl
+      ? `<img src="${esc(bannerUrl)}" alt="Banner" loading="lazy">`
+      : `<div class="thumb-fallback">No Banner</div>`;
+
     return `
-      <div class="event-card" data-id="${esc(e._id)}" role="button">
-        <div class="d-flex justify-content-between align-items-start">
-          <div class="me-3">
-            <div class="event-title">
-              <span style="display:inline-block;width:.7rem;height:.7rem;border-radius:50%;background:${esc(color)};margin-right:.35rem;"></span>
-              ${esc(e.title || "Untitled Event")}
-            </div>
-            <div class="event-meta mt-1">
-              <span class="me-2"><i class="bi bi-clock"></i> ${esc(dateLine)}</span>
-              ${e.resourceName ? `<span class="badge badge-room me-2"><i class="bi bi-building me-1"></i>${esc(e.resourceName)}</span>` : ""}
-              ${e.branch ? `<span class="badge badge-branch me-2">${esc(e.branch)}</span>` : ""}
-            </div>
-            ${e.description ? `<div class="mt-2 text-secondary">${esc(e.description)}</div>` : ""}
+      <div class="event-card" data-id="${esc(e._id)}" role="button" aria-label="${esc(e.title || 'Event')}">
+        <!-- Left: Thumbnail -->
+        <div class="event-thumb">
+          <div class="thumb-box">
+            ${thumbHtml}
           </div>
-          <div class="text-end">
-            ${remainTxt ? `<div class="small text-muted mb-2">${esc(remainTxt)}</div>` : ""}
-            <div class="small text-primary">Details &raquo;</div>
+        </div>
+
+        <!-- Middle: Body -->
+        <div class="event-body">
+          <div class="event-title text-truncate">
+            <span style="display:inline-block;width:.7rem;height:.7rem;border-radius:50%;background:${esc(color)};margin-right:.35rem;"></span>
+            ${esc(e.title || "Untitled Event")}
           </div>
+          <div class="event-meta mt-1">
+            <span class="me-2"><i class="bi bi-clock"></i> ${esc(dateLine)}</span>
+            ${e.resourceName ? `<span class="badge badge-room me-2"><i class="bi bi-building me-1"></i>${esc(e.resourceName)}</span>` : ""}
+            ${e.branch ? `<span class="badge badge-branch me-2">${esc(e.branch)}</span>` : ""}
+          </div>
+          ${e.description ? `<div class="mt-2 text-secondary text-truncate">${esc(e.description)}</div>` : ""}
+        </div>
+
+        <!-- Right: Aside -->
+        <div class="event-aside ms-auto">
+          ${remainTxt ? `<div class="small text-muted mb-2">${esc(remainTxt)}</div>` : ""}
+          <div class="small text-primary">Details &raquo;</div>
         </div>
       </div>
     `;
@@ -290,7 +341,6 @@
     const start = toDate(ev.start); if (start && now > start) return false;
     return true;
   }
-  function overlaps(a,b,c,d){ return a<b && b>c && a<d; } // not used directly
   function eventsInRange(rangeStart, rangeEnd) {
     return filtered.filter(ev => {
       const s = toDate(ev.start), e = toDate(ev.end);
@@ -578,13 +628,13 @@
       unsubscribeEvents = col
         .where("start", ">=", now).orderBy("start","asc")
         .onSnapshot(snap => {
-          const rows = snap.docs.map(d => ({ _id: d.id, ...d.data() }));
+          const rows = snap.docs.map(d => ({ _id: d.id, ...d.data() } ));
           allEvents = rows.filter(ev => ev.visibility === "public" && ev.status === "published");
           applyFilter();
         }, err => {
           console.error("events fallback listener failed; trying one-time get:", err);
           col.where("start", ">=", now).orderBy("start","asc").get().then(snap2 => {
-            const rows2 = snap2.docs.map(d => ({ _id: d.id, ...d.data() }));
+            const rows2 = snap2.docs.map(d => ({ _id: d.id, ...d.data() } ));
             allEvents = rows2.filter(ev => ev.visibility === "public" && ev.status === "published");
             applyFilter();
           }).catch(err2 => {
