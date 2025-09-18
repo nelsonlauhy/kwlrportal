@@ -8,7 +8,7 @@
 // - Combined filter: Location (Resource-only) + Search
 // - "Open registration now" auto-calc
 // - Banner constraints: JPEG/PNG, ≤10MB, recommended 2160x1080
-// - List view shows banner thumbnail when available
+// - List view shows banner thumbnail when available (no banner shown if missing)
 
 (function() {
   // ---------- DOM ----------
@@ -256,7 +256,8 @@
           mount.replaceWith(img);
           img.id = `thumb-${e._id}`; // keep id if needed later
         } else {
-          // keep placeholder as-is
+          // No banner: remove mount so nothing remains in DOM (also hidden by CSS if left)
+          mount.remove();
         }
       });
     });
@@ -278,11 +279,9 @@
 
     // LEFT: banner mount (placeholder). JS will replace with <img> if URL resolves.
     const thumb =
-      `<div class="event-thumb-placeholder" id="thumb-${esc(e._id)}" aria-label="No banner">
-         <i class="bi bi-image"></i>
-       </div>`;
+      `<div class="event-thumb-placeholder" id="thumb-${esc(e._id)}" aria-label="No banner"></div>`;
 
-    // RIGHT: main body
+    // RIGHT: main body (grid placement handled by CSS in HTML)
     const body = `
       <div class="flex-grow-1">
         <div class="event-title">${esc(e.title || "Untitled Event")}</div>
