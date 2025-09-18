@@ -1,5 +1,6 @@
-// Events Admin (Firestore v8) — List-only with Edit/Create modal
-// Adds Banner Image (Firebase Storage v8) with preview, validation, upload, remove
+// Events Admin (Firestore v8)
+// - List-only with Edit/Create modal
+// - Banner Image (Firebase Storage v8) with preview, validation, upload, remove
 // - detailDescription: auto-link + <br> with live preview
 // - Color tag
 // - Conflict detection (branch + resource overlap)
@@ -91,6 +92,14 @@
   let existingBannerPath = null;      // path in storage for current event
   let existingBannerUrl = null;
   let flagRemoveBanner = false;       // user clicked remove
+
+  // ---------- Storage (force correct bucket) ----------
+  // If firebaseConfig.js sets window.storage, use it; otherwise init here:
+  const STORAGE_BUCKET_URL = "gs://kwlrintranet.firebasestorage.app";
+  const storage = (window.storage && typeof window.storage.ref === "function")
+    ? window.storage
+    : firebase.app().storage(STORAGE_BUCKET_URL);
+  try { console.log("[Storage bucket]", storage.ref().toString()); } catch (e) {}
 
   // ---------- Utils ----------
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, m => (
@@ -456,7 +465,7 @@
     delBusy.classList.remove("d-none");
     try {
       await window.db.collection("events").doc(pendingDeleteId).delete();
-      // (Optional) could also delete banner from storage here if you want automatic cleanup.
+      // Optional: also delete banner (needs reading doc first to get path).
       delModal.hide();
     } catch (err) {
       console.error("delete error:", err);
@@ -535,9 +544,10 @@
     f_bannerMeta.textContent = "";
     bannerProgWrap.classList.add("d-none");
     bannerProg.style.width = "0%";
+
     if (f_bannerPreview) {
       f_bannerPreview.src = "";
-      f_bannerPreview.style.display = "none";
+      f_bannerPreview.style.display = "none"; // hidden by default (CSS also hides it)
     }
     if (f_bannerPlaceholder) f_bannerPlaceholder.style.display = "";
     f_bannerRemove.classList.add("d-none");
@@ -546,17 +556,20 @@
   function loadBannerFromEvent(ev) {
     existingBannerPath = ev.bannerPath || null;
     existingBannerUrl  = ev.bannerUrl || null;
+
     if (existingBannerUrl) {
       if (f_bannerPreview) {
         f_bannerPreview.src = existingBannerUrl;
-        f_bannerPreview.style.display = "";
+        f_bannerPreview.style.display = "block"; // explicitly show
       }
       if (f_bannerPlaceholder) f_bannerPlaceholder.style.display = "none";
+
       const metaParts = [];
       if (ev.bannerWidth && ev.bannerHeight) metaParts.push(`${ev.bannerWidth}×${ev.bannerHeight}`);
       if (ev.bannerType) metaParts.push(ev.bannerType);
       if (typeof ev.bannerSize === "number") metaParts.push(`${(ev.bannerSize/1024/1024).toFixed(2)} MB`);
       f_bannerMeta.textContent = metaParts.join(" · ");
+
       f_bannerRemove.classList.remove("d-none");
     } else {
       resetBannerStateAndUI();
@@ -612,17 +625,18 @@
     const reader = new FileReader();
     reader.onload = (e) => {
       f_bannerPreview.src = e.target.result;
-      f_bannerPreview.style.display = "";
+      f_bannerPreview.style.display = "block"; // explicitly show
       if (f_bannerPlaceholder) f_bannerPlaceholder.style.display = "none";
     };
     reader.readAsDataURL(file);
+
     f_bannerRemove.classList.remove("d-none");
   }
 
   async function uploadBannerToStorage(file, groupId) {
     const ext = getExtByType(file.type);
     const path = `event-banners/${groupId}.${ext}`;
-    const ref = storage.ref().child(path); // <-- use forced bucket
+    const ref = storage.ref().child(path); // use forced bucket
 
     bannerProgWrap.classList.remove("d-none");
     bannerProg.style.width = "0%";
@@ -665,7 +679,7 @@
   async function deleteBannerAtPath(path) {
     if (!path) return;
     try {
-      const ref = storage.ref().child(path); // <-- use forced bucket
+      const ref = storage.ref().child(path); // use forced bucket
       await ref.delete();
     } catch (err) {
       console.warn("delete banner failed:", err);
@@ -693,13 +707,12 @@
 
   // Remove click
   f_bannerRemove.addEventListener("click", () => {
-    // Mark removal; clear preview
     flagRemoveBanner = true;
     pendingBannerFile = null;
     pendingBannerMeta = null;
     f_bannerFile.value = "";
     f_bannerMeta.textContent = existingBannerUrl ? "Marked for removal on save." : "";
-    if (f_bannerPreview) { f_bannerPreview.src = ""; f_bannerPreview.style.display = "none"; }
+    if (f_bannerPreview) { f_bannerPreview.src = ""; f_bannerPreview.style.display = "none"; } // hide
     if (f_bannerPlaceholder) f_bannerPlaceholder.style.display = "";
     f_bannerRemove.classList.add("d-none");
   });
@@ -765,7 +778,6 @@
 
         // Prepare banner payload (may upload/delete)
         let bannerPayload = {};
-        // If user selected a new banner -> upload first
         if (pendingBannerFile) {
           const groupId = editingId; // reuse event id
           const up = await uploadBannerToStorage(pendingBannerFile, groupId);
@@ -777,12 +789,10 @@
             bannerType: pendingBannerMeta?.type ?? (pendingBannerFile.type || null),
             bannerSize: pendingBannerMeta?.size ?? pendingBannerFile.size
           };
-          // If there was an existing banner different path -> delete old after successful upload
           if (existingBannerPath && existingBannerPath !== up.path) {
             await deleteBannerAtPath(existingBannerPath);
           }
         } else if (flagRemoveBanner && existingBannerPath) {
-          // Remove existing
           await deleteBannerAtPath(existingBannerPath);
           bannerPayload = {
             bannerUrl: firebase.firestore.FieldValue.delete(),
@@ -800,7 +810,7 @@
           visibility, status,
           start, end,
           allowRegistration,
-          capacity: capacity ?? firebase.firestore.FieldValue.delete(),
+          capacity: (capacity != null ? capacity : firebase.firestore.FieldValue.delete()),
           remaining: (remaining != null ? remaining : firebase.firestore.FieldValue.delete()),
           updatedAt: new Date(),
           ...bannerPayload
@@ -831,8 +841,7 @@
       // If we have a banner file for new events, upload ONCE and reuse metadata
       let newBannerData = null;
       if (pendingBannerFile) {
-        // Make a "group id" to share same banner across occurrences
-        const groupId = window.db.collection("_").doc().id;
+        const groupId = window.db.collection("_").doc().id; // unique id for the banner
         const up = await uploadBannerToStorage(pendingBannerFile, groupId);
         newBannerData = {
           bannerUrl: up.url,
@@ -873,7 +882,10 @@
           allowRegistration,
           createdAt: new Date(),
           updatedAt: new Date(),
-          ...(capacity != null ? { capacity, remaining: (remaining != null ? remaining : capacity) } : {}),
+          ...(capacity != null ? { capacity } : {}),
+          ...(remaining != null
+              ? { remaining }
+              : (capacity != null ? { remaining: capacity } : {})),
           ...(newBannerData || {})
         };
 
