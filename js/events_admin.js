@@ -1,32 +1,31 @@
 // Events Admin (Firestore v8) — List-only with Edit/Create modal
-// Approach A (materialize on save) for recurrence
-// - detailDescription: auto-link + <br> (Option A) with live preview
+// Adds Banner Image (Firebase Storage v8) with preview, validation, upload, remove
+// - detailDescription: auto-link + <br> with live preview
 // - Color tag
 // - Conflict detection (branch + resource overlap)
-// - Registration windows per occurrence via DAYS-before-start
-// - Back-fill "Reg Opens/Closes (days)" when editing an existing event
-// - Combined filter: Location (Branch — Resource ONLY) + Search
-// - "Open registration now" checkbox -> auto-calc days from now; unchecks on manual change
+// - Registration windows (days-before-start)
+// - Combined filter: Location (Resource-only) + Search
+// - "Open registration now" auto-calc
+// - Banner constraints: JPEG/PNG, ≤10MB, recommended 2160x1080
 
 (function() {
   // ---------- DOM ----------
   const containerList   = document.getElementById("eventsContainer");
-  const locationFilter  = document.getElementById("locationFilter"); // Combined filter (resource only)
+  const locationFilter  = document.getElementById("locationFilter");
   const searchInput     = document.getElementById("searchInput");
   const listLabel       = document.getElementById("listLabel");
-
-  const btnNew   = document.getElementById("btnNew");
+  const btnNew          = document.getElementById("btnNew");
 
   // Edit modal
-  const editModalEl = document.getElementById("editModal");
-  const editModal   = new bootstrap.Modal(editModalEl);
-  const editForm    = document.getElementById("editForm");
-  const editTitle   = document.getElementById("editTitle");
-  const editErr     = document.getElementById("editErr");
-  const editErrInline = document.getElementById("editErrInline");
-  const editOk      = document.getElementById("editOk");
-  const editBusy    = document.getElementById("editBusy");
-  const btnSave     = document.getElementById("btnSave");
+  const editModalEl    = document.getElementById("editModal");
+  const editModal      = new bootstrap.Modal(editModalEl);
+  const editForm       = document.getElementById("editForm");
+  const editTitle      = document.getElementById("editTitle");
+  const editErr        = document.getElementById("editErr");
+  const editErrInline  = document.getElementById("editErrInline");
+  const editOk         = document.getElementById("editOk");
+  const editBusy       = document.getElementById("editBusy");
+  const btnSave        = document.getElementById("btnSave");
 
   // Fields
   const f_title = document.getElementById("f_title");
@@ -47,7 +46,7 @@
   const f_visibility = document.getElementById("f_visibility");
   const f_colorPreset = document.getElementById("f_colorPreset");
   const f_color = document.getElementById("f_color");
-  const f_regOpenNow = document.getElementById("f_regOpenNow"); // NEW
+  const f_regOpenNow = document.getElementById("f_regOpenNow");
 
   // Recurrence fields
   const f_repeat = document.getElementById("f_repeat");
@@ -67,15 +66,31 @@
   const delBusy = document.getElementById("delBusy");
   const btnDoDelete = document.getElementById("btnDoDelete");
 
+  // Banner elements (NEW)
+  const f_bannerPreview      = document.getElementById("f_bannerPreview");
+  const f_bannerPlaceholder  = document.getElementById("f_bannerPlaceholder");
+  const f_bannerFile         = document.getElementById("f_bannerFile");
+  const bannerProgWrap       = document.getElementById("bannerProgWrap");
+  const bannerProg           = document.getElementById("bannerProg");
+  const f_bannerRemove       = document.getElementById("f_bannerRemove");
+  const f_bannerMeta         = document.getElementById("f_bannerMeta");
+
   // ---------- State ----------
   let resources = []; // [{id,name,branch,capacity?}]
   let allEvents = [];
   let filtered = [];
-  let editingId = null; // _id when editing a single event
+  let editingId = null;
   let pendingDeleteId = null;
   let unsubscribeEvents = null;
   let editDetailHTMLOriginal = "";
   let editDetailTouched = false;
+
+  // Banner state (NEW)
+  let pendingBannerFile = null;       // File selected but not yet uploaded
+  let pendingBannerMeta = null;       // {width,height,type,size}
+  let existingBannerPath = null;      // path in storage for current event
+  let existingBannerUrl = null;
+  let flagRemoveBanner = false;       // user clicked remove
 
   // ---------- Utils ----------
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, m => (
@@ -99,26 +114,24 @@
     return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
   }
   function dtLocalFromInput(value) {
-    return value ? new Date(value) : null; // local time
+    return value ? new Date(value) : null;
   }
 
-  // Compute reg windows using DAYS before start
+  // Registration windows
   function deriveRegWindowDays(startDate, opensDays, closesDays) {
     const openMs = (Number(opensDays) || 0) * 24 * 60 * 60 * 1000;
     const closeMs = (Number(closesDays) || 0) * 24 * 60 * 60 * 1000;
     const regOpensAt = new Date(startDate.getTime() - openMs);
     let regClosesAt = new Date(startDate.getTime() - closeMs);
     if (regOpensAt >= regClosesAt) {
-      // ensure closes is after opens by 30 minutes
       regClosesAt = new Date(regOpensAt.getTime() + 30 * 60000);
     }
     return { regOpensAt, regClosesAt };
   }
 
-  // Convert plain text → HTML (auto-link + preserve newlines)
+  // Text <-> HTML
   function plainToHtml(text) {
     const escText = esc(text || "");
-    // link http(s) and www.
     const urlRegex = /((?:https?:\/\/|www\.)[^\s<]+)/gi;
     const linked = escText.replace(urlRegex, (m) => {
       const href = m.startsWith("www.") ? `https://${m}` : m;
@@ -126,8 +139,6 @@
     });
     return linked.replace(/\n/g, "<br>");
   }
-
-  // Turn stored HTML into plaintext for textarea display, preserving line breaks.
   function htmlToPlainForTextarea(html) {
     if (!html) return "";
     const tmp = document.createElement("div");
@@ -139,42 +150,32 @@
     return text.replace(/\r\n/g, "\n").replace(/\n{3,}/g, "\n\n");
   }
 
-  function clearEditErrors() {
-    [editErr, editErrInline, editOk].forEach(el => { el.classList.add("d-none"); el.textContent=""; });
-  }
+  function clearEditErrors() { [editErr, editErrInline, editOk].forEach(el => { el.classList.add("d-none"); el.textContent=""; }); }
+  function showInlineError(msg) { editErrInline.textContent = msg; editErrInline.classList.remove("d-none"); }
 
-  function showInlineError(msg) {
-    editErrInline.textContent = msg;
-    editErrInline.classList.remove("d-none");
-  }
-
-  // ---------- Combined Filter (Resource only) + Search ----------
+  // ---------- Combined Filter ----------
   function applyFilter() {
     const q = (searchInput.value || "").toLowerCase().trim();
-    const locSel = (locationFilter?.value || "ALL"); // "ALL" | "RS:<resourceId>"
+    const locSel = (locationFilter?.value || "ALL");
 
     filtered = allEvents.filter(ev => {
-      // If a specific resource is selected, filter by resourceId
       if (locSel !== "ALL") {
         if (!locSel.startsWith("RS:")) return false;
         const rid = locSel.slice(3);
         if ((ev.resourceId || "") !== rid) return false;
       }
-
-      // Search text
       if (q) {
         const hay = [ev.title, ev.description, ev.resourceName, ev.branch]
           .map(v => (v || "").toString().toLowerCase());
         if (!hay.some(v => v.includes(q))) return false;
       }
-
       return true;
     });
 
     renderList();
   }
 
-  // ---------- Render List ----------
+  // ---------- Render ----------
   function renderList() {
     if (!filtered.length) {
       containerList.innerHTML = `
@@ -215,12 +216,9 @@
       ? `${remaining}/${capacity} left`
       : (remaining != null ? `${remaining} left` : "");
 
-    // Tag color swatch only (no hex code)
     const colorHex = e.color ? normalizeHex(e.color) : null;
     const colorBadge = colorHex
-      ? `<span style="display:inline-block;width:14px;height:14px;border-radius:50%;
-                        background:${esc(colorHex)};border:1px solid #cbd5e1;
-                        vertical-align:middle;margin-right:.4rem;"></span>`
+      ? `<span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:${esc(colorHex)};border:1px solid #cbd5e1;vertical-align:middle;margin-right:.4rem;"></span>`
       : "";
 
     return `
@@ -252,28 +250,23 @@
     `;
   }
 
-  // ---------- Populate Location filter (Resource-only) ----------
+  // ---------- Filters ----------
   function populateLocationFilter(resources) {
     if (!locationFilter) return;
-
     const opts = [`<option value="ALL">All Locations</option>`];
-
-    // Sort by branch then name
     const byBranchThenName = [...resources].sort((a,b) =>
       String(a.branch||"").localeCompare(String(b.branch||"")) ||
       String(a.name||"").localeCompare(String(b.name||""))
     );
-
     byBranchThenName.forEach(r => {
       const br = (r.branch || "").toUpperCase();
       const nm = r.name || r.id || "Resource";
       opts.push(`<option value="RS:${esc(r.id)}">${esc(br)} — ${esc(nm)}</option>`);
     });
-
     locationFilter.innerHTML = opts.join("");
   }
 
-  // ---------- Resources & Events load ----------
+  // ---------- Load ----------
   async function loadResources() {
     const col = window.db.collection("resources");
     try {
@@ -286,19 +279,14 @@
         .sort((a,b) => (String(a.branch||"").localeCompare(String(b.branch||"")) ||
                         String(a.name||"").localeCompare(String(b.name||""))));
     }
-
-    // Populate edit form resource dropdown
     const opts = [`<option value="">-- select --</option>`]
       .concat(resources.map(r => `<option value="${esc(r.id)}">${esc(r.name)} (${esc(r.branch||"-")})</option>`));
     f_resourceId.innerHTML = opts.join("");
-
-    // Populate combined filter (resource-only)
     populateLocationFilter(resources);
   }
 
   function attachEventsListener() {
     if (typeof unsubscribeEvents === "function") { unsubscribeEvents(); unsubscribeEvents = null; }
-
     const now = new Date();
     const col = window.db.collection("events");
     try {
@@ -328,7 +316,7 @@
     editingId = id || null;
     editTitle.textContent = editingId ? "Edit Event" : "New Event";
 
-    // Defaults
+    // Reset basic fields
     f_title.value = "";
     f_status.value = "draft";
     f_branch.value = "";
@@ -347,7 +335,7 @@
     f_remaining.value = "";
     f_regOpensDays.value = "7";
     f_regClosesDays.value = "1";
-    if (f_regOpenNow) f_regOpenNow.checked = false; // NEW
+    if (f_regOpenNow) f_regOpenNow.checked = false;
 
     f_visibility.value = "public";
     f_colorPreset.value = "#3b82f6";
@@ -363,8 +351,10 @@
     f_repeatCount.value = "1";
     f_repeatUntil.value = "";
 
+    // Reset banner UI/state (NEW)
+    resetBannerStateAndUI();
+
     if (!editingId) {
-      f_detailPreview.innerHTML = "";
       editModal.show();
       return;
     }
@@ -382,7 +372,6 @@
     f_end.value = inputValueFromDate(toDate(ev.end));
     f_description.value = ev.description || "";
 
-    // Preserve the original HTML and show a plaintext view in the textarea
     editDetailHTMLOriginal = ev.detailDescription || "";
     editDetailTouched = false;
     f_detailDescription.value = htmlToPlainForTextarea(editDetailHTMLOriginal);
@@ -401,33 +390,37 @@
       f_color.value = "#3b82f6";
     }
 
-    (function backfillRegDays() {
-      const startDate = toDate(ev.start);
-      const opensAt = toDate(ev.regOpensAt);
-      const closesAt = toDate(ev.regClosesAt);
-      function daysBefore(start, other) {
-        if (!start || !other) return null;
-        const ms = start.getTime() - other.getTime();
-        if (ms <= 0) return 0;
-        return Math.round(ms / (24*60*60*1000));
-      }
-      const openDays = daysBefore(startDate, opensAt);
-      const closeDays = daysBefore(startDate, closesAt);
-      if (openDays !== null && !Number.isNaN(openDays)) f_regOpensDays.value = String(openDays);
-      if (closeDays !== null && !Number.isNaN(closeDays)) f_regClosesDays.value = String(closeDays);
+    backfillRegDays(ev);
 
-      // Reflect "open now" if registration already opened
-      if (f_regOpenNow) {
-        if (opensAt && opensAt <= new Date()) {
-          f_regOpenNow.checked = true;
-          recalcRegOpensDaysFromNow(); // keep days aligned to "now"
-        } else {
-          f_regOpenNow.checked = false;
-        }
-      }
-    })();
+    // Load banner UI from event (NEW)
+    loadBannerFromEvent(ev);
 
     editModal.show();
+  }
+
+  function backfillRegDays(ev) {
+    const startDate = toDate(ev.start);
+    const opensAt = toDate(ev.regOpensAt);
+    const closesAt = toDate(ev.regClosesAt);
+    function daysBefore(start, other) {
+      if (!start || !other) return null;
+      const ms = start.getTime() - other.getTime();
+      if (ms <= 0) return 0;
+      return Math.round(ms / (24*60*60*1000));
+    }
+    const openDays = daysBefore(startDate, opensAt);
+    const closeDays = daysBefore(startDate, closesAt);
+    if (openDays !== null && !Number.isNaN(openDays)) f_regOpensDays.value = String(openDays);
+    if (closeDays !== null && !Number.isNaN(closeDays)) f_regClosesDays.value = String(closeDays);
+
+    if (f_regOpenNow) {
+      if (opensAt && opensAt <= new Date()) {
+        f_regOpenNow.checked = true;
+        recalcRegOpensDaysFromNow();
+      } else {
+        f_regOpenNow.checked = false;
+      }
+    }
   }
 
   function textFromHtml(html) {
@@ -461,9 +454,9 @@
     if (!pendingDeleteId) return;
     delErr.classList.add("d-none");
     delBusy.classList.remove("d-none");
-
     try {
       await window.db.collection("events").doc(pendingDeleteId).delete();
+      // (Optional) could also delete banner from storage here if you want automatic cleanup.
       delModal.hide();
     } catch (err) {
       console.error("delete error:", err);
@@ -483,7 +476,7 @@
     f_colorPreset.value = "__custom";
   });
 
-  // ---------- Recurrence UI dynamics ----------
+  // ---------- Recurrence UI ----------
   f_repeat.addEventListener("change", () => {
     weeklyDaysWrap.style.display = (f_repeat.value === "weekly") ? "" : "none";
   });
@@ -493,7 +486,7 @@
     repeatUntilWrap.style.display = isCount ? "none" : "";
   });
 
-  // ---------- "Open registration now" helpers & bindings ----------
+  // ---------- "Open registration now" ----------
   function recalcRegOpensDaysFromNow() {
     const start = dtLocalFromInput(f_start.value);
     if (!start) return;
@@ -502,7 +495,6 @@
     if (days < 0) days = 0;
     f_regOpensDays.value = String(days);
   }
-
   if (f_regOpenNow) {
     f_regOpenNow.addEventListener("change", () => {
       if (f_regOpenNow.checked) recalcRegOpensDaysFromNow();
@@ -531,6 +523,175 @@
     }
   });
 
+  // ---------- Banner helpers (NEW) ----------
+  function resetBannerStateAndUI() {
+    pendingBannerFile = null;
+    pendingBannerMeta = null;
+    existingBannerPath = null;
+    existingBannerUrl = null;
+    flagRemoveBanner = false;
+
+    f_bannerFile.value = "";
+    f_bannerMeta.textContent = "";
+    bannerProgWrap.classList.add("d-none");
+    bannerProg.style.width = "0%";
+    if (f_bannerPreview) {
+      f_bannerPreview.src = "";
+      f_bannerPreview.style.display = "none";
+    }
+    if (f_bannerPlaceholder) f_bannerPlaceholder.style.display = "";
+    f_bannerRemove.classList.add("d-none");
+  }
+
+  function loadBannerFromEvent(ev) {
+    existingBannerPath = ev.bannerPath || null;
+    existingBannerUrl  = ev.bannerUrl || null;
+    if (existingBannerUrl) {
+      if (f_bannerPreview) {
+        f_bannerPreview.src = existingBannerUrl;
+        f_bannerPreview.style.display = "";
+      }
+      if (f_bannerPlaceholder) f_bannerPlaceholder.style.display = "none";
+      const metaParts = [];
+      if (ev.bannerWidth && ev.bannerHeight) metaParts.push(`${ev.bannerWidth}×${ev.bannerHeight}`);
+      if (ev.bannerType) metaParts.push(ev.bannerType);
+      if (typeof ev.bannerSize === "number") metaParts.push(`${(ev.bannerSize/1024/1024).toFixed(2)} MB`);
+      f_bannerMeta.textContent = metaParts.join(" · ");
+      f_bannerRemove.classList.remove("d-none");
+    } else {
+      resetBannerStateAndUI();
+    }
+  }
+
+  function validateBannerFile(file) {
+    if (!file) return "No file selected.";
+    if (file.size > 10 * 1024 * 1024) return "File too large. Maximum is 10 MB.";
+    const type = (file.type || "").toLowerCase();
+    const ok = type === "image/jpeg" || type === "image/jpg" || type === "image/png";
+    if (!ok) return "Unsupported file type. Please upload JPEG or PNG.";
+    return null;
+  }
+
+  function getExtByType(type) {
+    if (!type) return "bin";
+    if (type.includes("png")) return "png";
+    if (type.includes("jpeg") || type.includes("jpg")) return "jpg";
+    return "bin";
+  }
+
+  function readImageDimensions(file) {
+    return new Promise((resolve) => {
+      const img = new Image();
+      const url = URL.createObjectURL(file);
+      img.onload = () => {
+        const w = img.naturalWidth, h = img.naturalHeight;
+        URL.revokeObjectURL(url);
+        resolve({ width: w, height: h });
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(url);
+        resolve({ width: null, height: null });
+      };
+      img.src = url;
+    });
+  }
+
+  async function previewBannerFile(file) {
+    const dim = await readImageDimensions(file);
+    pendingBannerMeta = {
+      width: dim.width || null,
+      height: dim.height || null,
+      type: (file.type || "").toLowerCase(),
+      size: file.size
+    };
+    const softWarn = (dim.width !== 2160 || dim.height !== 1080)
+      ? " (tip: recommended 2160×1080)"
+      : "";
+    f_bannerMeta.textContent = `${dim.width || "?"}×${dim.height || "?"} · ${(file.size/1024/1024).toFixed(2)} MB · ${(file.type||"").toUpperCase()}${softWarn}`;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      f_bannerPreview.src = e.target.result;
+      f_bannerPreview.style.display = "";
+      if (f_bannerPlaceholder) f_bannerPlaceholder.style.display = "none";
+    };
+    reader.readAsDataURL(file);
+    f_bannerRemove.classList.remove("d-none");
+  }
+
+  async function uploadBannerToStorage(file, groupId) {
+    // groupId: for editing use eventId; for creation use a generated id to reuse across occurrences
+    const ext = getExtByType(file.type);
+    const path = `event-banners/${groupId}.${ext}`;
+    const ref = firebase.storage().ref().child(path);
+
+    bannerProgWrap.classList.remove("d-none");
+    bannerProg.style.width = "0%";
+
+    const task = ref.put(file, { contentType: file.type });
+    return new Promise((resolve, reject) => {
+      task.on("state_changed",
+        (snap) => {
+          const pct = snap.totalBytes ? (snap.bytesTransferred / snap.totalBytes) * 100 : 0;
+          bannerProg.style.width = `${pct.toFixed(0)}%`;
+        },
+        (err) => {
+          bannerProgWrap.classList.add("d-none");
+          reject(err);
+        },
+        async () => {
+          bannerProg.style.width = "100%";
+          bannerProgWrap.classList.add("d-none");
+          const url = await ref.getDownloadURL();
+          resolve({ url, path });
+        }
+      );
+    });
+  }
+
+  async function deleteBannerAtPath(path) {
+    if (!path) return;
+    try {
+      const ref = firebase.storage().ref().child(path);
+      await ref.delete();
+    } catch (err) {
+      // If file missing or permission denied, just log and continue.
+      console.warn("delete banner failed:", err);
+    }
+  }
+
+  // File change
+  f_bannerFile.addEventListener("change", async () => {
+    clearEditErrors();
+    const file = f_bannerFile.files && f_bannerFile.files[0];
+    const err = validateBannerFile(file);
+    if (err) {
+      pendingBannerFile = null;
+      pendingBannerMeta = null;
+      f_bannerMeta.textContent = err;
+      if (f_bannerPreview) { f_bannerPreview.src = ""; f_bannerPreview.style.display = "none"; }
+      if (f_bannerPlaceholder) f_bannerPlaceholder.style.display = "";
+      f_bannerRemove.classList.add("d-none");
+      return;
+    }
+    pendingBannerFile = file;
+    flagRemoveBanner = false; // selecting a new file cancels "remove" intent
+    await previewBannerFile(file);
+  });
+
+  // Remove click
+  f_bannerRemove.addEventListener("click", () => {
+    // Mark removal; clear preview
+    flagRemoveBanner = true;
+    pendingBannerFile = null;
+    pendingBannerMeta = null;
+    f_bannerFile.value = "";
+    f_bannerMeta.textContent = existingBannerUrl ? "Marked for removal on save." : "";
+    if (f_bannerPreview) { f_bannerPreview.src = ""; f_bannerPreview.style.display = "none"; }
+    if (f_bannerPlaceholder) f_bannerPlaceholder.style.display = "";
+    f_bannerRemove.classList.add("d-none");
+  });
+
   // ---------- New ----------
   btnNew.addEventListener("click", () => openEdit(null));
 
@@ -554,10 +715,7 @@
         throw new Error("Please fill Title, Branch, Resource, Start/End (End must be after Start).");
       }
 
-      // If "Open now" is checked, make sure days reflect now before reading values
-      if (f_regOpenNow?.checked) {
-        recalcRegOpensDaysFromNow();
-      }
+      if (f_regOpenNow?.checked) recalcRegOpensDaysFromNow();
 
       // Registration & visibility
       const allowRegistration = (f_allowRegistration.value === "true");
@@ -583,14 +741,45 @@
       const count = Math.max(1, Number(f_repeatCount.value || 1));
       const until = f_repeatUntil.value ? new Date(f_repeatUntil.value + "T23:59:59") : null;
       const weekdays = Array.from(weeklyDaysWrap.querySelectorAll("input[type='checkbox']:checked"))
-        .map(cb => Number(cb.value)); // 0..6
+        .map(cb => Number(cb.value));
 
+      // ----- EDITING SINGLE EVENT -----
       if (editingId) {
-        // Conflict check (single)
         const conflictMsg = await hasConflict(branch, resourceId, start, end, editingId);
         if (conflictMsg) {
           showInlineError(conflictMsg);
           throw new Error(conflictMsg);
+        }
+
+        // Prepare banner payload (may upload/delete)
+        let bannerPayload = {};
+        // If user selected a new banner -> upload first
+        if (pendingBannerFile) {
+          const groupId = editingId; // reuse event id
+          const up = await uploadBannerToStorage(pendingBannerFile, groupId);
+          bannerPayload = {
+            bannerUrl: up.url,
+            bannerPath: up.path,
+            bannerWidth: pendingBannerMeta?.width ?? null,
+            bannerHeight: pendingBannerMeta?.height ?? null,
+            bannerType: pendingBannerMeta?.type ?? (pendingBannerFile.type || null),
+            bannerSize: pendingBannerMeta?.size ?? pendingBannerFile.size
+          };
+          // If there was an existing banner different path -> delete old after successful upload
+          if (existingBannerPath && existingBannerPath !== up.path) {
+            await deleteBannerAtPath(existingBannerPath);
+          }
+        } else if (flagRemoveBanner && existingBannerPath) {
+          // Remove existing
+          await deleteBannerAtPath(existingBannerPath);
+          bannerPayload = {
+            bannerUrl: firebase.firestore.FieldValue.delete(),
+            bannerPath: firebase.firestore.FieldValue.delete(),
+            bannerWidth: firebase.firestore.FieldValue.delete(),
+            bannerHeight: firebase.firestore.FieldValue.delete(),
+            bannerType: firebase.firestore.FieldValue.delete(),
+            bannerSize: firebase.firestore.FieldValue.delete()
+          };
         }
 
         const payload = {
@@ -599,8 +788,10 @@
           visibility, status,
           start, end,
           allowRegistration,
-          capacity: capacity ?? undefined,
-          remaining: remaining ?? undefined
+          capacity: capacity ?? firebase.firestore.FieldValue.delete(),
+          remaining: (remaining != null ? remaining : firebase.firestore.FieldValue.delete()),
+          updatedAt: new Date(),
+          ...bannerPayload
         };
 
         if (allowRegistration) {
@@ -608,8 +799,8 @@
           payload.regOpensAt = regOpensAt;
           payload.regClosesAt = regClosesAt;
         } else {
-          payload.regOpensAt = undefined;
-          payload.regClosesAt = undefined;
+          payload.regOpensAt = firebase.firestore.FieldValue.delete();
+          payload.regClosesAt = firebase.firestore.FieldValue.delete();
         }
 
         await window.db.collection("events").doc(editingId).update(payload);
@@ -619,10 +810,26 @@
         return;
       }
 
-      // New event: recurrence materialization
+      // ----- NEW EVENT(S) -----
       const occurrences = buildOccurrences({ repeat, interval, start, end, endType, count, until, weekdays });
       if (!occurrences.length) {
         throw new Error("No occurrences generated. Check your repeat settings.");
+      }
+
+      // If we have a banner file for new events, upload ONCE and reuse metadata
+      let newBannerData = null;
+      if (pendingBannerFile) {
+        // Make a "group id" to share same banner across occurrences
+        const groupId = window.db.collection("_").doc().id;
+        const up = await uploadBannerToStorage(pendingBannerFile, groupId);
+        newBannerData = {
+          bannerUrl: up.url,
+          bannerPath: up.path,
+          bannerWidth: pendingBannerMeta?.width ?? null,
+          bannerHeight: pendingBannerMeta?.height ?? null,
+          bannerType: pendingBannerMeta?.type ?? (pendingBannerFile.type || null),
+          bannerSize: pendingBannerMeta?.size ?? pendingBannerFile.size
+        };
       }
 
       const batch = window.db.batch();
@@ -653,13 +860,10 @@
           end: occEnd,
           allowRegistration,
           createdAt: new Date(),
-          updatedAt: new Date()
+          updatedAt: new Date(),
+          ...(capacity != null ? { capacity, remaining: (remaining != null ? remaining : capacity) } : {}),
+          ...(newBannerData || {})
         };
-
-        if (capacity != null) {
-          payload.capacity = capacity;
-          payload.remaining = (remaining != null ? remaining : capacity);
-        }
 
         if (allowRegistration) {
           const { regOpensAt, regClosesAt } = deriveRegWindowDays(occStart, opensDays, closesDays);
@@ -703,13 +907,11 @@
     }
   });
 
-  // Build occurrences (Approach A)
+  // ---------- Occurrence builder ----------
   function buildOccurrences({ repeat, interval, start, end, endType, count, until, weekdays }) {
     const out = [];
     const durMs = end - start;
-
     const pushOcc = (s) => out.push({ start: new Date(s), end: new Date(s.getTime() + durMs) });
-
     if (repeat === "none") { pushOcc(start); return out; }
 
     const limitCount = (endType === "count") ? Math.max(1, count) : Number.POSITIVE_INFINITY;
@@ -729,7 +931,6 @@
       let weekStart = new Date(start);
       weekStart.setHours(0,0,0,0);
       weekStart.setDate(weekStart.getDate() - startDow); // to Sunday
-
       while (made < limitCount) {
         for (const dow of (weekdays.length ? weekdays : [startDow])) {
           const occStart = new Date(weekStart);
@@ -754,11 +955,10 @@
         cursor = next;
       }
     }
-
     return out;
   }
 
-  // Time conflict check (resource + branch overlap)
+  // ---------- Conflict check ----------
   async function hasConflict(branch, resourceId, start, end, ignoreId) {
     if (!branch || !resourceId || !start || !end) return null;
     const col = window.db.collection("events");

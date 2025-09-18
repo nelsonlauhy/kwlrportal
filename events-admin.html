@@ -28,6 +28,18 @@
     .form-hint { font-size:.85rem; color:#64748b; }
     .weekday-pill { user-select:none; }
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","Courier New", monospace; }
+
+    /* Banner preview box */
+    .banner-box {
+      width: 320px;
+      aspect-ratio: 2 / 1; /* matches 2160x1080 */
+      border: 1px dashed #cbd5e1;
+      background: #f8fafc;
+      display: flex; align-items: center; justify-content: center;
+      border-radius: .5rem;
+      overflow: hidden;
+    }
+    .banner-box img { max-width: 100%; max-height: 100%; display: none; }
   </style>
 </head>
 <body class="bg-light">
@@ -198,6 +210,36 @@
               <div class="form-hint">Used as the event background in calendar views.</div>
             </div>
 
+            <!-- Banner Image (NEW) -->
+            <div class="col-12">
+              <label class="form-label d-flex align-items-center gap-2">
+                Banner Image <span class="badge text-bg-light border">optional</span>
+              </label>
+              <div class="d-flex gap-3 align-items-start flex-wrap">
+                <div class="banner-box">
+                  <img id="f_bannerPreview" alt="Banner preview">
+                  <div id="f_bannerPlaceholder" class="text-muted small text-center px-2">
+                    2160×1080 recommended<br>JPEG/PNG · ≤10 MB
+                  </div>
+                </div>
+                <div class="flex-grow-1" style="min-width:260px;">
+                  <input type="file" id="f_bannerFile" accept=".jpg,.jpeg,.png" class="form-control mb-2">
+                  <div class="form-hint">
+                    Recommended image size: <strong>2160×1080</strong>. Max file size: <strong>10 MB</strong>. Types: <strong>.JPEG, .PNG</strong>.
+                  </div>
+                  <div class="progress mt-2 d-none" id="bannerProgWrap" style="height:6px;">
+                    <div class="progress-bar" id="bannerProg" style="width:0%"></div>
+                  </div>
+                  <div class="mt-2 d-flex align-items-center gap-2">
+                    <button type="button" class="btn btn-outline-danger btn-sm d-none" id="f_bannerRemove">
+                      <i class="bi bi-x-circle me-1"></i>Remove banner
+                    </button>
+                    <span class="small text-muted" id="f_bannerMeta"></span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <!-- Recurrence (Approach A: materialize on save) -->
             <div class="col-12">
               <div class="border-top pt-3 mt-2">
@@ -347,8 +389,10 @@
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+  <!-- Firebase Storage v8 (NEW) -->
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-storage.js"></script>
 
-  <!-- Your Firebase config (defines window.db) -->
+  <!-- Your Firebase config (defines window.db; ensure it also initializes firebase.app()) -->
   <script src="./js/firebaseConfig.js"></script>
 
   <!-- Page Logic -->
