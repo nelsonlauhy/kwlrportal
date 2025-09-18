@@ -7,15 +7,15 @@
 // - Back-fill "Reg Opens/Closes (days)" when editing an existing event
 // - Combined filter: Location (Branch — Resource ONLY) + Search
 // - "Open registration now" checkbox -> auto-calc days from now; unchecks on manual change
-// - Banner image upload (JPEG/PNG, <=5MB, exactly 2160x1080) stored in Firebase Storage
 
 (function() {
   // ---------- DOM ----------
   const containerList   = document.getElementById("eventsContainer");
-  const locationFilter  = document.getElementById("locationFilter");
+  const locationFilter  = document.getElementById("locationFilter"); // Combined filter (resource only)
   const searchInput     = document.getElementById("searchInput");
   const listLabel       = document.getElementById("listLabel");
-  const btnNew          = document.getElementById("btnNew");
+
+  const btnNew   = document.getElementById("btnNew");
 
   // Edit modal
   const editModalEl = document.getElementById("editModal");
@@ -47,16 +47,7 @@
   const f_visibility = document.getElementById("f_visibility");
   const f_colorPreset = document.getElementById("f_colorPreset");
   const f_color = document.getElementById("f_color");
-  const f_regOpenNow = document.getElementById("f_regOpenNow");
-
-  // Banner controls (NEW)
-  const f_banner = document.getElementById("f_banner");
-  const f_bannerErr = document.getElementById("f_bannerErr");
-  const f_bannerPreviewWrap = document.getElementById("f_bannerPreviewWrap");
-  const f_bannerPreview = document.getElementById("f_bannerPreview");
-  const f_bannerProgressWrap = document.getElementById("f_bannerProgressWrap");
-  const f_bannerProgress = document.getElementById("f_bannerProgress");
-  const btnBannerClear = document.getElementById("btnBannerClear");
+  const f_regOpenNow = document.getElementById("f_regOpenNow"); // NEW
 
   // Recurrence fields
   const f_repeat = document.getElementById("f_repeat");
@@ -85,11 +76,6 @@
   let unsubscribeEvents = null;
   let editDetailHTMLOriginal = "";
   let editDetailTouched = false;
-
-  // banner state
-  let bannerFile = null;               // File chosen in this session (not yet uploaded)
-  let bannerMetaExisting = null;       // { url, path, w, h, size, contentType } from Firestore
-  let bannerRemoveRequested = false;   // user clicked "Remove banner"
 
   // ---------- Utils ----------
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, m => (
@@ -132,6 +118,7 @@
   // Convert plain text → HTML (auto-link + preserve newlines)
   function plainToHtml(text) {
     const escText = esc(text || "");
+    // link http(s) and www.
     const urlRegex = /((?:https?:\/\/|www\.)[^\s<]+)/gi;
     const linked = escText.replace(urlRegex, (m) => {
       const href = m.startsWith("www.") ? `https://${m}` : m;
@@ -167,16 +154,20 @@
     const locSel = (locationFilter?.value || "ALL"); // "ALL" | "RS:<resourceId>"
 
     filtered = allEvents.filter(ev => {
+      // If a specific resource is selected, filter by resourceId
       if (locSel !== "ALL") {
         if (!locSel.startsWith("RS:")) return false;
         const rid = locSel.slice(3);
         if ((ev.resourceId || "") !== rid) return false;
       }
+
+      // Search text
       if (q) {
         const hay = [ev.title, ev.description, ev.resourceName, ev.branch]
           .map(v => (v || "").toString().toLowerCase());
         if (!hay.some(v => v.includes(q))) return false;
       }
+
       return true;
     });
 
@@ -224,6 +215,7 @@
       ? `${remaining}/${capacity} left`
       : (remaining != null ? `${remaining} left` : "");
 
+    // Tag color swatch only (no hex code)
     const colorHex = e.color ? normalizeHex(e.color) : null;
     const colorBadge = colorHex
       ? `<span style="display:inline-block;width:14px;height:14px;border-radius:50%;
@@ -260,19 +252,24 @@
     `;
   }
 
-  // ---------- Location filter ----------
+  // ---------- Populate Location filter (Resource-only) ----------
   function populateLocationFilter(resources) {
     if (!locationFilter) return;
+
     const opts = [`<option value="ALL">All Locations</option>`];
+
+    // Sort by branch then name
     const byBranchThenName = [...resources].sort((a,b) =>
       String(a.branch||"").localeCompare(String(b.branch||"")) ||
       String(a.name||"").localeCompare(String(b.name||""))
     );
+
     byBranchThenName.forEach(r => {
       const br = (r.branch || "").toUpperCase();
       const nm = r.name || r.id || "Resource";
       opts.push(`<option value="RS:${esc(r.id)}">${esc(br)} — ${esc(nm)}</option>`);
     });
+
     locationFilter.innerHTML = opts.join("");
   }
 
@@ -290,10 +287,12 @@
                         String(a.name||"").localeCompare(String(b.name||""))));
     }
 
+    // Populate edit form resource dropdown
     const opts = [`<option value="">-- select --</option>`]
       .concat(resources.map(r => `<option value="${esc(r.id)}">${esc(r.name)} (${esc(r.branch||"-")})</option>`));
     f_resourceId.innerHTML = opts.join("");
 
+    // Populate combined filter (resource-only)
     populateLocationFilter(resources);
   }
 
@@ -317,83 +316,6 @@
       console.error("events listener threw:", err);
       containerList.innerHTML = `<div class="text-danger py-4 text-center">Failed to load events.</div>`;
     }
-  }
-
-  // ---------- Banner helpers ----------
-  function resetBannerUI() {
-    f_banner.value = "";
-    f_bannerErr.classList.add("d-none"); f_bannerErr.textContent = "";
-    f_bannerPreviewWrap.style.display = "none";
-    f_bannerPreview.src = "";
-    bannerFile = null;
-    bannerRemoveRequested = false;
-  }
-
-  function showBannerError(msg) {
-    f_bannerErr.textContent = msg;
-    f_bannerErr.classList.remove("d-none");
-  }
-
-  function validateBannerFile(file) {
-    if (!file) return "No file selected.";
-    const okType = /image\/(jpeg|png)$/i.test(file.type);
-    if (!okType) return "Only JPEG and PNG are supported.";
-    if (file.size > 5 * 1024 * 1024) return "File too large (max 5 MB).";
-    return null;
-  }
-
-  function checkImageDimensions(file) {
-    return new Promise((resolve, reject) => {
-      const err = validateBannerFile(file);
-      if (err) { reject(new Error(err)); return; }
-      const img = new Image();
-      img.onload = () => {
-        const w = img.naturalWidth, h = img.naturalHeight;
-        URL.revokeObjectURL(img.src);
-        if (w === 2160 && h === 1080) resolve({ width: w, height: h });
-        else reject(new Error(`Image must be exactly 2160×1080px (got ${w}×${h}).`));
-      };
-      img.onerror = () => reject(new Error("Unable to read image. Please try another file."));
-      img.src = URL.createObjectURL(file);
-    });
-  }
-
-  function storagePathForEvent(eventId, file) {
-    const ext = (file.type === "image/png") ? "png" : "jpg";
-    if (eventId) return `banners/events/${eventId}.${ext}`;
-    // for new events (recurrence): a shared unique asset
-    const stamp = Date.now();
-    const rand = Math.random().toString(36).slice(2,8);
-    return `banners/pending/${stamp}_${rand}.${ext}`;
-  }
-
-  async function uploadBannerToStorage(path, file, onProgress) {
-    const ref = firebase.storage().ref().child(path);
-    return new Promise((resolve, reject) => {
-      const task = ref.put(file);
-      task.on("state_changed",
-        (snap) => {
-          if (onProgress && snap.totalBytes) {
-            const pct = Math.round((snap.bytesTransferred / snap.totalBytes) * 100);
-            onProgress(pct);
-          }
-        },
-        (err) => reject(err),
-        async () => {
-          const url = await ref.getDownloadURL();
-          resolve({ url, path });
-        }
-      );
-    });
-  }
-
-  function setBannerPreviewFromFile(file) {
-    const reader = new FileReader();
-    reader.onload = () => {
-      f_bannerPreview.src = reader.result;
-      f_bannerPreviewWrap.style.display = "";
-    };
-    reader.readAsDataURL(file);
   }
 
   // ---------- Open Edit ----------
@@ -425,15 +347,11 @@
     f_remaining.value = "";
     f_regOpensDays.value = "7";
     f_regClosesDays.value = "1";
-    if (f_regOpenNow) f_regOpenNow.checked = false;
+    if (f_regOpenNow) f_regOpenNow.checked = false; // NEW
 
     f_visibility.value = "public";
     f_colorPreset.value = "#3b82f6";
     f_color.value = "#3b82f6";
-
-    // Banner reset
-    resetBannerUI();
-    bannerMetaExisting = null;
 
     // Recurrence defaults
     f_repeat.value = "none";
@@ -464,6 +382,7 @@
     f_end.value = inputValueFromDate(toDate(ev.end));
     f_description.value = ev.description || "";
 
+    // Preserve the original HTML and show a plaintext view in the textarea
     editDetailHTMLOriginal = ev.detailDescription || "";
     editDetailTouched = false;
     f_detailDescription.value = htmlToPlainForTextarea(editDetailHTMLOriginal);
@@ -482,21 +401,6 @@
       f_color.value = "#3b82f6";
     }
 
-    // Existing banner (if any)
-    if (ev.bannerUrl) {
-      bannerMetaExisting = {
-        url: ev.bannerUrl,
-        path: ev.bannerStoragePath || null,
-        w: ev.bannerWidth || null,
-        h: ev.bannerHeight || null,
-        size: ev.bannerSize || null,
-        contentType: ev.bannerContentType || null
-      };
-      f_bannerPreview.src = ev.bannerUrl;
-      f_bannerPreviewWrap.style.display = "";
-    }
-
-    // Back-calc reg days + reflect "open now"
     (function backfillRegDays() {
       const startDate = toDate(ev.start);
       const opensAt = toDate(ev.regOpensAt);
@@ -511,10 +415,12 @@
       const closeDays = daysBefore(startDate, closesAt);
       if (openDays !== null && !Number.isNaN(openDays)) f_regOpensDays.value = String(openDays);
       if (closeDays !== null && !Number.isNaN(closeDays)) f_regClosesDays.value = String(closeDays);
+
+      // Reflect "open now" if registration already opened
       if (f_regOpenNow) {
         if (opensAt && opensAt <= new Date()) {
           f_regOpenNow.checked = true;
-          recalcRegOpensDaysFromNow();
+          recalcRegOpensDaysFromNow(); // keep days aligned to "now"
         } else {
           f_regOpenNow.checked = false;
         }
@@ -577,7 +483,7 @@
     f_colorPreset.value = "__custom";
   });
 
-  // ---------- Recurrence UI ----------
+  // ---------- Recurrence UI dynamics ----------
   f_repeat.addEventListener("change", () => {
     weeklyDaysWrap.style.display = (f_repeat.value === "weekly") ? "" : "none";
   });
@@ -587,7 +493,7 @@
     repeatUntilWrap.style.display = isCount ? "none" : "";
   });
 
-  // ---------- "Open registration now" ----------
+  // ---------- "Open registration now" helpers & bindings ----------
   function recalcRegOpensDaysFromNow() {
     const start = dtLocalFromInput(f_start.value);
     if (!start) return;
@@ -596,10 +502,17 @@
     if (days < 0) days = 0;
     f_regOpensDays.value = String(days);
   }
+
   if (f_regOpenNow) {
-    f_regOpenNow.addEventListener("change", () => { if (f_regOpenNow.checked) recalcRegOpensDaysFromNow(); });
-    f_start.addEventListener("change", () => { if (f_regOpenNow.checked) recalcRegOpensDaysFromNow(); });
-    f_regOpensDays.addEventListener("input", () => { if (f_regOpenNow.checked) f_regOpenNow.checked = false; });
+    f_regOpenNow.addEventListener("change", () => {
+      if (f_regOpenNow.checked) recalcRegOpensDaysFromNow();
+    });
+    f_start.addEventListener("change", () => {
+      if (f_regOpenNow.checked) recalcRegOpensDaysFromNow();
+    });
+    f_regOpensDays.addEventListener("input", () => {
+      if (f_regOpenNow.checked) f_regOpenNow.checked = false;
+    });
   }
 
   // ---------- Detail preview ----------
@@ -617,40 +530,6 @@
       if (!f_remaining.value) f_remaining.value = r.capacity;
     }
   });
-
-  // ---------- Banner events ----------
-  if (f_banner) {
-    f_banner.addEventListener("change", async () => {
-      f_bannerErr.classList.add("d-none"); f_bannerErr.textContent = "";
-      f_bannerProgressWrap.classList.add("d-none");
-      f_bannerProgress.style.width = "0%";
-      bannerRemoveRequested = false;
-
-      const file = f_banner.files && f_banner.files[0];
-      if (!file) { return; }
-
-      try {
-        await checkImageDimensions(file);
-        bannerFile = file;
-        setBannerPreviewFromFile(file);
-      } catch (err) {
-        bannerFile = null;
-        f_bannerPreviewWrap.style.display = "none";
-        f_bannerPreview.src = "";
-        showBannerError(err.message || "Invalid banner file.");
-        f_banner.value = "";
-      }
-    });
-  }
-  if (btnBannerClear) {
-    btnBannerClear.addEventListener("click", () => {
-      // If there was an existing banner, mark for removal; otherwise just clear current selection
-      if (bannerMetaExisting && bannerMetaExisting.url && !bannerFile) {
-        bannerRemoveRequested = true;
-      }
-      resetBannerUI();
-    });
-  }
 
   // ---------- New ----------
   btnNew.addEventListener("click", () => openEdit(null));
@@ -675,7 +554,10 @@
         throw new Error("Please fill Title, Branch, Resource, Start/End (End must be after Start).");
       }
 
-      if (f_regOpenNow?.checked) recalcRegOpensDaysFromNow();
+      // If "Open now" is checked, make sure days reflect now before reading values
+      if (f_regOpenNow?.checked) {
+        recalcRegOpensDaysFromNow();
+      }
 
       // Registration & visibility
       const allowRegistration = (f_allowRegistration.value === "true");
@@ -703,45 +585,6 @@
       const weekdays = Array.from(weeklyDaysWrap.querySelectorAll("input[type='checkbox']:checked"))
         .map(cb => Number(cb.value)); // 0..6
 
-      // ---------- Banner upload (if needed) ----------
-      // Returns {url, path, w, h, size, contentType} or null
-      async function ensureBannerUpload(singleEventIdForPath) {
-        if (bannerRemoveRequested) return { remove: true };
-
-        if (bannerFile) {
-          // re-validate dims (cheap) then upload
-          const dim = await checkImageDimensions(bannerFile);
-          const path = storagePathForEvent(singleEventIdForPath || null, bannerFile);
-
-          f_bannerProgressWrap.classList.remove("d-none");
-          const { url, path: storedPath } = await uploadBannerToStorage(path, bannerFile, (pct) => {
-            f_bannerProgress.style.width = `${pct}%`;
-          });
-          f_bannerProgressWrap.classList.add("d-none");
-
-          return {
-            url,
-            path: storedPath,
-            w: dim.width,
-            h: dim.height,
-            size: bannerFile.size,
-            contentType: bannerFile.type
-          };
-        }
-        // keep existing if any
-        if (bannerMetaExisting && bannerMetaExisting.url) {
-          return {
-            url: bannerMetaExisting.url,
-            path: bannerMetaExisting.path || null,
-            w: bannerMetaExisting.w || null,
-            h: bannerMetaExisting.h || null,
-            size: bannerMetaExisting.size || null,
-            contentType: bannerMetaExisting.contentType || null
-          };
-        }
-        return null;
-      }
-
       if (editingId) {
         // Conflict check (single)
         const conflictMsg = await hasConflict(branch, resourceId, start, end, editingId);
@@ -749,9 +592,6 @@
           showInlineError(conflictMsg);
           throw new Error(conflictMsg);
         }
-
-        // If user selected a new banner, upload to path derived from event id
-        const banner = await ensureBannerUpload(editingId);
 
         const payload = {
           title, description, detailDescription: detailDescriptionHtml,
@@ -768,26 +608,9 @@
           payload.regOpensAt = regOpensAt;
           payload.regClosesAt = regClosesAt;
         } else {
-          payload.regOpensAt = firebase.firestore.FieldValue.delete();
-          payload.regClosesAt = firebase.firestore.FieldValue.delete();
+          payload.regOpensAt = undefined;
+          payload.regClosesAt = undefined;
         }
-
-        // Banner fields
-        if (banner?.remove) {
-          payload.bannerUrl = firebase.firestore.FieldValue.delete();
-          payload.bannerStoragePath = firebase.firestore.FieldValue.delete();
-          payload.bannerWidth = firebase.firestore.FieldValue.delete();
-          payload.bannerHeight = firebase.firestore.FieldValue.delete();
-          payload.bannerSize = firebase.firestore.FieldValue.delete();
-          payload.bannerContentType = firebase.firestore.FieldValue.delete();
-        } else if (banner) {
-          payload.bannerUrl = banner.url;
-          payload.bannerStoragePath = banner.path || null;
-          payload.bannerWidth = banner.w || null;
-          payload.bannerHeight = banner.h || null;
-          payload.bannerSize = banner.size || null;
-          payload.bannerContentType = banner.contentType || null;
-        } // else leave as-is
 
         await window.db.collection("events").doc(editingId).update(payload);
         editOk.textContent = "Saved.";
@@ -798,43 +621,30 @@
 
       // New event: recurrence materialization
       const occurrences = buildOccurrences({ repeat, interval, start, end, endType, count, until, weekdays });
-      if (!occurrences.length) throw new Error("No occurrences generated. Check your repeat settings.");
-
-      const evCol = window.db.collection("events");
-      const batch = window.db.batch();
-
-      // For *new* recurring events, upload banner once (shared across all)
-      let sharedBannerMeta = null;
-      if (bannerFile) {
-        // Upload once to a stable "pending/..." path
-        const dim = await checkImageDimensions(bannerFile);
-        const path = storagePathForEvent(null, bannerFile);
-        f_bannerProgressWrap.classList.remove("d-none");
-        const { url, path: storedPath } = await uploadBannerToStorage(path, bannerFile, (pct)=> {
-          f_bannerProgress.style.width = `${pct}%`;
-        });
-        f_bannerProgressWrap.classList.add("d-none");
-        sharedBannerMeta = {
-          url,
-          path: storedPath,
-          w: dim.width,
-          h: dim.height,
-          size: bannerFile.size,
-          contentType: bannerFile.type
-        };
+      if (!occurrences.length) {
+        throw new Error("No occurrences generated. Check your repeat settings.");
       }
 
-      let made = 0, skipped = 0, firstConflictMsg = null;
+      const batch = window.db.batch();
+      const evCol = window.db.collection("events");
+
+      let made = 0;
+      let skipped = 0;
+      let firstConflictMsg = null;
 
       for (const occ of occurrences) {
-        const occStart = occ.start, occEnd = occ.end;
+        const occStart = occ.start;
+        const occEnd = occ.end;
 
         const conflictMsg = await hasConflict(branch, resourceId, occStart, occEnd, null);
         if (conflictMsg) {
-          skipped++; if (!firstConflictMsg) firstConflictMsg = conflictMsg; continue;
+          skipped++;
+          if (!firstConflictMsg) firstConflictMsg = conflictMsg;
+          continue;
         }
 
         const docRef = evCol.doc();
+
         const payload = {
           title, description, detailDescription: detailDescriptionHtml,
           branch, resourceId, resourceName, color,
@@ -850,20 +660,11 @@
           payload.capacity = capacity;
           payload.remaining = (remaining != null ? remaining : capacity);
         }
+
         if (allowRegistration) {
           const { regOpensAt, regClosesAt } = deriveRegWindowDays(occStart, opensDays, closesDays);
           payload.regOpensAt = regOpensAt;
           payload.regClosesAt = regClosesAt;
-        }
-
-        // Attach banner (shared if uploaded)
-        if (sharedBannerMeta && !bannerRemoveRequested) {
-          payload.bannerUrl = sharedBannerMeta.url;
-          payload.bannerStoragePath = sharedBannerMeta.path || null;
-          payload.bannerWidth = sharedBannerMeta.w || null;
-          payload.bannerHeight = sharedBannerMeta.h || null;
-          payload.bannerSize = sharedBannerMeta.size || null;
-          payload.bannerContentType = sharedBannerMeta.contentType || null;
         }
 
         batch.set(docRef, payload);
@@ -906,6 +707,7 @@
   function buildOccurrences({ repeat, interval, start, end, endType, count, until, weekdays }) {
     const out = [];
     const durMs = end - start;
+
     const pushOcc = (s) => out.push({ start: new Date(s), end: new Date(s.getTime() + durMs) });
 
     if (repeat === "none") { pushOcc(start); return out; }

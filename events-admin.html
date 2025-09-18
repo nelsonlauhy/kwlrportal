@@ -15,8 +15,8 @@
     .page-title { display:flex; align-items:center; gap:.5rem; }
     .filter-control { height:38px; padding:.375rem .75rem; font-size:.95rem; line-height:1.5; border-radius:.5rem; }
     .control-row { display:flex; align-items:center; gap:.5rem; flex-wrap:nowrap; }
-    #searchInput { width:240px; }
-    @media (max-width:576px){ .control-row{flex-wrap:wrap!important;} #searchInput{width:100%;flex:1 1 100%;} }
+    #branchFilter { width:130px; } #resourceFilter { width:180px; } #searchInput { width:240px; }
+    @media (max-width:576px){ .control-row{flex-wrap:wrap!important;} #branchFilter,#resourceFilter,#searchInput{width:100%;flex:1 1 100%;} }
 
     .month-header { font-weight:700; font-size:1.1rem; margin:1.25rem 0 .5rem; color:#334155; }
     .event-card { border:1px solid #e9ecef; border-radius:.75rem; padding:1rem; background:#fff; }
@@ -28,10 +28,6 @@
     .form-hint { font-size:.85rem; color:#64748b; }
     .weekday-pill { user-select:none; }
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","Courier New", monospace; }
-
-    /* Banner preview */
-    #f_bannerPreviewWrap { display:none; }
-    #f_bannerPreview { width:100%; max-height:180px; object-fit:cover; border:1px solid #e5e7eb; border-radius:.5rem; }
   </style>
 </head>
 <body class="bg-light">
@@ -54,8 +50,9 @@
       <div class="control-row">
         <select id="locationFilter" class="form-select filter-control">
           <option value="ALL">All Locations</option>
-          <!-- JS will populate as "BRANCH — NAME" -->
+          <!-- JS will populate branches and resources -->
         </select>
+
         <input id="searchInput" class="form-control filter-control" placeholder="Search title, room, description…" />
       </div>
 
@@ -101,6 +98,7 @@
                 <option value="">--</option>
                 <option value="Markham">Markham</option>
                 <option value="North Markham">North Markham</option>
+                <option value="Midtown Toronto">Midtown Toronto</option>
                 <option value="Mississauga">Mississauga</option>
               </select>
             </div>
@@ -152,12 +150,15 @@
               <input type="number" class="form-control" id="f_remaining" min="0" step="1">
             </div>
 
+            <!-- Offsets in DAYS (relative to each occurrence's start) -->
             <div class="col-md-6">
               <label class="form-label">Reg Opens (days before start)</label>
               <input type="number" class="form-control" id="f_regOpensDays" placeholder="7" value="7" min="0" step="1">
-              <div class="form-check mt-1">
+              <div class="form-check mt-2">
                 <input class="form-check-input" type="checkbox" id="f_regOpenNow">
-                <label class="form-check-label" for="f_regOpenNow">Open registration now</label>
+                <label class="form-check-label" for="f_regOpenNow">
+                  Open registration now (auto-calculate days)
+                </label>
               </div>
             </div>
             <div class="col-md-6">
@@ -195,31 +196,6 @@
                 <input type="color" id="f_color" class="form-control form-control-color" value="#3b82f6" title="Custom color">
               </div>
               <div class="form-hint">Used as the event background in calendar views.</div>
-            </div>
-
-            <!-- Banner (NEW) -->
-            <div class="col-12">
-              <div class="border-top pt-3 mt-2">
-                <label class="form-label">Banner Image</label>
-                <input type="file" id="f_banner" class="form-control" accept="image/jpeg,image/png">
-                <div class="form-hint">
-                  JPEG/PNG, exactly <strong>2160 × 1080</strong>, max <strong>5 MB</strong>.
-                </div>
-                <div id="f_bannerErr" class="text-danger small mt-1 d-none"></div>
-
-                <div class="progress mt-2 d-none" id="f_bannerProgressWrap">
-                  <div id="f_bannerProgress" class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width:0%"></div>
-                </div>
-
-                <div id="f_bannerPreviewWrap" class="mt-2">
-                  <img id="f_bannerPreview" alt="Banner Preview">
-                  <div class="mt-2">
-                    <button type="button" class="btn btn-outline-secondary btn-sm" id="btnBannerClear">
-                      <i class="bi bi-x-circle me-1"></i>Remove banner
-                    </button>
-                  </div>
-                </div>
-              </div>
             </div>
 
             <!-- Recurrence (Approach A: materialize on save) -->
@@ -315,7 +291,7 @@
     </div>
   </div>
 
-  <!-- Registrations Modal -->
+  <!-- Registrations Modal (NEW) -->
   <div class="modal fade" id="regListModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-lg modal-dialog-scrollable">
       <div class="modal-content">
@@ -329,7 +305,9 @@
 
         <div class="modal-body">
           <div class="d-flex align-items-center justify-content-between mb-2">
-            <div class="small text-muted"><span id="regEventMeta"></span></div>
+            <div class="small text-muted">
+              <span id="regEventMeta"></span>
+            </div>
             <div>
               <button class="btn btn-outline-secondary btn-sm" id="btnCopyEmails" title="Copy all emails">
                 <i class="bi bi-clipboard-check me-1"></i> Copy Emails
@@ -369,13 +347,14 @@
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-storage.js"></script> <!-- NEW for banners -->
 
-  <!-- Your Firebase config (defines window.db and window.firebase) -->
+  <!-- Your Firebase config (defines window.db) -->
   <script src="./js/firebaseConfig.js"></script>
 
   <!-- Page Logic -->
   <script src="./js/events_admin.js" defer></script>
+
+  <!-- Registrations UI enhancer (NEW, separate file) -->
   <script src="./js/events_admin_regs.js" defer></script>
 </body>
 </html>
