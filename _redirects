@@ -1,10 +1,10 @@
-# Intranet subdomain → root
-/:splat     200!   Host:intranet.livingrealtykw.com
+# Intranet subdomain → serve root as-is
+/:splat                  /:splat                200!   Host:intranet.livingrealtykw.com
 
-# Events (public) → /events-public
-/events-public/:splat   200!   Host:events.livingrealtykw.com
-/                    /events-public/   301   Host:events.livingrealtykw.com
+# Events (public) → map host root to /events-public
+/                        /events-public/        301    Host:events.livingrealtykw.com
+/events-public/:splat    /events-public/:splat  200!   Host:events.livingrealtykw.com
 
-# Internal events → /events-private
-/events-private/:splat  200!   Host:internalevents.livingrealtykw.com
-/                    /events-private/  301   Host:internalevents.livingrealtykw.com
+# Internal events → map host root to /events-private
+/                        /events-private/       301    Host:internalevents.livingrealtykw.com
+/events-private/:splat   /events-private/:splat 200!   Host:internalevents.livingrealtykw.com
