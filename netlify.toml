@@ -1,47 +1,25 @@
-# netlify.toml — place in repo root (your publish directory)
-
-# --- Intranet: serve root as-is on intranet.livingrealtykw.com ---
+# --- Intranet: serve site root as-is ---
 [[redirects]]
-  from = "/:splat"
+  from = "/*"
   to = "/:splat"
   status = 200
   force = true
   conditions = { Host = ["intranet.livingrealtykw.com"] }
 
-# --- Events (public): map host to /events-public ---
-# 1) when visiting host root -> 301 to /events-public/
-[[redirects]]
-  from = "/"
-  to = "/events-public/"
-  status = 301
-  conditions = { Host = ["events.livingrealtykw.com"] }
-
-# 2) keep everything inside /events-public working
+# --- Events (public): everything on this host goes to events-public.html ---
 [[redirects]]
   from = "/*"
-  to = "/events-public/:splat"
+  to = "/events-public.html"
   status = 200
   force = true
   conditions = { Host = ["events.livingrealtykw.com"] }
 
-# --- Internal events: map host to /events-private ---
-# 1) host root -> 301 to /events-private/
-[[redirects]]
-  from = "/"
-  to = "/events-private/"
-  status = 301
-  conditions = { Host = ["internalevents.livingrealtykw.com"] }
-
-# 2) keep everything inside /events-private working
+# --- Internal events: everything on this host goes to events-private.html ---
 [[redirects]]
   from = "/*"
-  to = "/events-private/:splat"
+  to = "/events-private.html"
   status = 200
   force = true
   conditions = { Host = ["internalevents.livingrealtykw.com"] }
 
-# --- (Optional) SPA fallback for other hosts — keep LAST if you need it ---
-# [[redirects]]
-#   from = "/*"
-#   to = "/index.html"
-#   status = 200
+# (If you have a SPA catch-all like /* -> /index.html 200, keep it BELOW these rules or remove it.)
