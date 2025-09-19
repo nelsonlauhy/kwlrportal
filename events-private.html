@@ -28,12 +28,53 @@
 
     /* List view */
     .month-header { font-weight:700; font-size:1.1rem; margin:1.25rem 0 .5rem; color:#334155; }
-    .event-card { border:1px solid #e9ecef; border-radius:.75rem; padding:1rem; background:#fff; cursor:pointer; }
+
+    /* Card layout with left thumbnail column */
+    .event-card {
+      border:1px solid #e9ecef;
+      border-radius:.75rem;
+      padding:0.75rem;
+      background:#fff;
+      cursor:pointer;
+      display:flex;
+      gap:1rem;
+      align-items:stretch;
+    }
     .event-card:hover { background:#fafcff; }
+
+    /* Fixed-size thumbnail area */
+    .event-thumb {
+      flex:0 0 140px;                /* width */
+      height:92px;                   /* height */
+      border-radius:.6rem;
+      border:1px solid #e9ecef;
+      background:#f8f9fa;
+      overflow:hidden;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      position:relative;
+    }
+    .event-thumb img {
+      width:100%;
+      height:100%;
+      object-fit:cover;
+      display:block;
+    }
+    .event-thumb .no-banner {
+      font-size:.85rem;
+      color:#94a3b8;
+      text-align:center;
+      padding:0 .5rem;
+    }
+
+    /* Content (right side) */
+    .event-body { flex:1 1 auto; display:flex; flex-direction:column; gap:.35rem; }
     .event-title { font-weight:700; }
     .event-meta { color:#6c757d; font-size:.9rem; }
     .badge-branch { background:#eef2ff; color:#3730a3; }
     .badge-room   { background:#ecfeff; color:#155e75; }
+    .event-cta { text-align:right; white-space:nowrap; }
 
     /* Calendar shell */
     .cal-toolbar{ display:flex; align-items:center; gap:.5rem; flex-wrap:wrap; }
@@ -61,6 +102,9 @@
     /* Modal helpers */
     .event-detail-meta .badge { margin-right:.35rem; }
     .muted{ color:#94a3b8; }
+
+    /* Hide any empty Bootstrap badges/pills globally */
+    .badge:empty { display:none !important; }
   </style>
 </head>
 <body class="bg-light">

@@ -128,6 +128,30 @@
     [regWarn, regErr, regOk].forEach(el => { el.classList.add("d-none"); el.textContent=""; });
   }
 
+  // --- Banner helpers ---
+  function pickBannerUrl(ev) {
+    // Try several common fields; prefer a smaller/thumb first if provided.
+    const candidates = [
+      ev.bannerThumbUrl,
+      ev.bannerThumb,
+      ev.bannerUrl,
+      ev.banner,               // may already be a URL string
+      ev.bannerImage,
+      ev.images?.banner,
+      ev.imageUrl              // just in case it was stored this way
+    ].filter(Boolean);
+
+    for (const raw of candidates) {
+      const s = String(raw).trim();
+      if (!s) continue;
+      // Accept only http(s) URLs here; storage paths would need getDownloadURL (not in this page).
+      if (/^https?:\/\//i.test(s) || s.startsWith("ttps://")) {
+        return ensureHttps(s);
+      }
+    }
+    return ""; // no usable URL
+  }
+
   // ---------- Map helpers ----------
   function pickAddrMeta(ev, res) {
     // Event fields take priority; then resource; then null
@@ -324,26 +348,31 @@
       : (remaining != null ? `${remaining} seats left` : "");
     const color = normalizeHex(e.color || "#3b82f6");
 
+    // --- NEW: banner thumbnail area (always present) ---
+    const bannerUrl = pickBannerUrl(e);
+    const thumbHtml = bannerUrl
+      ? `<img src="${esc(bannerUrl)}" alt="Banner for ${esc(e.title || "event")}" loading="lazy">`
+      : `<span class="no-banner">No Banner</span>`;
+
     return `
       <div class="event-card" data-id="${esc(e._id)}" role="button">
-        <div class="d-flex justify-content-between align-items-start">
-          <div class="me-3">
-            <div class="event-title">
-              <span style="display:inline-block;width:.7rem;height:.7rem;border-radius:50%;background:${esc(color)};margin-right:.35rem;"></span>
-              ${esc(e.title || "Untitled Event")}
-            </div>
-            <div class="event-meta mt-1">
-              <span class="me-2"><i class="bi bi-clock"></i> ${esc(dateLine)}</span>
-              ${e.resourceName ? `<span class="badge badge-room me-2"><i class="bi bi-building me-1"></i>${esc(e.resourceName)}</span>` : ""}
-              ${e.branch ? `<span class="badge badge-branch me-2">${esc(e.branch)}</span>` : ""}
-              ${e.visibility ? `<span class="badge text-bg-light border">${esc(e.visibility)}</span>` : ""}
-            </div>
-            ${e.description ? `<div class="mt-2 text-secondary">${esc(e.description)}</div>` : ""}
+        <div class="event-thumb">${thumbHtml}</div>
+        <div class="event-body">
+          <div class="event-title">
+            <span style="display:inline-block;width:.7rem;height:.7rem;border-radius:50%;background:${esc(color)};margin-right:.35rem;"></span>
+            ${esc(e.title || "Untitled Event")}
           </div>
-          <div class="text-end">
-            ${remainTxt ? `<div class="small text-muted mb-2">${esc(remainTxt)}</div>` : ""}
-            <div class="small text-primary">Details &raquo;</div>
+          <div class="event-meta mt-1">
+            <span class="me-2"><i class="bi bi-clock"></i> ${esc(dateLine)}</span>
+            ${e.resourceName ? `<span class="badge badge-room me-2"><i class="bi bi-building me-1"></i>${esc(e.resourceName)}</span>` : ""}
+            ${e.branch ? `<span class="badge badge-branch me-2">${esc(e.branch)}</span>` : ""}
+            ${e.visibility ? `<span class="badge text-bg-light border">${esc(e.visibility)}</span>` : ""}
           </div>
+          ${e.description ? `<div class="mt-2 text-secondary">${esc(e.description)}</div>` : ""}
+        </div>
+        <div class="event-cta small text-primary d-flex align-items-start justify-content-end">
+          ${remainTxt ? `<div class="small text-muted me-3">${esc(remainTxt)}</div>` : ""}
+          <div>Details &raquo;</div>
         </div>
       </div>
     `;
@@ -474,9 +503,7 @@
         const txt = idealTextColor(color);
         return `<button class="evt-pill ${full}" data-id="${esc(e._id)}"
                        style="top:${top+2}px;height:${height}px;background:${esc(color)};border-color:${esc(color)};color:${esc(txt)}"
-                       title="${esc(e.title || "")}">
-                  ${esc(e.title || "Event")}
-                </button>`;
+                       title="${esc(e.title || "")}">${esc(e.title || "Event")}</button>`;
       }).join("");
 
       cols.push(`
