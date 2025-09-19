@@ -1,10 +1,47 @@
-[build]
-  functions = "netlify/functions"
-  publish = "."
+# netlify.toml — place in repo root (your publish directory)
 
-[[headers]]
-  for = "/.netlify/functions/*"
-  [headers.values]
-    Access-Control-Allow-Origin = "*"
-    Access-Control-Allow-Headers = "Content-Type"
-    Access-Control-Allow-Methods = "POST, OPTIONS"
+# --- Intranet: serve root as-is on intranet.livingrealtykw.com ---
+[[redirects]]
+  from = "/:splat"
+  to = "/:splat"
+  status = 200
+  force = true
+  conditions = { Host = ["intranet.livingrealtykw.com"] }
+
+# --- Events (public): map host to /events-public ---
+# 1) when visiting host root -> 301 to /events-public/
+[[redirects]]
+  from = "/"
+  to = "/events-public/"
+  status = 301
+  conditions = { Host = ["events.livingrealtykw.com"] }
+
+# 2) keep everything inside /events-public working
+[[redirects]]
+  from = "/*"
+  to = "/events-public/:splat"
+  status = 200
+  force = true
+  conditions = { Host = ["events.livingrealtykw.com"] }
+
+# --- Internal events: map host to /events-private ---
+# 1) host root -> 301 to /events-private/
+[[redirects]]
+  from = "/"
+  to = "/events-private/"
+  status = 301
+  conditions = { Host = ["internalevents.livingrealtykw.com"] }
+
+# 2) keep everything inside /events-private working
+[[redirects]]
+  from = "/*"
+  to = "/events-private/:splat"
+  status = 200
+  force = true
+  conditions = { Host = ["internalevents.livingrealtykw.com"] }
+
+# --- (Optional) SPA fallback for other hosts — keep LAST if you need it ---
+# [[redirects]]
+#   from = "/*"
+#   to = "/index.html"
+#   status = 200
