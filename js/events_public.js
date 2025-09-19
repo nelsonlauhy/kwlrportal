@@ -20,7 +20,7 @@
   const btnToday = document.getElementById("btnToday");
   const calLabel = document.getElementById("calLabel");
 
-  // Registration modal (already in your HTML)
+  // Registration modal
   const regModalEl = document.getElementById("regModal");
   const regModal   = new bootstrap.Modal(regModalEl);
   const regForm    = document.getElementById("regForm");
@@ -43,8 +43,11 @@
   const evDetailDescEl = document.getElementById("evDetailDesc");
   const evCapacityEl = document.getElementById("evCapacity");
   const btnOpenRegister = document.getElementById("btnOpenRegister");
+  // NEW: Banner in modal
+  const evBannerBox = document.getElementById("evBannerBox");
+  const evBannerImg = document.getElementById("evBannerImg");
 
-  // Address + map controls (new IDs — ensure they exist in HTML)
+  // Address + map controls
   const evAddressRow  = document.getElementById("evAddressRow");
   const evAddressText = document.getElementById("evAddressText");
   const evMapLink     = document.getElementById("evMapLink");
@@ -90,15 +93,14 @@
     let s=String(url||"").trim();
     if(!s) return "";
     if(s.startsWith("ttps://")) s="h"+s;
-    if(/^gs:\/\//i.test(s)) return ""; // don't attempt gs:// without Storage SDK
-    if(!/^https?:\/\//i.test(s)) s="https://"+s;
+    if(/^gs:\/\//i.test(s)) return ""; // skip Cloud Storage URIs unless handled elsewhere
+    if(!/^https?:\/\//i.test(s) && !s.startsWith("/")) s="https://"+s; // allow site-relative paths
     return s;
   }
   function clearRegAlerts(){ [regWarn, regErr, regOk].forEach(el => { el.classList.add("d-none"); el.textContent=""; }); }
 
-  // Choose a banner URL from common field names
+  // Choose a banner URL (thumbnail, used in list)
   function pickBannerUrl(ev){
-    // normalize nested objects safely
     const nested = (obj, path) => {
       try { return path.split(".").reduce((a,k) => (a && a[k] != null ? a[k] : undefined), obj); }
       catch(_){ return undefined; }
@@ -120,7 +122,33 @@
       const u = ensureHttps(raw);
       if (u) return u;
     }
-    return ""; // no usable url
+    return "";
+  }
+
+  // Prefer full-size for modal banner
+  function pickBannerUrlFull(ev){
+    const nested = (obj, path) => {
+      try { return path.split(".").reduce((a,k) => (a && a[k] != null ? a[k] : undefined), obj); }
+      catch(_){ return undefined; }
+    };
+    const candidates = [
+      ev.bannerUrl,
+      nested(ev,"banner.url"),
+      ev.imageUrl,
+      ev.coverUrl,
+      ev.thumbnailUrl,
+      ev.bannerThumbUrl,
+      nested(ev,"banner.thumbUrl"),
+      ev.imageThumbUrl,
+      ev.coverThumbUrl,
+      ev.thumbnail
+    ].filter(Boolean);
+
+    for (const raw of candidates){
+      const u = ensureHttps(raw);
+      if (u) return u;
+    }
+    return "";
   }
 
   // ---------- Map helpers ----------
@@ -153,7 +181,7 @@
     else if (isFinite(meta.lat) && isFinite(meta.lng)) linkUrl = `https://www.google.com/maps?q=${meta.lat},${meta.lng}`;
     else if (meta.address) linkUrl = `https://www.google.com/maps?q=${labelPart ? labelPart + "%20" : ""}${addrPart}`;
 
-    // Embed target (optional, can be imprecise without Place/coords)
+    // Embed target (optional)
     let embedUrl = null;
     if (MAP_MODE !== "link") {
       if (MAPS_EMBED_API_KEY && meta.mapsPlaceId) {
@@ -168,7 +196,7 @@
   }
 
   function setMapUI(meta) {
-    if (!evAddressRow) return; // requires new HTML block
+    if (!evAddressRow) return;
 
     const nothing =
       !meta.address && !meta.hmapsUrl && !meta.mapsUrl &&
@@ -521,6 +549,7 @@
     const canReg = canRegister(ev);
     const color = normalizeHex(ev.color || "#3b82f6");
 
+    // Title + badges
     if (evTitleEl) {
       evTitleEl.innerHTML = `
         <span class="me-2" style="display:inline-block;width:.9rem;height:.9rem;border-radius:50%;background:${esc(color)};vertical-align:baseline;"></span>
@@ -534,6 +563,24 @@
         ${ev.visibility ? `<span class="badge text-bg-light border">${esc(ev.visibility)}</span>` : ""}`;
     }
     if (evDateLineEl) evDateLineEl.textContent = dateLine;
+
+    // NEW: Banner image at top of modal body
+    if (evBannerBox && evBannerImg) {
+      const fullBanner = pickBannerUrlFull(ev);
+      if (fullBanner) {
+        evBannerImg.src = fullBanner;
+        evBannerImg.alt = (ev.title ? `${ev.title} banner` : "Event banner");
+        evBannerBox.classList.remove("d-none");
+        // hide the box if image fails to load
+        evBannerImg.onerror = () => {
+          evBannerImg.removeAttribute("src");
+          evBannerBox.classList.add("d-none");
+        };
+      } else {
+        evBannerImg.removeAttribute("src");
+        evBannerBox.classList.add("d-none");
+      }
+    }
 
     // Address / map: event → resource → hide
     evAddressRow?.classList.add("d-none");

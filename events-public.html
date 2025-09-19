@@ -91,6 +91,22 @@
     /* Modal content helpers */
     .event-detail-meta .badge { margin-right:.35rem; }
     .muted{ color:#94a3b8; }
+
+    /* Modal banner image (new) */
+    .ev-banner{
+      width:100%;
+      margin: .25rem 0 1rem 0;
+      border-radius:.5rem;
+      overflow:hidden;
+      background:#f8fafc;
+      border:1px solid #e9ecef;
+    }
+    .ev-banner img{
+      display:block;
+      width:100%;
+      height:auto;           /* keep original aspect ratio */
+      object-fit:cover;      /* looks good for tall images too */
+    }
   </style>
 </head>
 <body class="bg-light">
@@ -152,6 +168,11 @@
         </div>
 
         <div class="modal-body">
+          <!-- Banner image (NEW, shown when event has banner) -->
+          <div id="evBannerBox" class="ev-banner d-none">
+            <img id="evBannerImg" alt="Event banner">
+          </div>
+
           <div class="event-detail-meta mb-2 text-secondary small" id="evMeta"></div>
           <div class="mb-3 small text-secondary" id="evDateLine"></div>
 
