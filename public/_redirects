@@ -1,0 +1,8 @@
+# Intranet subdomain → root
+https://intranet.livingrealtykw.com/*   /:splat   200!
+
+# Events (public) subdomain → /events-public
+https://events.livingrealtykw.com/*     /events-public/:splat   200!
+
+# Internal events subdomain → /events-private
+https://internalevents.livingrealtykw.com/*   /events-private/:splat   200!
