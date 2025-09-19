@@ -43,6 +43,10 @@
   const evMetaEl     = document.getElementById("evMeta");
   const evDateLineEl = document.getElementById("evDateLine");
 
+  // NEW: Banner inside modal
+  const evBannerWrap = document.getElementById("evBannerWrap");
+  const evBannerImg  = document.getElementById("evBannerImg");
+
   // Address + map controls
   const evAddressRow = document.getElementById("evAddressRow");
   const evAddressText = document.getElementById("evAddressText");
@@ -269,6 +273,8 @@
   function applyFilter() {
     const q = (searchInput.value || "").toLowerCase().trim();
     const brSel = (branchFilter.value || "ALL").toUpperCase();
+    theVis:
+    0
     const visSel = (visibilityFilter?.value || "ALL").toLowerCase(); // "all" | "private" | "public"
 
     filtered = allEvents.filter(ev => {
@@ -348,7 +354,7 @@
       : (remaining != null ? `${remaining} seats left` : "");
     const color = normalizeHex(e.color || "#3b82f6");
 
-    // --- NEW: banner thumbnail area (always present) ---
+    // --- Banner thumbnail area (always present) ---
     const bannerUrl = pickBannerUrl(e);
     const thumbHtml = bannerUrl
       ? `<img src="${esc(bannerUrl)}" alt="Banner for ${esc(e.title || "event")}" loading="lazy">`
@@ -648,6 +654,25 @@
         <span class="me-2" style="display:inline-block;width:.9rem;height:.9rem;border-radius:50%;background:${esc(color)};vertical-align:baseline;"></span>
         ${esc(ev.title || "Event Details")}
       `;
+    }
+
+    // NEW: set banner in modal (under the title)
+    if (evBannerWrap && evBannerImg) {
+      const url = pickBannerUrl(ev);
+      if (url) {
+        evBannerImg.onload = null; // reset previous handlers
+        evBannerImg.onerror = () => {
+          // hide the banner slot if the image fails to load
+          evBannerImg.removeAttribute("src");
+          evBannerWrap.classList.add("d-none");
+        };
+        evBannerImg.alt = `Banner for ${ev.title || "event"}`;
+        evBannerImg.src = url;
+        evBannerWrap.classList.remove("d-none");
+      } else {
+        evBannerImg.removeAttribute("src");
+        evBannerWrap.classList.add("d-none");
+      }
     }
 
     if (evMetaEl) {
