@@ -1,4 +1,6 @@
-// Events Admin (Firestore v8)
+// Events Admin (Firestore v8) — O365 operator-enabled
+// - Reads operator from window.KWLR.currentUser injected by events-admin.html guard
+// - Stamps createdBy*/updatedBy* on create/update
 // - List-only with Edit/Create modal
 // - Banner Image (Firebase Storage v8) with preview, validation, upload, remove
 // - detailDescription: auto-link + <br> with live preview (and safe round-trip on edit)
@@ -7,7 +9,6 @@
 // - Registration windows (days-before-start) + "Open registration now" auto-calc
 // - Combined filter: Location (Resource-only) + Search
 // - Thumbnails resolved from Storage
-// - Records creator/updater email (createdByEmail / updatedByEmail) — waits for Auth
 
 (function () {
   // ---------- DOM ----------
@@ -102,37 +103,29 @@
       ? window.storage
       : firebase.app().storage(STORAGE_BUCKET_URL);
 
-  try {
-    // log once for sanity
-    console.log("[Storage bucket]", storage.ref().toString());
-  } catch (_) {}
+  try { console.log("[Storage bucket]", storage.ref().toString()); } catch (_) {}
 
-  // ---------- AUTH: wait until firebase.auth() has a user (or not) ----------
-  let _authReadyResolve;
-  const authReady = new Promise((res) => (_authReadyResolve = res));
-  let _userEmail = null;
+  // ---------- OPERATOR (O365 via MSAL guard) ----------
+  // Prefer MSAL operator injected by events-admin.html; fall back to Firebase Auth email if present.
+  function getOperator() {
+    const msalUser = (window.KWLR && window.KWLR.currentUser) ? window.KWLR.currentUser : null;
+    const fbUser = (firebase.auth && firebase.auth().currentUser) ? firebase.auth().currentUser : null;
 
-  try {
-    firebase.auth().onAuthStateChanged((u) => {
-      _userEmail = (u && u.email) || null;
-      if (_authReadyResolve) {
-        _authReadyResolve();
-        _authReadyResolve = null;
-      }
-    });
-  } catch (_) {
-    // auth lib not present or not initialized; leave email as null
-    if (_authReadyResolve) {
-      _authReadyResolve();
-      _authReadyResolve = null;
-    }
-  }
+    const email =
+      (msalUser && msalUser.email) ||
+      (fbUser && fbUser.email) ||
+      null;
 
-  async function getCurrentUserEmailAsync() {
-    try {
-      await authReady;
-    } catch (_) {}
-    return _userEmail;
+    const name =
+      (msalUser && msalUser.name) ||
+      (fbUser && (fbUser.displayName || fbUser.email)) ||
+      null;
+
+    const oid =
+      (msalUser && (msalUser.oid || msalUser.objectId)) ||
+      null;
+
+    return { email, name, oid, source: msalUser ? "msal" : (fbUser ? "firebase" : "none") };
   }
 
   // ---------- Utils ----------
@@ -165,9 +158,7 @@
     const closeMs = (Number(closesDays) || 0) * 24 * 60 * 60 * 1000;
     const regOpensAt = new Date(startDate.getTime() - openMs);
     let regClosesAt = new Date(startDate.getTime() - closeMs);
-    if (regOpensAt >= regClosesAt) {
-      regClosesAt = new Date(regOpensAt.getTime() + 30 * 60000);
-    }
+    if (regOpensAt >= regClosesAt) regClosesAt = new Date(regOpensAt.getTime() + 30 * 60000);
     return { regOpensAt, regClosesAt };
   }
 
@@ -306,8 +297,7 @@
   }
 
   function renderEventRow(e) {
-    const s = toDate(e.start),
-      ee = toDate(e.end);
+    const s = toDate(e.start), ee = toDate(e.end);
     const dateLine = `${fmtDateTime(s)} – ${fmtDateTime(ee)}`;
     const remaining = typeof e.remaining === "number" ? e.remaining : null;
     const capacity = typeof e.capacity === "number" ? e.capacity : null;
@@ -687,7 +677,6 @@
 
   function validateBannerFile(file) {
     if (!file) return "No file selected.";
-    // HTML says ≤10MB; keep consistent
     if (file.size > 10 * 1024 * 1024) return "File too large. Maximum is 10 MB.";
     const type = (file.type || "").toLowerCase();
     const ok = type === "image/jpeg" || type === "image/jpg" || type === "image/png";
@@ -707,8 +696,7 @@
       const img = new Image();
       const url = URL.createObjectURL(file);
       img.onload = () => {
-        const w = img.naturalWidth,
-          h = img.naturalHeight;
+        const w = img.naturalWidth, h = img.naturalHeight;
         URL.revokeObjectURL(url);
         resolve({ width: w, height: h });
       };
@@ -744,7 +732,7 @@
     f_bannerRemove.classList.remove("d-none");
   }
 
-  // Upload under your folder structure: banners/events/<groupId>.<ext>
+  // Upload under banners/events/<groupId>.<ext>
   async function uploadBannerToStorage(file, groupId) {
     const ext = getExtByType(file.type);
     const path = `banners/events/${groupId}.${ext}`;
@@ -893,8 +881,8 @@
         Number(cb.value)
       );
 
-      // Get user email once (safe even if not logged in)
-      const userEmail = await getCurrentUserEmailAsync();
+      // Operator from O365 (preferred) or Firebase Auth fallback
+      const operator = getOperator();
 
       // ----- EDIT -----
       if (editingId) {
@@ -912,10 +900,10 @@
           bannerPayload = {
             bannerUrl: up.url,
             bannerPath: up.path,
-            bannerWidth: pendingBannerMeta?.width ?? null,
-            bannerHeight: pendingBannerMeta?.height ?? null,
-            bannerType: pendingBannerMeta?.type ?? (pendingBannerFile.type || null),
-            bannerSize: pendingBannerMeta?.size ?? pendingBannerFile.size,
+            bannerWidth: (pendingBannerMeta && pendingBannerMeta.width) || null,
+            bannerHeight: (pendingBannerMeta && pendingBannerMeta.height) || null,
+            bannerType: (pendingBannerMeta && pendingBannerMeta.type) || (pendingBannerFile && pendingBannerFile.type) || null,
+            bannerSize: (pendingBannerMeta && pendingBannerMeta.size) || (pendingBannerFile && pendingBannerFile.size) || null,
           };
           if (existingBannerPath && existingBannerPath !== up.path) {
             await deleteBannerAtPath(existingBannerPath);
@@ -948,7 +936,9 @@
           capacity: capacity != null ? capacity : firebase.firestore.FieldValue.delete(),
           remaining: remaining != null ? remaining : firebase.firestore.FieldValue.delete(),
           updatedAt: new Date(),
-          updatedByEmail: userEmail || null,
+          updatedByEmail: operator.email || null,
+          updatedByName: operator.name || null,
+          updatedByOid: operator.oid || null,
           ...bannerPayload,
         };
 
@@ -980,10 +970,10 @@
         newBannerData = {
           bannerUrl: up.url,
           bannerPath: up.path,
-          bannerWidth: pendingBannerMeta?.width ?? null,
-          bannerHeight: pendingBannerMeta?.height ?? null,
-          bannerType: pendingBannerMeta?.type ?? (pendingBannerFile.type || null),
-          bannerSize: pendingBannerMeta?.size ?? pendingBannerFile.size,
+          bannerWidth: (pendingBannerMeta && pendingBannerMeta.width) || null,
+          bannerHeight: (pendingBannerMeta && pendingBannerMeta.height) || null,
+          bannerType: (pendingBannerMeta && pendingBannerMeta.type) || (pendingBannerFile && pendingBannerFile.type) || null,
+          bannerSize: (pendingBannerMeta && pendingBannerMeta.size) || (pendingBannerFile && pendingBannerFile.size) || null,
         };
       }
 
@@ -1021,9 +1011,13 @@
           end: occEnd,
           allowRegistration,
           createdAt: new Date(),
-          createdByEmail: userEmail || null,
+          createdByEmail: operator.email || null,
+          createdByName: operator.name || null,
+          createdByOid: operator.oid || null,
           updatedAt: new Date(),
-          updatedByEmail: userEmail || null,
+          updatedByEmail: operator.email || null,
+          updatedByName: operator.name || null,
+          updatedByOid: operator.oid || null,
           ...(capacity != null ? { capacity } : {}),
           ...(remaining != null ? { remaining } : capacity != null ? { remaining: capacity } : {}),
           ...(newBannerData || {}),
@@ -1144,8 +1138,7 @@
         .map((d) => ({ id: d.id, ...d.data() }))
         .filter((ev) => ev.id !== ignoreId && ev._id !== ignoreId)
         .some((ev) => {
-          const s = toDate(ev.start),
-            e = toDate(ev.end);
+          const s = toDate(ev.start), e = toDate(ev.end);
           if (!s || !e) return false;
           return s < end && e > start;
         });

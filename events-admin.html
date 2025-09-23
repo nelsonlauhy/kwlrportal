@@ -29,10 +29,9 @@
     .weekday-pill { user-select:none; }
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","Courier New", monospace; }
 
-    /* Banner preview box (edit modal) */
     .banner-box {
       width: 320px;
-      aspect-ratio: 2 / 1; /* matches 2160x1080 */
+      aspect-ratio: 2 / 1;
       border: 1px dashed #cbd5e1;
       background: #f8fafc;
       display: flex; align-items: center; justify-content: center;
@@ -41,300 +40,295 @@
     }
     .banner-box img { max-width: 100%; max-height: 100%; display: none; }
 
-    /* === Event list thumbnail (NEW for list view) === */
-    .event-row {
-      display: flex;
-      gap: 12px;
-      align-items: flex-start;
-    }
+    .event-row { display: flex; gap: 12px; align-items: flex-start; }
     .event-thumb {
-      flex: 0 0 96px;
-      width: 96px;
-      height: 54px; /* compact 16:9 box */
-      border-radius: .5rem;
-      object-fit: cover;
-      background: #f1f5f9;
-      border: 1px solid #e2e8f0;
+      flex: 0 0 96px; width: 96px; height: 54px;
+      border-radius: .5rem; object-fit: cover;
+      background: #f1f5f9; border: 1px solid #e2e8f0;
     }
     .event-thumb-placeholder {
-      flex: 0 0 96px;
-      width: 96px;
-      height: 54px;
-      border-radius: .5rem;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      background: #f8fafc;
-      color: #94a3b8;
-      border: 1px dashed #e2e8f0;
-      font-size: 1.25rem;
+      flex: 0 0 96px; width: 96px; height: 54px;
+      border-radius: .5rem; display: flex; align-items: center; justify-content: center;
+      background: #f8fafc; color: #94a3b8; border: 1px dashed #e2e8f0; font-size: 1.25rem;
     }
   </style>
 </head>
 <body class="bg-light">
 
-  <main class="container py-4">
-    <!-- Header -->
-    <div class="d-flex align-items-center justify-content-between flex-wrap mb-3" style="row-gap:.5rem;">
-      <h3 class="page-title mb-0">
-        <i class="bi bi-calendar2-week me-1"></i>Events Administration
-      </h3>
-      <div class="d-flex align-items-center gap-2">
-        <button class="btn btn-primary btn-sm" id="btnNew">
-          <i class="bi bi-plus-lg me-1"></i> New Event
-        </button>
+  <!-- THEME NAVBAR -->
+  <div data-include="/partials/navbar.html"></div>
+
+  <!-- AUTH GATE (spinner/403) -->
+  <div id="authGate" class="container py-5">
+    <div class="d-flex align-items-center justify-content-center">
+      <div class="text-center">
+        <div class="spinner-border mb-3"></div>
+        <div class="text-muted">Checking your Microsoft 365 sign-in…</div>
       </div>
     </div>
+  </div>
 
-    <!-- Filters -->
-    <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap" style="row-gap:.5rem;">
-      <div class="control-row">
-        <select id="locationFilter" class="form-select filter-control" aria-label="Filter by location">
-          <option value="ALL">All Locations</option>
-          <!-- JS will populate branches and resources -->
-        </select>
-
-        <input id="searchInput" class="form-control filter-control" placeholder="Search title, room, description…" aria-label="Search events" />
-      </div>
-
-      <div class="text-muted small">
-        <span id="listLabel">Upcoming</span>
-      </div>
-    </div>
-
-    <!-- List container (JS will render .event-card with .event-row and .event-thumb) -->
-    <div id="eventsContainer" class="d-grid" style="gap:1rem;">
-      <div class="text-center text-muted py-4">
-        <div class="spinner-border spinner-border-sm me-2"></div> Loading events…
-      </div>
-    </div>
-  </main>
-
-  <!-- Create/Edit Modal -->
-  <div class="modal fade" id="editModal" tabindex="-1" aria-hidden="true">
-    <div class="modal-dialog modal-lg modal-dialog-scrollable">
-      <form class="modal-content" id="editForm">
-        <div class="modal-header">
-          <h5 class="modal-title" id="editTitle">New Event</h5>
-          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-        </div>
-
-        <div class="modal-body">
-          <div class="row g-3">
-            <div class="col-md-8">
-              <label class="form-label">Title</label>
-              <input type="text" class="form-control" id="f_title" required maxlength="160">
-            </div>
-            <div class="col-md-4">
-              <label class="form-label">Status</label>
-              <select id="f_status" class="form-select">
-                <option value="draft">draft</option>
-                <option value="published">published</option>
-              </select>
-            </div>
-
-            <div class="col-md-6">
-              <label class="form-label">Branch</label>
-              <select id="f_branch" class="form-select" required>
-                <option value="">--</option>
-                <option value="Markham">Markham</option>
-                <option value="North Markham">North Markham</option>
-                <option value="Midtown Toronto">Midtown Toronto</option>
-                <option value="Mississauga">Mississauga</option>
-              </select>
-            </div>
-            <div class="col-md-8">
-              <label class="form-label">Resource</label>
-              <select id="f_resourceId" class="form-select"></select>
-              <div class="form-hint">Selecting a resource will autofill name & default capacity.</div>
-            </div>
-
-            <div class="col-md-6">
-              <label class="form-label">Start</label>
-              <input type="datetime-local" class="form-control" id="f_start" required>
-            </div>
-            <div class="col-md-6">
-              <label class="form-label">End</label>
-              <input type="datetime-local" class="form-control" id="f_end" required>
-            </div>
-
-            <div class="col-md-12">
-              <label class="form-label">Short Description</label>
-              <input type="text" class="form-control" id="f_description" maxlength="500">
-            </div>
-
-            <div class="col-md-12">
-              <label class="form-label">Detail Description (paste plain text; URLs auto-link)</label>
-              <textarea class="form-control" id="f_detailDescription" rows="6" placeholder="Paste Zoom invite or any text..."></textarea>
-              <div class="form-hint mt-1">Line breaks will be kept. Links are detected automatically.</div>
-
-              <!-- Live preview -->
-              <div class="mt-3">
-                <div class="form-label mb-1">Preview</div>
-                <div id="f_detailPreview" class="border rounded p-2 bg-white" style="min-height:2.5rem;"></div>
-              </div>
-            </div>
-
-            <div class="col-md-4">
-              <label class="form-label">Allow Registration</label>
-              <select id="f_allowRegistration" class="form-select">
-                <option value="true">true</option>
-                <option value="false">false</option>
-              </select>
-            </div>
-            <div class="col-md-4">
-              <label class="form-label">Capacity</label>
-              <input type="number" class="form-control" id="f_capacity" min="0" step="1">
-            </div>
-            <div class="col-md-4">
-              <label class="form-label">Remaining</label>
-              <input type="number" class="form-control" id="f_remaining" min="0" step="1">
-            </div>
-
-            <!-- Offsets in DAYS (relative to each occurrence's start) -->
-            <div class="col-md-6">
-              <label class="form-label">Reg Opens (days before start)</label>
-              <input type="number" class="form-control" id="f_regOpensDays" placeholder="7" value="7" min="0" step="1">
-              <div class="form-check mt-2">
-                <input class="form-check-input" type="checkbox" id="f_regOpenNow">
-                <label class="form-check-label" for="f_regOpenNow">
-                  Open registration now (auto-calculate days)
-                </label>
-              </div>
-            </div>
-            <div class="col-md-6">
-              <label class="form-label">Reg Closes (days before start)</label>
-              <input type="number" class="form-control" id="f_regClosesDays" placeholder="1" value="1" min="0" step="1">
-            </div>
-
-            <div class="col-md-6">
-              <label class="form-label">Visibility</label>
-              <select id="f_visibility" class="form-select">
-                <option value="public">public</option>
-                <option value="private">private</option>
-              </select>
-            </div>
-            <div class="col-md-6">
-              <label class="form-label">Resource Name (auto)</label>
-              <input type="text" class="form-control" id="f_resourceName" readonly>
-            </div>
-
-            <!-- Tag Color -->
-            <div class="col-md-6">
-              <label class="form-label">Tag Color</label>
-              <div class="d-flex gap-2 align-items-center">
-                <select id="f_colorPreset" class="form-select">
-                  <option value="#3b82f6">Blue</option>
-                  <option value="#22c55e">Green</option>
-                  <option value="#ef4444">Red</option>
-                  <option value="#eab308">Yellow</option>
-                  <option value="#a855f7">Purple</option>
-                  <option value="#f97316">Orange</option>
-                  <option value="#14b8a6">Teal</option>
-                  <option value="#64748b">Slate</option>
-                  <option value="__custom">Custom…</option>
-                </select>
-                <input type="color" id="f_color" class="form-control form-control-color" value="#3b82f6" title="Custom color">
-              </div>
-              <div class="form-hint">Used as the event background in calendar views.</div>
-            </div>
-
-            <!-- Banner Image (NEW) -->
-            <div class="col-12">
-              <label class="form-label d-flex align-items-center gap-2">
-                Banner Image <span class="badge text-bg-light border">optional</span>
-              </label>
-              <div class="d-flex gap-3 align-items-start flex-wrap">
-                <div class="banner-box">
-                  <img id="f_bannerPreview" alt="Banner preview">
-                  <div id="f_bannerPlaceholder" class="text-muted small text-center px-2">
-                    2160×1080 recommended<br>JPEG/PNG · ≤10 MB
-                  </div>
-                </div>
-                <div class="flex-grow-1" style="min-width:260px;">
-                  <input type="file" id="f_bannerFile" accept=".jpg,.jpeg,.png" class="form-control mb-2">
-                  <div class="form-hint">
-                    Recommended image size: <strong>2160×1080</strong>. Max file size: <strong>10 MB</strong>. Types: <strong>.JPEG, .PNG</strong>.
-                  </div>
-                  <div class="progress mt-2 d-none" id="bannerProgWrap" style="height:6px;">
-                    <div class="progress-bar" id="bannerProg" style="width:0%"></div>
-                  </div>
-                  <div class="mt-2 d-flex align-items-center gap-2">
-                    <button type="button" class="btn btn-outline-danger btn-sm d-none" id="f_bannerRemove">
-                      <i class="bi bi-x-circle me-1"></i>Remove banner
-                    </button>
-                    <span class="small text-muted" id="f_bannerMeta"></span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- Recurrence (Approach A: materialize on save) -->
-            <div class="col-12">
-              <div class="border-top pt-3 mt-2">
-                <div class="d-flex align-items-center justify-content-between">
-                  <label class="form-label m-0">Repeat</label>
-                  <span class="form-hint">Materializes separate events on Save.</span>
-                </div>
-                <div class="row g-2">
-                  <div class="col-md-4">
-                    <select id="f_repeat" class="form-select">
-                      <option value="none">None</option>
-                      <option value="daily">Daily</option>
-                      <option value="weekly">Weekly</option>
-                      <option value="monthly">Monthly (by date)</option>
-                    </select>
-                  </div>
-                  <div class="col-md-2">
-                    <input type="number" class="form-control" id="f_interval" value="1" min="1" step="1">
-                    <div class="form-hint">Interval</div>
-                  </div>
-                  <div class="col-md-6" id="weeklyDaysWrap" style="display:none;">
-                    <div class="d-flex flex-wrap gap-2">
-                      <label class="btn btn-sm btn-outline-secondary weekday-pill"><input class="form-check-input me-1" type="checkbox" value="0">Sun</label>
-                      <label class="btn btn-sm btn-outline-secondary weekday-pill"><input class="form-check-input me-1" type="checkbox" value="1">Mon</label>
-                      <label class="btn btn-sm btn-outline-secondary weekday-pill"><input class="form-check-input me-1" type="checkbox" value="2">Tue</label>
-                      <label class="btn btn-sm btn-outline-secondary weekday-pill"><input class="form-check-input me-1" type="checkbox" value="3">Wed</label>
-                      <label class="btn btn-sm btn-outline-secondary weekday-pill"><input class="form-check-input me-1" type="checkbox" value="4">Thu</label>
-                      <label class="btn btn-sm btn-outline-secondary weekday-pill"><input class="form-check-input me-1" type="checkbox" value="5">Fri</label>
-                      <label class="btn btn-sm btn-outline-secondary weekday-pill"><input class="form-check-input me-1" type="checkbox" value="6">Sat</label>
-                    </div>
-                    <div class="form-hint">For Weekly, choose days.</div>
-                  </div>
-                  <div class="col-md-3">
-                    <select id="f_repeatEndType" class="form-select">
-                      <option value="count">After N</option>
-                      <option value="until">Until date</option>
-                    </select>
-                  </div>
-                  <div class="col-md-3" id="repeatCountWrap">
-                    <input type="number" class="form-control" id="f_repeatCount" value="1" min="1" step="1">
-                    <div class="form-hint">Occurrences</div>
-                  </div>
-                  <div class="col-md-3" id="repeatUntilWrap" style="display:none;">
-                    <input type="date" class="form-control" id="f_repeatUntil">
-                    <div class="form-hint">Inclusive</div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- top/bottom messages -->
-          <div class="alert alert-danger mt-3 d-none" id="editErr"></div>
-          <div class="alert alert-success mt-3 d-none" id="editOk">Saved.</div>
-        </div>
-
-        <!-- footer with inline error (left) -->
-        <div class="modal-footer d-flex align-items-center justify-content-end gap-2">
-          <div id="editErrInline" class="text-danger small me-auto d-none"></div>
-          <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Close</button>
-          <button type="submit" class="btn btn-primary btn-sm" id="btnSave">
-            <span class="spinner-border spinner-border-sm me-1 d-none" id="editBusy"></span>
-            Save
+  <!-- APP WRAP (hidden until auth passes) -->
+  <div id="appWrap" class="d-none">
+    <main class="container py-4">
+      <!-- Header -->
+      <div class="d-flex align-items-center justify-content-between flex-wrap mb-3" style="row-gap:.5rem;">
+        <h3 class="page-title mb-0">
+          <i class="bi bi-calendar2-week me-1"></i>Events Administration
+        </h3>
+        <div class="d-flex align-items-center gap-2">
+          <!-- shows signed in user for traceability -->
+          <span id="signedInBadge" class="badge text-bg-light border d-none"></span>
+          <button class="btn btn-primary btn-sm" id="btnNew">
+            <i class="bi bi-plus-lg me-1"></i> New Event
           </button>
         </div>
-      </form>
+      </div>
+
+      <!-- Filters -->
+      <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap" style="row-gap:.5rem;">
+        <div class="control-row">
+          <select id="locationFilter" class="form-select filter-control" aria-label="Filter by location">
+            <option value="ALL">All Locations</option>
+          </select>
+          <input id="searchInput" class="form-control filter-control" placeholder="Search title, room, description…" aria-label="Search events" />
+        </div>
+
+        <div class="text-muted small">
+          <span id="listLabel">Upcoming</span>
+        </div>
+      </div>
+
+      <!-- List container -->
+      <div id="eventsContainer" class="d-grid" style="gap:1rem;">
+        <div class="text-center text-muted py-4">
+          <div class="spinner-border spinner-border-sm me-2"></div> Loading events…
+        </div>
+      </div>
+    </main>
+
+    <!-- Create/Edit Modal -->
+    <div class="modal fade" id="editModal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <form class="modal-content" id="editForm">
+          <div class="modal-header">
+            <h5 class="modal-title" id="editTitle">New Event</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+
+          <div class="modal-body">
+            <div class="row g-3">
+              <div class="col-md-8">
+                <label class="form-label">Title</label>
+                <input type="text" class="form-control" id="f_title" required maxlength="160">
+              </div>
+              <div class="col-md-4">
+                <label class="form-label">Status</label>
+                <select id="f_status" class="form-select">
+                  <option value="draft">draft</option>
+                  <option value="published">published</option>
+                </select>
+              </div>
+
+              <div class="col-md-6">
+                <label class="form-label">Branch</label>
+                <select id="f_branch" class="form-select" required>
+                  <option value="">--</option>
+                  <option value="Markham">Markham</option>
+                  <option value="North Markham">North Markham</option>
+                  <option value="Midtown Toronto">Midtown Toronto</option>
+                  <option value="Mississauga">Mississauga</option>
+                </select>
+              </div>
+              <div class="col-md-8">
+                <label class="form-label">Resource</label>
+                <select id="f_resourceId" class="form-select"></select>
+                <div class="form-hint">Selecting a resource will autofill name & default capacity.</div>
+              </div>
+
+              <div class="col-md-6">
+                <label class="form-label">Start</label>
+                <input type="datetime-local" class="form-control" id="f_start" required>
+              </div>
+              <div class="col-md-6">
+                <label class="form-label">End</label>
+                <input type="datetime-local" class="form-control" id="f_end" required>
+              </div>
+
+              <div class="col-md-12">
+                <label class="form-label">Short Description</label>
+                <input type="text" class="form-control" id="f_description" maxlength="500">
+              </div>
+
+              <div class="col-md-12">
+                <label class="form-label">Detail Description (paste plain text; URLs auto-link)</label>
+                <textarea class="form-control" id="f_detailDescription" rows="6" placeholder="Paste Zoom invite or any text..."></textarea>
+                <div class="form-hint mt-1">Line breaks will be kept. Links are detected automatically.</div>
+
+                <!-- Live preview -->
+                <div class="mt-3">
+                  <div class="form-label mb-1">Preview</div>
+                  <div id="f_detailPreview" class="border rounded p-2 bg-white" style="min-height:2.5rem;"></div>
+                </div>
+              </div>
+
+              <div class="col-md-4">
+                <label class="form-label">Allow Registration</label>
+                <select id="f_allowRegistration" class="form-select">
+                  <option value="true">true</option>
+                  <option value="false">false</option>
+                </select>
+              </div>
+              <div class="col-md-4">
+                <label class="form-label">Capacity</label>
+                <input type="number" class="form-control" id="f_capacity" min="0" step="1">
+              </div>
+              <div class="col-md-4">
+                <label class="form-label">Remaining</label>
+                <input type="number" class="form-control" id="f_remaining" min="0" step="1">
+              </div>
+
+              <div class="col-md-6">
+                <label class="form-label">Reg Opens (days before start)</label>
+                <input type="number" class="form-control" id="f_regOpensDays" placeholder="7" value="7" min="0" step="1">
+                <div class="form-check mt-2">
+                  <input class="form-check-input" type="checkbox" id="f_regOpenNow">
+                  <label class="form-check-label" for="f_regOpenNow">Open registration now (auto-calculate days)</label>
+                </div>
+              </div>
+              <div class="col-md-6">
+                <label class="form-label">Reg Closes (days before start)</label>
+                <input type="number" class="form-control" id="f_regClosesDays" placeholder="1" value="1" min="0" step="1">
+              </div>
+
+              <div class="col-md-6">
+                <label class="form-label">Visibility</label>
+                <select id="f_visibility" class="form-select">
+                  <option value="public">public</option>
+                  <option value="private">private</option>
+                </select>
+              </div>
+              <div class="col-md-6">
+                <label class="form-label">Resource Name (auto)</label>
+                <input type="text" class="form-control" id="f_resourceName" readonly>
+              </div>
+
+              <div class="col-md-6">
+                <label class="form-label">Tag Color</label>
+                <div class="d-flex gap-2 align-items-center">
+                  <select id="f_colorPreset" class="form-select">
+                    <option value="#3b82f6">Blue</option>
+                    <option value="#22c55e">Green</option>
+                    <option value="#ef4444">Red</option>
+                    <option value="#eab308">Yellow</option>
+                    <option value="#a855f7">Purple</option>
+                    <option value="#f97316">Orange</option>
+                    <option value="#14b8a6">Teal</option>
+                    <option value="#64748b">Slate</option>
+                    <option value="__custom">Custom…</option>
+                  </select>
+                  <input type="color" id="f_color" class="form-control form-control-color" value="#3b82f6" title="Custom color">
+                </div>
+                <div class="form-hint">Used as the event background in calendar views.</div>
+              </div>
+
+              <!-- Banner Image -->
+              <div class="col-12">
+                <label class="form-label d-flex align-items-center gap-2">
+                  Banner Image <span class="badge text-bg-light border">optional</span>
+                </label>
+                <div class="d-flex gap-3 align-items-start flex-wrap">
+                  <div class="banner-box">
+                    <img id="f_bannerPreview" alt="Banner preview">
+                    <div id="f_bannerPlaceholder" class="text-muted small text-center px-2">
+                      2160×1080 recommended<br>JPEG/PNG · ≤10 MB
+                    </div>
+                  </div>
+                  <div class="flex-grow-1" style="min-width:260px;">
+                    <input type="file" id="f_bannerFile" accept=".jpg,.jpeg,.png" class="form-control mb-2">
+                    <div class="form-hint">
+                      Recommended image size: <strong>2160×1080</strong>. Max file size: <strong>10 MB</strong>. Types: <strong>.JPEG, .PNG</strong>.
+                    </div>
+                    <div class="progress mt-2 d-none" id="bannerProgWrap" style="height:6px;">
+                      <div class="progress-bar" id="bannerProg" style="width:0%"></div>
+                    </div>
+                    <div class="mt-2 d-flex align-items-center gap-2">
+                      <button type="button" class="btn btn-outline-danger btn-sm d-none" id="f_bannerRemove">
+                        <i class="bi bi-x-circle me-1"></i>Remove banner
+                      </button>
+                      <span class="small text-muted" id="f_bannerMeta"></span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Repeat materialization -->
+              <div class="col-12">
+                <div class="border-top pt-3 mt-2">
+                  <div class="d-flex align-items-center justify-content-between">
+                    <label class="form-label m-0">Repeat</label>
+                    <span class="form-hint">Materializes separate events on Save.</span>
+                  </div>
+                  <div class="row g-2">
+                    <div class="col-md-4">
+                      <select id="f_repeat" class="form-select">
+                        <option value="none">None</option>
+                        <option value="daily">Daily</option>
+                        <option value="weekly">Weekly</option>
+                        <option value="monthly">Monthly (by date)</option>
+                      </select>
+                    </div>
+                    <div class="col-md-2">
+                      <input type="number" class="form-control" id="f_interval" value="1" min="1" step="1">
+                      <div class="form-hint">Interval</div>
+                    </div>
+                    <div class="col-md-6" id="weeklyDaysWrap" style="display:none;">
+                      <div class="d-flex flex-wrap gap-2">
+                        <label class="btn btn-sm btn-outline-secondary weekday-pill"><input class="form-check-input me-1" type="checkbox" value="0">Sun</label>
+                        <label class="btn btn-sm btn-outline-secondary weekday-pill"><input class="form-check-input me-1" type="checkbox" value="1">Mon</label>
+                        <label class="btn btn-sm btn-outline-secondary weekday-pill"><input class="form-check-input me-1" type="checkbox" value="2">Tue</label>
+                        <label class="btn btn-sm btn-outline-secondary weekday-pill"><input class="form-check-input me-1" type="checkbox" value="3">Wed</label>
+                        <label class="btn btn-sm btn-outline-secondary weekday-pill"><input class="form-check-input me-1" type="checkbox" value="4">Thu</label>
+                        <label class="btn btn-sm btn-outline-secondary weekday-pill"><input class="form-check-input me-1" type="checkbox" value="5">Fri</label>
+                        <label class="btn btn-sm btn-outline-secondary weekday-pill"><input class="form-check-input me-1" type="checkbox" value="6">Sat</label>
+                      </div>
+                      <div class="form-hint">For Weekly, choose days.</div>
+                    </div>
+                    <div class="col-md-3">
+                      <select id="f_repeatEndType" class="form-select">
+                        <option value="count">After N</option>
+                        <option value="until">Until date</option>
+                      </select>
+                    </div>
+                    <div class="col-md-3" id="repeatCountWrap">
+                      <input type="number" class="form-control" id="f_repeatCount" value="1" min="1" step="1">
+                      <div class="form-hint">Occurrences</div>
+                    </div>
+                    <div class="col-md-3" id="repeatUntilWrap" style="display:none;">
+                      <input type="date" class="form-control" id="f_repeatUntil">
+                      <div class="form-hint">Inclusive</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- top/bottom messages -->
+            <div class="alert alert-danger mt-3 d-none" id="editErr"></div>
+            <div class="alert alert-success mt-3 d-none" id="editOk">Saved.</div>
+          </div>
+
+          <!-- footer -->
+          <div class="modal-footer d-flex align-items-center justify-content-end gap-2">
+            <div id="editErrInline" class="text-danger small me-auto d-none"></div>
+            <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Close</button>
+            <button type="submit" class="btn btn-primary btn-sm" id="btnSave">
+              <span class="spinner-border spinner-border-sm me-1 d-none" id="editBusy"></span>
+              Save
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   </div>
 
@@ -376,9 +370,7 @@
 
         <div class="modal-body">
           <div class="d-flex align-items-center justify-content-between mb-2">
-            <div class="small text-muted">
-              <span id="regEventMeta"></span>
-            </div>
+            <div class="small text-muted"><span id="regEventMeta"></span></div>
             <div>
               <button class="btn btn-outline-secondary btn-sm" id="btnCopyEmails" title="Copy all emails">
                 <i class="bi bi-clipboard-check me-1"></i> Copy Emails
@@ -414,17 +406,107 @@
     </div>
   </div>
 
-  <!-- Bootstrap + Firebase v8 (no custom JS here) -->
+  <!-- Bootstrap + Firebase -->
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-storage.js"></script>
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
 
-  <!-- Your Firebase config (defines window.db; ensure it also initializes firebase.app()) -->
+  <!-- Firebase config -->
   <script src="./js/firebaseConfig.js"></script>
 
-  <!-- Page Logic (JS to be provided/updated separately) -->
+  <!-- THEME PARTIALS -->
+  <script src="/js/include.js"></script>
+
+  <!-- MSAL (must be before auth.js) -->
+  <script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@2.39.0/lib/msal-browser.min.js"></script>
+
+  <!-- Your shared MSAL wrapper -->
+  <script src="/js/auth.js"></script>
+
+  <!-- O365 SIGN-IN + INTERNAL-ONLY GUARD -->
+  <script>
+    (async function () {
+      const authGate = document.getElementById('authGate');
+      const appWrap  = document.getElementById('appWrap');
+      const badge    = document.getElementById('signedInBadge');
+
+      // Allowed corporate domains (edit as needed)
+      const INTERNAL_DOMAINS = [
+        'livingrealtykw.com',
+        'livinggroupinc.com',
+        'livingrealty.com',
+        'kwliving.com'
+      ];
+
+      function show403(msg) {
+        authGate.innerHTML = `
+          <div class="container py-5">
+            <div class="alert alert-danger">
+              <strong>Access denied.</strong> ${msg || 'This page is restricted to internal staff.'}
+            </div>
+            <a class="btn btn-outline-secondary" href="/index.html">Back to Portal</a>
+          </div>`;
+      }
+
+      // Ensure MSAL is present
+      if (!window._auth || typeof window._auth.getAllAccounts !== 'function') {
+        show403('Authentication not initialized. Please contact IT.');
+        return;
+      }
+
+      // Try get existing session
+      let account = window._auth.getActiveAccount() || window._auth.getAllAccounts()[0];
+
+      // If no session, do interactive sign-in
+      if (!account) {
+        try {
+          const loginResp = await window._auth.loginPopup({
+            scopes: ['User.Read'], // minimal scope, same tenant
+          });
+          account = loginResp && loginResp.account;
+          if (account) window._auth.setActiveAccount(account);
+        } catch (e) {
+          console.error('Login failed:', e);
+          show403('Sign-in is required to access Events Admin.');
+          return;
+        }
+      }
+
+      // Pull email & name from account id token claims
+      const email = (account && (account.username || (account.idTokenClaims && (account.idTokenClaims.email || account.idTokenClaims.preferred_username)))) || '';
+      const name  = (account && (account.name || (account.idTokenClaims && account.idTokenClaims.name))) || '';
+      const oid   = (account && (account.localAccountId || (account.idTokenClaims && (account.idTokenClaims.oid || account.idTokenClaims.sub)))) || '';
+
+      if (!email) {
+        show403('Could not determine your email. Please try signing out and in again.');
+        return;
+      }
+
+      const domain = email.split('@')[1]?.toLowerCase() || '';
+      const isInternal = INTERNAL_DOMAINS.includes(domain);
+
+      if (!isInternal) {
+        show403(`Your account (${email}) is not an internal staff mailbox.`);
+        return;
+      }
+
+      // Expose current user to page scripts (events_admin.js will use this)
+      window.KWLR = window.KWLR || {};
+      window.KWLR.currentUser = { name, email, oid, domain };
+
+      // Decorate UI and open app
+      if (badge) {
+        badge.textContent = `${name || email} (${domain})`;
+        badge.classList.remove('d-none');
+      }
+      authGate.classList.add('d-none');
+      appWrap.classList.remove('d-none');
+    })();
+  </script>
+
+  <!-- Page Logic -->
   <script src="./js/events_admin.js" defer></script>
   <script src="./js/events_admin_regs.js" defer></script>
 </body>
