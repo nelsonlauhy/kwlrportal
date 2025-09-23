@@ -9,6 +9,7 @@
 // - "Open registration now" auto-calc
 // - Banner constraints: JPEG/PNG, ≤10MB, recommended 2160x1080
 // - List view shows banner thumbnail when available
+// - Records creator/updater emails
 
 (function() {
   // ---------- DOM ----------
@@ -68,7 +69,7 @@
   const delBusy = document.getElementById("delBusy");
   const btnDoDelete = document.getElementById("btnDoDelete");
 
-  // Banner elements (NEW)
+  // Banner elements
   const f_bannerPreview      = document.getElementById("f_bannerPreview");
   const f_bannerPlaceholder  = document.getElementById("f_bannerPlaceholder");
   const f_bannerFile         = document.getElementById("f_bannerFile");
@@ -87,7 +88,7 @@
   let editDetailHTMLOriginal = "";
   let editDetailTouched = false;
 
-  // Banner state (NEW)
+  // Banner state
   let pendingBannerFile = null;       // File selected but not yet uploaded
   let pendingBannerMeta = null;       // {width,height,type,size}
   let existingBannerPath = null;      // path in storage for current event
@@ -127,6 +128,15 @@
     return value ? new Date(value) : null;
   }
 
+  // Get current user's email (requires firebase-auth on the page)
+  function getCurrentUserEmail() {
+    try {
+      return (firebase.auth && firebase.auth().currentUser && firebase.auth().currentUser.email) || null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   // Registration windows
   function deriveRegWindowDays(startDate, opensDays, closesDays) {
     const openMs = (Number(opensDays) || 0) * 24 * 60 * 60 * 1000;
@@ -163,7 +173,7 @@
   function clearEditErrors() { [editErr, editErrInline, editOk].forEach(el => { el.classList.add("d-none"); el.textContent=""; }); }
   function showInlineError(msg) { editErrInline.textContent = msg; editErrInline.classList.remove("d-none"); }
 
-  // ---------- Banner URL resolver for list thumbnails (NEW) ----------
+  // ---------- Banner URL resolver for list thumbnails ----------
   const _bannerUrlCache = new Map();
   function resolveBannerUrl(evt) {
     try {
@@ -252,11 +262,8 @@
           img.alt = "Banner";
           img.loading = "lazy";
           img.src = url;
-          // Replace placeholder with image
           mount.replaceWith(img);
-          img.id = `thumb-${e._id}`; // keep id if needed later
-        } else {
-          // keep placeholder as-is
+          img.id = `thumb-${e._id}`;
         }
       });
     });
@@ -276,13 +283,11 @@
       ? `<span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:${esc(colorHex)};border:1px solid #cbd5e1;vertical-align:middle;margin-right:.4rem;"></span>`
       : "";
 
-    // LEFT: banner mount (placeholder). JS will replace with <img> if URL resolves.
     const thumb =
       `<div class="event-thumb-placeholder" id="thumb-${esc(e._id)}" aria-label="No banner">
          <i class="bi bi-image"></i>
        </div>`;
 
-    // RIGHT: main body
     const body = `
       <div class="flex-grow-1">
         <div class="event-title">${esc(e.title || "Untitled Event")}</div>
@@ -418,7 +423,7 @@
     f_repeatCount.value = "1";
     f_repeatUntil.value = "";
 
-    // Reset banner UI/state (NEW)
+    // Reset banner UI/state
     resetBannerStateAndUI();
 
     if (!editingId) {
@@ -459,7 +464,7 @@
 
     backfillRegDays(ev);
 
-    // Load banner UI from event (NEW)
+    // Load banner UI from event
     loadBannerFromEvent(ev);
 
     editModal.show();
@@ -605,7 +610,7 @@
 
     if (f_bannerPreview) {
       f_bannerPreview.src = "";
-      f_bannerPreview.style.display = "none"; // hidden by default
+      f_bannerPreview.style.display = "none";
     }
     if (f_bannerPlaceholder) f_bannerPlaceholder.style.display = "";
     f_bannerRemove.classList.add("d-none");
@@ -871,6 +876,7 @@
           capacity: (capacity != null ? capacity : firebase.firestore.FieldValue.delete()),
           remaining: (remaining != null ? remaining : firebase.firestore.FieldValue.delete()),
           updatedAt: new Date(),
+          updatedByEmail: getCurrentUserEmail(),        // ← NEW
           ...bannerPayload
         };
 
@@ -895,6 +901,9 @@
       if (!occurrences.length) {
         throw new Error("No occurrences generated. Check your repeat settings.");
       }
+
+      // get the creator email once
+      const creatorEmail = getCurrentUserEmail();
 
       // If we have a banner file for new events, upload ONCE and reuse metadata
       let newBannerData = null;
@@ -940,6 +949,7 @@
           allowRegistration,
           createdAt: new Date(),
           updatedAt: new Date(),
+          createdByEmail: creatorEmail || null,      // ← NEW
           ...(capacity != null ? { capacity } : {}),
           ...(remaining != null
               ? { remaining }
