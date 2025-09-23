@@ -1,34 +1,32 @@
 // Events Admin (Firestore v8)
 // - List-only with Edit/Create modal
 // - Banner Image (Firebase Storage v8) with preview, validation, upload, remove
-// - detailDescription: auto-link + <br> with live preview
-// - Color tag
-// - Conflict detection (branch + resource overlap)
-// - Registration windows (days-before-start)
+// - detailDescription: auto-link + <br> with live preview (and safe round-trip on edit)
+// - Color tag + tiny swatch in list
+// - Conflict detection (branch + resource overlap)  [index recommended: branch, resourceId, start]
+// - Registration windows (days-before-start) + "Open registration now" auto-calc
 // - Combined filter: Location (Resource-only) + Search
-// - "Open registration now" auto-calc
-// - Banner constraints: JPEG/PNG, ≤10MB, recommended 2160x1080
-// - List view shows banner thumbnail when available
-// - Records creator/updater emails
+// - Thumbnails resolved from Storage
+// - Records creator/updater email (createdByEmail / updatedByEmail) — waits for Auth
 
-(function() {
+(function () {
   // ---------- DOM ----------
-  const containerList   = document.getElementById("eventsContainer");
-  const locationFilter  = document.getElementById("locationFilter");
-  const searchInput     = document.getElementById("searchInput");
-  const listLabel       = document.getElementById("listLabel");
-  const btnNew          = document.getElementById("btnNew");
+  const containerList = document.getElementById("eventsContainer");
+  const locationFilter = document.getElementById("locationFilter");
+  const searchInput = document.getElementById("searchInput");
+  const listLabel = document.getElementById("listLabel");
+  const btnNew = document.getElementById("btnNew");
 
   // Edit modal
-  const editModalEl    = document.getElementById("editModal");
-  const editModal      = new bootstrap.Modal(editModalEl);
-  const editForm       = document.getElementById("editForm");
-  const editTitle      = document.getElementById("editTitle");
-  const editErr        = document.getElementById("editErr");
-  const editErrInline  = document.getElementById("editErrInline");
-  const editOk         = document.getElementById("editOk");
-  const editBusy       = document.getElementById("editBusy");
-  const btnSave        = document.getElementById("btnSave");
+  const editModalEl = document.getElementById("editModal");
+  const editModal = new bootstrap.Modal(editModalEl);
+  const editForm = document.getElementById("editForm");
+  const editTitle = document.getElementById("editTitle");
+  const editErr = document.getElementById("editErr");
+  const editErrInline = document.getElementById("editErrInline");
+  const editOk = document.getElementById("editOk");
+  const editBusy = document.getElementById("editBusy");
+  const btnSave = document.getElementById("btnSave");
 
   // Fields
   const f_title = document.getElementById("f_title");
@@ -51,7 +49,7 @@
   const f_color = document.getElementById("f_color");
   const f_regOpenNow = document.getElementById("f_regOpenNow");
 
-  // Recurrence fields
+  // Recurrence
   const f_repeat = document.getElementById("f_repeat");
   const f_interval = document.getElementById("f_interval");
   const weeklyDaysWrap = document.getElementById("weeklyDaysWrap");
@@ -70,43 +68,76 @@
   const btnDoDelete = document.getElementById("btnDoDelete");
 
   // Banner elements
-  const f_bannerPreview      = document.getElementById("f_bannerPreview");
-  const f_bannerPlaceholder  = document.getElementById("f_bannerPlaceholder");
-  const f_bannerFile         = document.getElementById("f_bannerFile");
-  const bannerProgWrap       = document.getElementById("bannerProgWrap");
-  const bannerProg           = document.getElementById("bannerProg");
-  const f_bannerRemove       = document.getElementById("f_bannerRemove");
-  const f_bannerMeta         = document.getElementById("f_bannerMeta");
+  const f_bannerPreview = document.getElementById("f_bannerPreview");
+  const f_bannerPlaceholder = document.getElementById("f_bannerPlaceholder");
+  const f_bannerFile = document.getElementById("f_bannerFile");
+  const bannerProgWrap = document.getElementById("bannerProgWrap");
+  const bannerProg = document.getElementById("bannerProg");
+  const f_bannerRemove = document.getElementById("f_bannerRemove");
+  const f_bannerMeta = document.getElementById("f_bannerMeta");
 
   // ---------- State ----------
-  let resources = []; // [{id,name,branch,capacity?}]
+  let resources = [];
   let allEvents = [];
   let filtered = [];
   let editingId = null;
   let pendingDeleteId = null;
   let unsubscribeEvents = null;
+
   let editDetailHTMLOriginal = "";
   let editDetailTouched = false;
 
   // Banner state
-  let pendingBannerFile = null;       // File selected but not yet uploaded
-  let pendingBannerMeta = null;       // {width,height,type,size}
-  let existingBannerPath = null;      // path in storage for current event
+  let pendingBannerFile = null;  // File selected (not yet uploaded)
+  let pendingBannerMeta = null;  // {width,height,type,size}
+  let existingBannerPath = null;
   let existingBannerUrl = null;
-  let flagRemoveBanner = false;       // user clicked remove
+  let flagRemoveBanner = false;
 
   // ---------- Storage (force correct bucket) ----------
-  // If firebaseConfig.js sets window.storage, use it; otherwise init here:
+  // Ensure this matches your Firebase Storage bucket.
   const STORAGE_BUCKET_URL = "gs://kwlrintranet.firebasestorage.app";
-  const storage = (window.storage && typeof window.storage.ref === "function")
-    ? window.storage
-    : firebase.app().storage(STORAGE_BUCKET_URL);
-  try { console.log("[Storage bucket]", storage.ref().toString()); } catch (e) {}
+  const storage =
+    window.storage && typeof window.storage.ref === "function"
+      ? window.storage
+      : firebase.app().storage(STORAGE_BUCKET_URL);
+
+  try {
+    // log once for sanity
+    console.log("[Storage bucket]", storage.ref().toString());
+  } catch (_) {}
+
+  // ---------- AUTH: wait until firebase.auth() has a user (or not) ----------
+  let _authReadyResolve;
+  const authReady = new Promise((res) => (_authReadyResolve = res));
+  let _userEmail = null;
+
+  try {
+    firebase.auth().onAuthStateChanged((u) => {
+      _userEmail = (u && u.email) || null;
+      if (_authReadyResolve) {
+        _authReadyResolve();
+        _authReadyResolve = null;
+      }
+    });
+  } catch (_) {
+    // auth lib not present or not initialized; leave email as null
+    if (_authReadyResolve) {
+      _authReadyResolve();
+      _authReadyResolve = null;
+    }
+  }
+
+  async function getCurrentUserEmailAsync() {
+    try {
+      await authReady;
+    } catch (_) {}
+    return _userEmail;
+  }
 
   // ---------- Utils ----------
-  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, m => (
-    { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[m]
-  ));
+  const esc = (s) =>
+    String(s ?? "").replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
 
   function toDate(ts) {
     if (!ts) return null;
@@ -117,24 +148,15 @@
   function fmtDateTime(d) {
     if (!d) return "";
     const pad = (n) => String(n).padStart(2, "0");
-    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
   }
   function inputValueFromDate(d) {
     if (!d) return "";
-    const pad = (n)=> String(n).padStart(2,"0");
-    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    const pad = (n) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
   }
   function dtLocalFromInput(value) {
     return value ? new Date(value) : null;
-  }
-
-  // Get current user's email (requires firebase-auth on the page)
-  function getCurrentUserEmail() {
-    try {
-      return (firebase.auth && firebase.auth().currentUser && firebase.auth().currentUser.email) || null;
-    } catch (_) {
-      return null;
-    }
   }
 
   // Registration windows
@@ -170,8 +192,16 @@
     return text.replace(/\r\n/g, "\n").replace(/\n{3,}/g, "\n\n");
   }
 
-  function clearEditErrors() { [editErr, editErrInline, editOk].forEach(el => { el.classList.add("d-none"); el.textContent=""; }); }
-  function showInlineError(msg) { editErrInline.textContent = msg; editErrInline.classList.remove("d-none"); }
+  function clearEditErrors() {
+    [editErr, editErrInline, editOk].forEach((el) => {
+      el.classList.add("d-none");
+      el.textContent = "";
+    });
+  }
+  function showInlineError(msg) {
+    editErrInline.textContent = msg;
+    editErrInline.classList.remove("d-none");
+  }
 
   // ---------- Banner URL resolver for list thumbnails ----------
   const _bannerUrlCache = new Map();
@@ -179,20 +209,22 @@
     try {
       if (evt.bannerThumbUrl) return Promise.resolve(evt.bannerThumbUrl);
       const direct = evt.bannerUrl || (evt.banner && evt.banner.url);
-      if (direct && typeof direct === 'string') return Promise.resolve(direct);
+      if (direct && typeof direct === "string") return Promise.resolve(direct);
 
       const path = evt.bannerPath || (evt.banner && evt.banner.path);
-      if (path && typeof path === 'string') {
+      if (path && typeof path === "string") {
         if (_bannerUrlCache.has(path)) return Promise.resolve(_bannerUrlCache.get(path));
-        return firebase.storage().ref(path).getDownloadURL()
-          .then(url => {
+        return storage
+          .ref(path)
+          .getDownloadURL()
+          .then((url) => {
             _bannerUrlCache.set(path, url);
             return url;
           })
           .catch(() => null);
       }
     } catch (e) {
-      console.warn('resolveBannerUrl error:', e);
+      console.warn("resolveBannerUrl error:", e);
     }
     return Promise.resolve(null);
   }
@@ -200,18 +232,19 @@
   // ---------- Combined Filter ----------
   function applyFilter() {
     const q = (searchInput.value || "").toLowerCase().trim();
-    const locSel = (locationFilter?.value || "ALL");
+    const locSel = locationFilter?.value || "ALL";
 
-    filtered = allEvents.filter(ev => {
+    filtered = allEvents.filter((ev) => {
       if (locSel !== "ALL") {
         if (!locSel.startsWith("RS:")) return false;
         const rid = locSel.slice(3);
         if ((ev.resourceId || "") !== rid) return false;
       }
       if (q) {
-        const hay = [ev.title, ev.description, ev.resourceName, ev.branch]
-          .map(v => (v || "").toString().toLowerCase());
-        if (!hay.some(v => v.includes(q))) return false;
+        const hay = [ev.title, ev.description, ev.resourceName, ev.branch].map((v) =>
+          (v || "").toString().toLowerCase()
+        );
+        if (!hay.some((v) => v.includes(q))) return false;
       }
       return true;
     });
@@ -232,28 +265,31 @@
     for (const e of filtered) {
       const d = toDate(e.start);
       if (!d) continue;
-      const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
-      (groups[key] ||= { label: d.toLocaleString(undefined,{ month: "long", year: "numeric" }), events: [] }).events.push(e);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      (groups[key] ||= { label: d.toLocaleString(undefined, { month: "long", year: "numeric" }), events: [] }).events.push(
+        e
+      );
     }
     const parts = [];
-    Object.keys(groups).sort().forEach(key => {
-      const g = groups[key];
-      parts.push(`<div class="month-header">${esc(g.label)}</div>`);
-      for (const e of g.events) parts.push(renderEventRow(e));
-    });
+    Object.keys(groups)
+      .sort()
+      .forEach((key) => {
+        const g = groups[key];
+        parts.push(`<div class="month-header">${esc(g.label)}</div>`);
+        for (const e of g.events) parts.push(renderEventRow(e));
+      });
     containerList.innerHTML = parts.join("");
 
-    // Bind row actions
-    containerList.querySelectorAll("[data-action='edit']").forEach(btn=>{
-      btn.addEventListener("click", ()=> openEdit(btn.getAttribute("data-id")));
+    containerList.querySelectorAll("[data-action='edit']").forEach((btn) => {
+      btn.addEventListener("click", () => openEdit(btn.getAttribute("data-id")));
     });
-    containerList.querySelectorAll("[data-action='delete']").forEach(btn=>{
-      btn.addEventListener("click", ()=> openDelete(btn.getAttribute("data-id")));
+    containerList.querySelectorAll("[data-action='delete']").forEach((btn) => {
+      btn.addEventListener("click", () => openDelete(btn.getAttribute("data-id")));
     });
 
-    // Resolve thumbnails asynchronously after DOM paint
-    filtered.forEach(e => {
-      resolveBannerUrl(e).then(url => {
+    // resolve thumbnails async
+    filtered.forEach((e) => {
+      resolveBannerUrl(e).then((url) => {
         const mount = document.getElementById(`thumb-${e._id}`);
         if (!mount) return;
         if (url) {
@@ -270,23 +306,25 @@
   }
 
   function renderEventRow(e) {
-    const s = toDate(e.start), ee = toDate(e.end);
+    const s = toDate(e.start),
+      ee = toDate(e.end);
     const dateLine = `${fmtDateTime(s)} – ${fmtDateTime(ee)}`;
-    const remaining = (typeof e.remaining === "number") ? e.remaining : null;
-    const capacity  = (typeof e.capacity === "number") ? e.capacity : null;
-    const remainTxt = (remaining != null && capacity != null)
-      ? `${remaining}/${capacity} left`
-      : (remaining != null ? `${remaining} left` : "");
+    const remaining = typeof e.remaining === "number" ? e.remaining : null;
+    const capacity = typeof e.capacity === "number" ? e.capacity : null;
+    const remainTxt =
+      remaining != null && capacity != null ? `${remaining}/${capacity} left` : remaining != null ? `${remaining} left` : "";
 
     const colorHex = e.color ? normalizeHex(e.color) : null;
     const colorBadge = colorHex
-      ? `<span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:${esc(colorHex)};border:1px solid #cbd5e1;vertical-align:middle;margin-right:.4rem;"></span>`
+      ? `<span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:${esc(
+          colorHex
+        )};border:1px solid #cbd5e1;vertical-align:middle;margin-right:.4rem;"></span>`
       : "";
 
-    const thumb =
-      `<div class="event-thumb-placeholder" id="thumb-${esc(e._id)}" aria-label="No banner">
-         <i class="bi bi-image"></i>
-       </div>`;
+    const thumb = `
+      <div class="event-thumb-placeholder" id="thumb-${esc(e._id)}" aria-label="No banner">
+        <i class="bi bi-image"></i>
+      </div>`;
 
     const body = `
       <div class="flex-grow-1">
@@ -300,7 +338,6 @@
           <span class="badge text-bg-light border">${esc(e.visibility || "")}</span>
         </div>
         ${e.description ? `<div class="mt-2 text-secondary">${esc(e.description)}</div>` : ""}
-
         <div class="mt-2 d-flex align-items-center gap-2">
           ${remainTxt ? `<div class="small text-muted me-2">${esc(remainTxt)}</div>` : ""}
           <button class="btn btn-outline-secondary btn-sm" data-action="edit" data-id="${esc(e._id)}">
@@ -318,19 +355,17 @@
           ${thumb}
           ${body}
         </div>
-      </div>
-    `;
+      </div>`;
   }
 
   // ---------- Filters ----------
   function populateLocationFilter(resources) {
     if (!locationFilter) return;
     const opts = [`<option value="ALL">All Locations</option>`];
-    const byBranchThenName = [...resources].sort((a,b) =>
-      String(a.branch||"").localeCompare(String(b.branch||"")) ||
-      String(a.name||"").localeCompare(String(b.name||""))
+    const byBranchThenName = [...resources].sort(
+      (a, b) => String(a.branch || "").localeCompare(String(b.branch || "")) || String(a.name || "").localeCompare(String(b.name || ""))
     );
-    byBranchThenName.forEach(r => {
+    byBranchThenName.forEach((r) => {
       const br = (r.branch || "").toUpperCase();
       const nm = r.name || r.id || "Resource";
       opts.push(`<option value="RS:${esc(r.id)}">${esc(br)} — ${esc(nm)}</option>`);
@@ -342,36 +377,47 @@
   async function loadResources() {
     const col = window.db.collection("resources");
     try {
-      const snap = await col.orderBy("branch","asc").orderBy("name","asc").get();
-      resources = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      const snap = await col.orderBy("branch", "asc").orderBy("name", "asc").get();
+      resources = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
     } catch (err) {
       console.warn("resources index missing; client-sort fallback:", err);
       const snap = await col.get();
-      resources = snap.docs.map(d => ({ id: d.id, ...d.data() }))
-        .sort((a,b) => (String(a.branch||"").localeCompare(String(b.branch||"")) ||
-                        String(a.name||"").localeCompare(String(b.name||""))));
+      resources = snap.docs
+        .map((d) => ({ id: d.id, ...d.data() }))
+        .sort(
+          (a, b) =>
+            String(a.branch || "").localeCompare(String(b.branch || "")) ||
+            String(a.name || "").localeCompare(String(b.name || ""))
+        );
     }
-    const opts = [`<option value="">-- select --</option>`]
-      .concat(resources.map(r => `<option value="${esc(r.id)}">${esc(r.name)} (${esc(r.branch||"-")})</option>`));
+    const opts = [`<option value="">-- select --</option>`].concat(
+      resources.map((r) => `<option value="${esc(r.id)}">${esc(r.name)} (${esc(r.branch || "-")})</option>`)
+    );
     f_resourceId.innerHTML = opts.join("");
     populateLocationFilter(resources);
   }
 
   function attachEventsListener() {
-    if (typeof unsubscribeEvents === "function") { unsubscribeEvents(); unsubscribeEvents = null; }
+    if (typeof unsubscribeEvents === "function") {
+      unsubscribeEvents();
+      unsubscribeEvents = null;
+    }
     const now = new Date();
     const col = window.db.collection("events");
     try {
       unsubscribeEvents = col
-        .where("start",">=", now)
-        .orderBy("start","asc")
-        .onSnapshot(snap => {
-          allEvents = snap.docs.map(d => ({ _id: d.id, ...d.data() }));
-          applyFilter();
-        }, err => {
-          console.error("events listener error:", err);
-          containerList.innerHTML = `<div class="text-danger py-4 text-center">Failed to load events.</div>`;
-        });
+        .where("start", ">=", now)
+        .orderBy("start", "asc")
+        .onSnapshot(
+          (snap) => {
+            allEvents = snap.docs.map((d) => ({ _id: d.id, ...d.data() }));
+            applyFilter();
+          },
+          (err) => {
+            console.error("events listener error:", err);
+            containerList.innerHTML = `<div class="text-danger py-4 text-center">Failed to load events.</div>`;
+          }
+        );
     } catch (err) {
       console.error("events listener threw:", err);
       containerList.innerHTML = `<div class="text-danger py-4 text-center">Failed to load events.</div>`;
@@ -388,7 +434,7 @@
     editingId = id || null;
     editTitle.textContent = editingId ? "Edit Event" : "New Event";
 
-    // Reset basic fields
+    // Defaults
     f_title.value = "";
     f_status.value = "draft";
     f_branch.value = "";
@@ -423,7 +469,7 @@
     f_repeatCount.value = "1";
     f_repeatUntil.value = "";
 
-    // Reset banner UI/state
+    // Banner UI/state reset
     resetBannerStateAndUI();
 
     if (!editingId) {
@@ -431,10 +477,13 @@
       return;
     }
 
-    const ev = allEvents.find(x => x._id === editingId);
-    if (!ev) { showInlineError("Event not found."); return; }
+    const ev = allEvents.find((x) => x._id === editingId);
+    if (!ev) {
+      showInlineError("Event not found.");
+      return;
+    }
 
-    // Fill form for single event edit
+    // Fill form
     f_title.value = ev.title || "";
     f_status.value = ev.status || "draft";
     f_branch.value = ev.branch || "";
@@ -449,13 +498,13 @@
     f_detailDescription.value = htmlToPlainForTextarea(editDetailHTMLOriginal);
     f_detailPreview.innerHTML = editDetailHTMLOriginal;
 
-    f_allowRegistration.value = (ev.allowRegistration === false) ? "false" : "true";
-    f_capacity.value = (ev.capacity ?? "");
-    f_remaining.value = (ev.remaining ?? "");
+    f_allowRegistration.value = ev.allowRegistration === false ? "false" : "true";
+    f_capacity.value = ev.capacity ?? "";
+    f_remaining.value = ev.remaining ?? "";
     f_visibility.value = ev.visibility || "public";
 
     if (ev.color) {
-      f_colorPreset.value = (isPreset(ev.color) ? ev.color : "__custom");
+      f_colorPreset.value = isPreset(ev.color) ? ev.color : "__custom";
       f_color.value = normalizeHex(ev.color);
     } else {
       f_colorPreset.value = "#3b82f6";
@@ -463,8 +512,6 @@
     }
 
     backfillRegDays(ev);
-
-    // Load banner UI from event
     loadBannerFromEvent(ev);
 
     editModal.show();
@@ -478,7 +525,7 @@
       if (!start || !other) return null;
       const ms = start.getTime() - other.getTime();
       if (ms <= 0) return 0;
-      return Math.round(ms / (24*60*60*1000));
+      return Math.round(ms / (24 * 60 * 60 * 1000));
     }
     const openDays = daysBefore(startDate, opensAt);
     const closeDays = daysBefore(startDate, closesAt);
@@ -502,14 +549,14 @@
   }
 
   function isPreset(hex) {
-    const presets = ["#3b82f6","#22c55e","#ef4444","#eab308","#a855f7","#f97316","#14b8a6","#64748b"];
+    const presets = ["#3b82f6", "#22c55e", "#ef4444", "#eab308", "#a855f7", "#f97316", "#14b8a6", "#64748b"];
     return presets.includes(normalizeHex(hex));
   }
   function normalizeHex(c) {
     if (!c) return "#3b82f6";
     let x = String(c).trim();
     if (!x.startsWith("#")) x = "#" + x;
-    if (x.length === 4) x = "#" + x[1]+x[1]+x[2]+x[2]+x[3]+x[3];
+    if (x.length === 4) x = "#" + x[1] + x[1] + x[2] + x[2] + x[3] + x[3];
     return x.toLowerCase();
   }
 
@@ -528,7 +575,6 @@
     delBusy.classList.remove("d-none");
     try {
       await window.db.collection("events").doc(pendingDeleteId).delete();
-      // Optional: also delete banner (needs reading doc first to get path).
       delModal.hide();
     } catch (err) {
       console.error("delete error:", err);
@@ -550,7 +596,7 @@
 
   // ---------- Recurrence UI ----------
   f_repeat.addEventListener("change", () => {
-    weeklyDaysWrap.style.display = (f_repeat.value === "weekly") ? "" : "none";
+    weeklyDaysWrap.style.display = f_repeat.value === "weekly" ? "" : "none";
   });
   f_repeatEndType.addEventListener("change", () => {
     const isCount = f_repeatEndType.value === "count";
@@ -563,7 +609,7 @@
     const start = dtLocalFromInput(f_start.value);
     if (!start) return;
     const now = new Date();
-    let days = Math.ceil((start.getTime() - now.getTime()) / (24*60*60*1000));
+    let days = Math.ceil((start.getTime() - now.getTime()) / (24 * 60 * 60 * 1000));
     if (days < 0) days = 0;
     f_regOpensDays.value = String(days);
   }
@@ -587,15 +633,15 @@
 
   // ---------- Resource auto-fill ----------
   f_resourceId.addEventListener("change", () => {
-    const r = resources.find(x => x.id === f_resourceId.value);
-    f_resourceName.value = r ? (r.name || "") : "";
+    const r = resources.find((x) => x.id === f_resourceId.value);
+    f_resourceName.value = r ? r.name || "" : "";
     if (r && !f_capacity.value && typeof r.capacity === "number") {
       f_capacity.value = r.capacity;
       if (!f_remaining.value) f_remaining.value = r.capacity;
     }
   });
 
-  // ---------- Banner helpers (Edit modal) ----------
+  // ---------- Banner helpers ----------
   function resetBannerStateAndUI() {
     pendingBannerFile = null;
     pendingBannerMeta = null;
@@ -618,7 +664,7 @@
 
   function loadBannerFromEvent(ev) {
     existingBannerPath = ev.bannerPath || null;
-    existingBannerUrl  = ev.bannerUrl || null;
+    existingBannerUrl = ev.bannerUrl || null;
 
     if (existingBannerUrl) {
       if (f_bannerPreview) {
@@ -630,7 +676,7 @@
       const metaParts = [];
       if (ev.bannerWidth && ev.bannerHeight) metaParts.push(`${ev.bannerWidth}×${ev.bannerHeight}`);
       if (ev.bannerType) metaParts.push(ev.bannerType);
-      if (typeof ev.bannerSize === "number") metaParts.push(`${(ev.bannerSize/1024/1024).toFixed(2)} MB`);
+      if (typeof ev.bannerSize === "number") metaParts.push(`${(ev.bannerSize / 1024 / 1024).toFixed(2)} MB`);
       f_bannerMeta.textContent = metaParts.join(" · ");
 
       f_bannerRemove.classList.remove("d-none");
@@ -641,6 +687,7 @@
 
   function validateBannerFile(file) {
     if (!file) return "No file selected.";
+    // HTML says ≤10MB; keep consistent
     if (file.size > 10 * 1024 * 1024) return "File too large. Maximum is 10 MB.";
     const type = (file.type || "").toLowerCase();
     const ok = type === "image/jpeg" || type === "image/jpg" || type === "image/png";
@@ -660,7 +707,8 @@
       const img = new Image();
       const url = URL.createObjectURL(file);
       img.onload = () => {
-        const w = img.naturalWidth, h = img.naturalHeight;
+        const w = img.naturalWidth,
+          h = img.naturalHeight;
         URL.revokeObjectURL(url);
         resolve({ width: w, height: h });
       };
@@ -678,12 +726,12 @@
       width: dim.width || null,
       height: dim.height || null,
       type: (file.type || "").toLowerCase(),
-      size: file.size
+      size: file.size,
     };
-    const softWarn = (dim.width !== 2160 || dim.height !== 1080)
-      ? " (tip: recommended 2160×1080)"
-      : "";
-    f_bannerMeta.textContent = `${dim.width || "?"}×${dim.height || "?"} · ${(file.size/1024/1024).toFixed(2)} MB · ${(file.type||"").toUpperCase()}${softWarn}`;
+    const softWarn = dim.width !== 2160 || dim.height !== 1080 ? " (tip: recommended 2160×1080)" : "";
+    f_bannerMeta.textContent = `${dim.width || "?"}×${dim.height || "?"} · ${(file.size / 1024 / 1024).toFixed(
+      2
+    )} MB · ${(file.type || "").toUpperCase()}${softWarn}`;
 
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -696,10 +744,11 @@
     f_bannerRemove.classList.remove("d-none");
   }
 
+  // Upload under your folder structure: banners/events/<groupId>.<ext>
   async function uploadBannerToStorage(file, groupId) {
     const ext = getExtByType(file.type);
-    const path = `event-banners/${groupId}.${ext}`;
-    const ref = storage.ref().child(path); // use forced bucket
+    const path = `banners/events/${groupId}.${ext}`;
+    const ref = storage.ref().child(path);
 
     bannerProgWrap.classList.remove("d-none");
     bannerProg.style.width = "0%";
@@ -707,7 +756,8 @@
     try {
       const task = ref.put(file, { contentType: file.type });
       const res = await new Promise((resolve, reject) => {
-        task.on("state_changed",
+        task.on(
+          "state_changed",
           (snap) => {
             const pct = snap.totalBytes ? (snap.bytesTransferred / snap.totalBytes) * 100 : 0;
             bannerProg.style.width = `${pct.toFixed(0)}%`;
@@ -727,11 +777,14 @@
       return res;
     } catch (err) {
       bannerProgWrap.classList.add("d-none");
-      const msg = (err && err.code === 'storage/unauthorized')
-        ? "Upload not authorized by Storage Rules."
-        : (String(err).toLowerCase().includes('cors') || String(err).toLowerCase().includes('preflight'))
-          ? "Upload blocked by CORS. Ensure CORS is set on kwlrintranet.firebasestorage.app."
-          : (err && err.message) ? err.message : "Upload failed.";
+      const msg =
+        err && err.code === "storage/unauthorized"
+          ? "Upload not authorized by Storage Rules."
+          : String(err).toLowerCase().includes("cors") || String(err).toLowerCase().includes("preflight")
+          ? "Upload blocked by CORS. Ensure CORS allows your domain."
+          : err && err.message
+          ? err.message
+          : "Upload failed.";
       showInlineError(msg);
       throw err;
     } finally {
@@ -742,7 +795,7 @@
   async function deleteBannerAtPath(path) {
     if (!path) return;
     try {
-      const ref = storage.ref().child(path); // use forced bucket
+      const ref = storage.ref().child(path);
       await ref.delete();
     } catch (err) {
       console.warn("delete banner failed:", err);
@@ -758,13 +811,16 @@
       pendingBannerFile = null;
       pendingBannerMeta = null;
       f_bannerMeta.textContent = err;
-      if (f_bannerPreview) { f_bannerPreview.src = ""; f_bannerPreview.style.display = "none"; }
+      if (f_bannerPreview) {
+        f_bannerPreview.src = "";
+        f_bannerPreview.style.display = "none";
+      }
       if (f_bannerPlaceholder) f_bannerPlaceholder.style.display = "";
       f_bannerRemove.classList.add("d-none");
       return;
     }
     pendingBannerFile = file;
-    flagRemoveBanner = false; // selecting a new file cancels "remove" intent
+    flagRemoveBanner = false;
     await previewBannerFile(file);
   });
 
@@ -775,7 +831,10 @@
     pendingBannerMeta = null;
     f_bannerFile.value = "";
     f_bannerMeta.textContent = existingBannerUrl ? "Marked for removal on save." : "";
-    if (f_bannerPreview) { f_bannerPreview.src = ""; f_bannerPreview.style.display = "none"; }
+    if (f_bannerPreview) {
+      f_bannerPreview.src = "";
+      f_bannerPreview.style.display = "none";
+    }
     if (f_bannerPlaceholder) f_bannerPlaceholder.style.display = "";
     f_bannerRemove.classList.add("d-none");
   });
@@ -806,7 +865,7 @@
       if (f_regOpenNow?.checked) recalcRegOpensDaysFromNow();
 
       // Registration & visibility
-      const allowRegistration = (f_allowRegistration.value === "true");
+      const allowRegistration = f_allowRegistration.value === "true";
       const capacity = f_capacity.value ? Number(f_capacity.value) : null;
       const remaining = f_remaining.value ? Number(f_remaining.value) : null;
       const opensDays = Number(f_regOpensDays.value || 0);
@@ -819,19 +878,25 @@
       // Descriptions
       const description = f_description.value.trim();
       const detailDescriptionHtml = editingId
-        ? (editDetailTouched ? plainToHtml(f_detailDescription.value) : editDetailHTMLOriginal)
+        ? editDetailTouched
+          ? plainToHtml(f_detailDescription.value)
+          : editDetailHTMLOriginal
         : plainToHtml(f_detailDescription.value);
 
       // Recurrence
-      const repeat = f_repeat.value;           // none/daily/weekly/monthly
+      const repeat = f_repeat.value;
       const interval = Math.max(1, Number(f_interval.value || 1));
-      const endType = f_repeatEndType.value;   // count/until
+      const endType = f_repeatEndType.value;
       const count = Math.max(1, Number(f_repeatCount.value || 1));
       const until = f_repeatUntil.value ? new Date(f_repeatUntil.value + "T23:59:59") : null;
-      const weekdays = Array.from(weeklyDaysWrap.querySelectorAll("input[type='checkbox']:checked"))
-        .map(cb => Number(cb.value));
+      const weekdays = Array.from(weeklyDaysWrap.querySelectorAll("input[type='checkbox']:checked")).map((cb) =>
+        Number(cb.value)
+      );
 
-      // ----- EDITING SINGLE EVENT -----
+      // Get user email once (safe even if not logged in)
+      const userEmail = await getCurrentUserEmailAsync();
+
+      // ----- EDIT -----
       if (editingId) {
         const conflictMsg = await hasConflict(branch, resourceId, start, end, editingId);
         if (conflictMsg) {
@@ -839,7 +904,7 @@
           throw new Error(conflictMsg);
         }
 
-        // Prepare banner payload (may upload/delete)
+        // Banner (upload/delete if needed)
         let bannerPayload = {};
         if (pendingBannerFile) {
           const groupId = editingId; // reuse event id
@@ -850,7 +915,7 @@
             bannerWidth: pendingBannerMeta?.width ?? null,
             bannerHeight: pendingBannerMeta?.height ?? null,
             bannerType: pendingBannerMeta?.type ?? (pendingBannerFile.type || null),
-            bannerSize: pendingBannerMeta?.size ?? pendingBannerFile.size
+            bannerSize: pendingBannerMeta?.size ?? pendingBannerFile.size,
           };
           if (existingBannerPath && existingBannerPath !== up.path) {
             await deleteBannerAtPath(existingBannerPath);
@@ -863,21 +928,28 @@
             bannerWidth: firebase.firestore.FieldValue.delete(),
             bannerHeight: firebase.firestore.FieldValue.delete(),
             bannerType: firebase.firestore.FieldValue.delete(),
-            bannerSize: firebase.firestore.FieldValue.delete()
+            bannerSize: firebase.firestore.FieldValue.delete(),
           };
         }
 
         const payload = {
-          title, description, detailDescription: detailDescriptionHtml,
-          branch, resourceId, resourceName, color,
-          visibility, status,
-          start, end,
+          title,
+          description,
+          detailDescription: detailDescriptionHtml,
+          branch,
+          resourceId,
+          resourceName,
+          color,
+          visibility,
+          status,
+          start,
+          end,
           allowRegistration,
-          capacity: (capacity != null ? capacity : firebase.firestore.FieldValue.delete()),
-          remaining: (remaining != null ? remaining : firebase.firestore.FieldValue.delete()),
+          capacity: capacity != null ? capacity : firebase.firestore.FieldValue.delete(),
+          remaining: remaining != null ? remaining : firebase.firestore.FieldValue.delete(),
           updatedAt: new Date(),
-          updatedByEmail: getCurrentUserEmail(),        // ← NEW
-          ...bannerPayload
+          updatedByEmail: userEmail || null,
+          ...bannerPayload,
         };
 
         if (allowRegistration) {
@@ -892,23 +964,18 @@
         await window.db.collection("events").doc(editingId).update(payload);
         editOk.textContent = "Saved.";
         editOk.classList.remove("d-none");
-        setTimeout(()=> editModal.hide(), 800);
+        setTimeout(() => editModal.hide(), 800);
         return;
       }
 
-      // ----- NEW EVENT(S) -----
+      // ----- CREATE -----
       const occurrences = buildOccurrences({ repeat, interval, start, end, endType, count, until, weekdays });
-      if (!occurrences.length) {
-        throw new Error("No occurrences generated. Check your repeat settings.");
-      }
+      if (!occurrences.length) throw new Error("No occurrences generated. Check your repeat settings.");
 
-      // get the creator email once
-      const creatorEmail = getCurrentUserEmail();
-
-      // If we have a banner file for new events, upload ONCE and reuse metadata
+      // Upload banner once for new series (reuse)
       let newBannerData = null;
       if (pendingBannerFile) {
-        const groupId = window.db.collection("_").doc().id; // unique id for the banner
+        const groupId = window.db.collection("_").doc().id; // random id to name the banner file
         const up = await uploadBannerToStorage(pendingBannerFile, groupId);
         newBannerData = {
           bannerUrl: up.url,
@@ -916,7 +983,7 @@
           bannerWidth: pendingBannerMeta?.width ?? null,
           bannerHeight: pendingBannerMeta?.height ?? null,
           bannerType: pendingBannerMeta?.type ?? (pendingBannerFile.type || null),
-          bannerSize: pendingBannerMeta?.size ?? pendingBannerFile.size
+          bannerSize: pendingBannerMeta?.size ?? pendingBannerFile.size,
         };
       }
 
@@ -941,20 +1008,25 @@
         const docRef = evCol.doc();
 
         const payload = {
-          title, description, detailDescription: detailDescriptionHtml,
-          branch, resourceId, resourceName, color,
-          visibility, status,
+          title,
+          description,
+          detailDescription: detailDescriptionHtml,
+          branch,
+          resourceId,
+          resourceName,
+          color,
+          visibility,
+          status,
           start: occStart,
           end: occEnd,
           allowRegistration,
           createdAt: new Date(),
+          createdByEmail: userEmail || null,
           updatedAt: new Date(),
-          createdByEmail: creatorEmail || null,      // ← NEW
+          updatedByEmail: userEmail || null,
           ...(capacity != null ? { capacity } : {}),
-          ...(remaining != null
-              ? { remaining }
-              : (capacity != null ? { remaining: capacity } : {})),
-          ...(newBannerData || {})
+          ...(remaining != null ? { remaining } : capacity != null ? { remaining: capacity } : {}),
+          ...(newBannerData || {}),
         };
 
         if (allowRegistration) {
@@ -978,17 +1050,14 @@
 
       await batch.commit();
 
-      const msg = skipped > 0
-        ? `Created ${made} event(s). Skipped ${skipped} due to time conflicts.`
-        : `Created ${made} event(s).`;
+      const msg = skipped > 0 ? `Created ${made} event(s). Skipped ${skipped} due to time conflicts.` : `Created ${made} event(s).`;
       editOk.textContent = msg;
       editOk.classList.remove("d-none");
-      setTimeout(()=> editModal.hide(), 1000);
-
+      setTimeout(() => editModal.hide(), 1000);
     } catch (err) {
       console.error("save error:", err);
       if (!editErrInline.classList.contains("d-none")) {
-        // inline already shown
+        // inline shown already
       } else {
         editErr.textContent = err.message || "Save failed.";
         editErr.classList.remove("d-none");
@@ -1004,42 +1073,50 @@
     const out = [];
     const durMs = end - start;
     const pushOcc = (s) => out.push({ start: new Date(s), end: new Date(s.getTime() + durMs) });
-    if (repeat === "none") { pushOcc(start); return out; }
+    if (repeat === "none") {
+      pushOcc(start);
+      return out;
+    }
 
-    const limitCount = (endType === "count") ? Math.max(1, count) : Number.POSITIVE_INFINITY;
-    const limitUntil = (endType === "until" && until) ? until : null;
+    const limitCount = endType === "count" ? Math.max(1, count) : Number.POSITIVE_INFINITY;
+    const limitUntil = endType === "until" && until ? until : null;
 
     let made = 0;
     let cursor = new Date(start);
 
     if (repeat === "daily") {
       while (made < limitCount) {
-        if (!limitUntil || cursor <= limitUntil) pushOcc(cursor); else break;
+        if (!limitUntil || cursor <= limitUntil) pushOcc(cursor);
+        else break;
         made++;
-        cursor = new Date(cursor.getTime() + interval*24*60*60*1000);
+        cursor = new Date(cursor.getTime() + interval * 24 * 60 * 60 * 1000);
       }
     } else if (repeat === "weekly") {
       const startDow = start.getDay();
       let weekStart = new Date(start);
-      weekStart.setHours(0,0,0,0);
+      weekStart.setHours(0, 0, 0, 0);
       weekStart.setDate(weekStart.getDate() - startDow); // to Sunday
       while (made < limitCount) {
-        for (const dow of (weekdays.length ? weekdays : [startDow])) {
+        for (const dow of weekdays.length ? weekdays : [startDow]) {
           const occStart = new Date(weekStart);
           occStart.setDate(weekStart.getDate() + dow);
           occStart.setHours(start.getHours(), start.getMinutes(), 0, 0);
           if (occStart < start) continue;
-          if (limitUntil && occStart > limitUntil) { made = limitCount; break; }
+          if (limitUntil && occStart > limitUntil) {
+            made = limitCount;
+            break;
+          }
           pushOcc(occStart);
           made++;
           if (made >= limitCount) break;
         }
-        weekStart = new Date(weekStart.getTime() + interval*7*24*60*60*1000);
+        weekStart = new Date(weekStart.getTime() + interval * 7 * 24 * 60 * 60 * 1000);
       }
     } else if (repeat === "monthly") {
       const startDay = start.getDate();
       while (made < limitCount) {
-        if (!limitUntil || cursor <= limitUntil) pushOcc(cursor); else break;
+        if (!limitUntil || cursor <= limitUntil) pushOcc(cursor);
+        else break;
         made++;
         const m = cursor.getMonth();
         const y = cursor.getFullYear();
@@ -1056,24 +1133,27 @@
     const col = window.db.collection("events");
     try {
       const snap = await col
-        .where("branch","==",branch)
-        .where("resourceId","==",resourceId)
-        .where("start","<", end)
-        .orderBy("start","asc")
+        .where("branch", "==", branch)
+        .where("resourceId", "==", resourceId)
+        .where("start", "<", end)
+        .orderBy("start", "asc")
         .limit(50)
         .get();
 
       const overlap = snap.docs
-        .map(d => ({ id: d.id, ...d.data() }))
-        .filter(ev => ev.id !== ignoreId && ev._id !== ignoreId)
-        .some(ev => {
-          const s = toDate(ev.start), e = toDate(ev.end);
+        .map((d) => ({ id: d.id, ...d.data() }))
+        .filter((ev) => ev.id !== ignoreId && ev._id !== ignoreId)
+        .some((ev) => {
+          const s = toDate(ev.start),
+            e = toDate(ev.end);
           if (!s || !e) return false;
           return s < end && e > start;
         });
 
       return overlap ? "Time conflict: same branch & resource already occupied in that time range." : null;
     } catch (err) {
+      // If you see an "index required" error, create a composite index for:
+      // collection: events, where: branch==, resourceId==, start<, orderBy: start asc
       console.warn("conflict check failed; allowing save:", err);
       return null; // fail-open
     }
