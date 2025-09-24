@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Event Details · KW Living Portal</title>
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/x-icon" href="/images/logo.ico" />
+
+  <!-- Bootstrap CSS & Icons -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+  <link href="./css/styles.css" rel="stylesheet">
+
+  <!-- Basic share tags (you can enhance with dynamic OG tags server-side if needed) -->
+  <meta name="description" content="Event details and registration." />
+
+  <style>
+    .page-title { display:flex; align-items:center; gap:.5rem; }
+    .page-title img.logo { height:44px; width:auto; display:block; }
+    .muted{ color:#94a3b8; }
+
+    .ev-header { display:flex; align-items:flex-start; gap:1rem; flex-wrap:wrap; }
+    .ev-title { font-weight:800; font-size:1.5rem; line-height:1.2; margin:0; }
+    .badge-branch { background:#eef2ff; color:#3730a3; }
+    .badge-room { background:#ecfeff; color:#155e75; }
+
+    .ev-banner{
+      width:100%;
+      margin: .25rem 0 1rem 0;
+      border-radius:.75rem;
+      overflow:hidden;
+      background:#f8fafc;
+      border:1px solid #e9ecef;
+    }
+    .ev-banner img{
+      display:block;
+      width:100%;
+      height:auto;
+      object-fit:cover;
+    }
+
+    .ev-meta-line { color:#6b7280; }
+    .ev-section-title { font-weight:700; font-size:1.05rem; margin-bottom:.35rem; }
+
+    .map-actions .btn,
+    .map-actions .btn-link { font-size:.9rem; }
+
+    .back-link { text-decoration:none; }
+    .back-link i { vertical-align:-1px; }
+
+    .ev-capacity { color:#6b7280; font-size:.9rem; }
+
+    @media (min-width: 992px){
+      .two-col {
+        display:grid; grid-template-columns: 2fr 1fr; gap:1.25rem;
+      }
+      .aside-card { position:sticky; top:1rem; }
+    }
+  </style>
+</head>
+<body class="bg-light">
+
+  <main class="container py-4">
+    <!-- Top bar -->
+    <div class="d-flex align-items-center justify-content-between flex-wrap mb-3" style="row-gap:.5rem;">
+      <a href="/events-public.html" class="back-link text-secondary">
+        <i class="bi bi-arrow-left me-1"></i> Back to Events
+      </a>
+      <h3 class="page-title mb-0">
+        <img src="/images/logos.png" alt="KW Living" class="logo me-2">
+        <span>Event Details</span>
+      </h3>
+    </div>
+
+    <!-- Banner -->
+    <div id="evBannerBox" class="ev-banner d-none">
+      <img id="evBannerImg" alt="Event banner">
+    </div>
+
+    <!-- Header -->
+    <div class="ev-header mb-2">
+      <h1 class="ev-title" id="evTitle">Loading…</h1>
+      <div class="d-flex align-items-center flex-wrap gap-2" id="evBadges"></div>
+    </div>
+
+    <!-- Time -->
+    <div id="evDateLine" class="ev-meta-line mb-2"></div>
+
+    <!-- Address + map -->
+    <div id="evAddressRow" class="mb-3 d-none">
+      <div class="d-flex align-items-center gap-2 small map-actions">
+        <i class="bi bi-geo-alt text-secondary"></i>
+        <span id="evAddressText" class="text-secondary"></span>
+        <a id="evMapLink" class="btn btn-outline-secondary btn-sm px-2 py-1" target="_blank" rel="noopener" title="Open in Google Maps">
+          <i class="bi bi-map"></i>
+        </a>
+        <button id="evMapToggle" type="button" class="btn btn-link btn-sm p-0 text-decoration-none">Show map</button>
+      </div>
+      <div id="evMapEmbed" class="ratio ratio-16x9 mt-2 d-none">
+        <iframe id="evMapIframe" loading="lazy" referrerpolicy="no-referrer-when-downgrade" allowfullscreen></iframe>
+      </div>
+    </div>
+
+    <div class="two-col">
+      <!-- Left column: descriptions -->
+      <div>
+        <!-- Short description -->
+        <div id="evShortDesc" class="mb-3" style="display:none;"></div>
+
+        <!-- Rich description -->
+        <div id="evDetailDesc" class="border-top pt-3" style="display:none;"></div>
+      </div>
+
+      <!-- Right column: register + facts -->
+      <aside class="aside-card">
+        <div class="card shadow-sm">
+          <div class="card-body">
+            <div class="ev-capacity mb-2" id="evCapacity"></div>
+            <button type="button" class="btn btn-primary w-100" id="btnOpenRegister">
+              <i class="bi bi-pencil-square me-1"></i> Register
+            </button>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </main>
+
+  <!-- Register Modal -->
+  <div class="modal fade" id="regModal" tabindex="-1" aria-labelledby="regModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <form class="modal-content" id="regForm">
+        <div class="modal-header">
+          <h5 class="modal-title" id="regModalLabel">Register for Event</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+
+        <div class="modal-body">
+          <div id="regEventSummary" class="mb-3 small text-muted"></div>
+
+          <div class="mb-3">
+            <label class="form-label">Your Name</label>
+            <input type="text" class="form-control" id="attendeeName" required maxlength="80">
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Your Email</label>
+            <input type="email" class="form-control" id="attendeeEmail" required maxlength="120" inputmode="email">
+            <div class="form-text">We’ll send your confirmation here.</div>
+          </div>
+
+          <div class="alert alert-warning d-none" id="regWarn"></div>
+          <div class="alert alert-danger d-none" id="regErr"></div>
+          <div class="alert alert-success d-none" id="regOk">Registration successful! Check your email.</div>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Close</button>
+          <button type="submit" class="btn btn-primary btn-sm" id="btnSubmitReg">
+            <span class="spinner-border spinner-border-sm me-1 d-none" id="regBusy"></span>
+            Register
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Bootstrap + Firebase v8 -->
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+
+  <!-- Your Firebase config (defines window.db and optionally window.MAPS_EMBED_API_KEY) -->
+  <script src="./js/firebaseConfig.js"></script>
+
+  <!-- Shared email comms if you already use notifications -->
+  <script src="./js/events_comm.js" defer></script>
+
+  <!-- Page logic -->
+  <script src="./js/events_public_detail.js" defer></script>
+</body>
+</html>
