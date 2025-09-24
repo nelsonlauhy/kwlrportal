@@ -1,84 +1,94 @@
 // Events Admin (Firestore v8) — O365 operator-enabled
-// ... (same header comments as before)
+// - Reads operator from window.KWLR.currentUser injected by events-admin.html guard
+// - Stamps createdBy*/updatedBy* on create/update
+// - List-only with Edit/Create modal
+// - Banner Image (Firebase Storage v8) with preview, validation, upload, remove
+// - detailDescription: auto-link + <br> with live preview (and safe round-trip on edit)
+// - Color tag + tiny swatch in list
+// - Conflict detection (branch + resource overlap)  [index recommended: branch, resourceId, start]
+// - Registration windows (days-before-start) + "Open registration now" auto-calc
+// - Combined filter: Location (Resource-only) + Search
+// - Thumbnails resolved from Storage
+// - Compact icon buttons (Edit/Delete/Copy) + "Event Detail Page" hyperlink (Open Public Page)
 
 (function () {
   // ---------- Constants ----------
   const PUBLIC_EVENT_URL_BASE = "https://intranet.livingrealtykw.com/event_public.html?id=";
 
   // ---------- DOM ----------
-  const containerList = document.getElementById("eventsContainer");
-  const locationFilter = document.getElementById("locationFilter");
-  const searchInput = document.getElementById("searchInput");
-  const listLabel = document.getElementById("listLabel");
-  const btnNew = document.getElementById("btnNew");
+  const containerList   = document.getElementById("eventsContainer");
+  const locationFilter  = document.getElementById("locationFilter");
+  const searchInput     = document.getElementById("searchInput");
+  const listLabel       = document.getElementById("listLabel");
+  const btnNew          = document.getElementById("btnNew");
 
   // Edit modal
-  const editModalEl = document.getElementById("editModal");
-  const editModal = new bootstrap.Modal(editModalEl);
-  const editForm = document.getElementById("editForm");
-  const editTitle = document.getElementById("editTitle");
-  const editErr = document.getElementById("editErr");
-  const editErrInline = document.getElementById("editErrInline");
-  const editOk = document.getElementById("editOk");
-  const editBusy = document.getElementById("editBusy");
-  const btnSave = document.getElementById("btnSave");
+  const editModalEl     = document.getElementById("editModal");
+  const editModal       = new bootstrap.Modal(editModalEl);
+  const editForm        = document.getElementById("editForm");
+  const editTitle       = document.getElementById("editTitle");
+  const editErr         = document.getElementById("editErr");
+  const editErrInline   = document.getElementById("editErrInline");
+  const editOk          = document.getElementById("editOk");
+  const editBusy        = document.getElementById("editBusy");
+  const btnSave         = document.getElementById("btnSave");
 
   // Fields
-  const f_title = document.getElementById("f_title");
-  const f_status = document.getElementById("f_status");
-  const f_branch = document.getElementById("f_branch");
-  const f_resourceId = document.getElementById("f_resourceId");
-  const f_resourceName = document.getElementById("f_resourceName");
-  const f_start = document.getElementById("f_start");
-  const f_end = document.getElementById("f_end");
-  const f_description = document.getElementById("f_description");
-  const f_detailDescription = document.getElementById("f_detailDescription");
-  const f_detailPreview = document.getElementById("f_detailPreview");
-  const f_allowRegistration = document.getElementById("f_allowRegistration");
-  const f_capacity = document.getElementById("f_capacity");
-  const f_remaining = document.getElementById("f_remaining");
-  const f_regOpensDays = document.getElementById("f_regOpensDays");
-  const f_regClosesDays = document.getElementById("f_regClosesDays");
-  const f_visibility = document.getElementById("f_visibility");
-  const f_colorPreset = document.getElementById("f_colorPreset");
-  const f_color = document.getElementById("f_color");
-  const f_regOpenNow = document.getElementById("f_regOpenNow");
+  const f_title               = document.getElementById("f_title");
+  const f_status              = document.getElementById("f_status");
+  const f_branch              = document.getElementById("f_branch");
+  const f_resourceId          = document.getElementById("f_resourceId");
+  const f_resourceName        = document.getElementById("f_resourceName");
+  const f_start               = document.getElementById("f_start");
+  const f_end                 = document.getElementById("f_end");
+  const f_description         = document.getElementById("f_description");
+  const f_detailDescription   = document.getElementById("f_detailDescription");
+  const f_detailPreview       = document.getElementById("f_detailPreview");
+  const f_allowRegistration   = document.getElementById("f_allowRegistration");
+  const f_capacity            = document.getElementById("f_capacity");
+  const f_remaining           = document.getElementById("f_remaining");
+  const f_regOpensDays        = document.getElementById("f_regOpensDays");
+  const f_regClosesDays       = document.getElementById("f_regClosesDays");
+  const f_visibility          = document.getElementById("f_visibility");
+  const f_colorPreset         = document.getElementById("f_colorPreset");
+  const f_color               = document.getElementById("f_color");
+  const f_regOpenNow          = document.getElementById("f_regOpenNow");
 
   // Recurrence
-  const f_repeat = document.getElementById("f_repeat");
-  const f_interval = document.getElementById("f_interval");
-  const weeklyDaysWrap = document.getElementById("weeklyDaysWrap");
-  const f_repeatEndType = document.getElementById("f_repeatEndType");
-  const repeatCountWrap = document.getElementById("repeatCountWrap");
-  const f_repeatCount = document.getElementById("f_repeatCount");
-  const repeatUntilWrap = document.getElementById("repeatUntilWrap");
-  const f_repeatUntil = document.getElementById("f_repeatUntil");
+  const f_repeat              = document.getElementById("f_repeat");
+  const f_interval            = document.getElementById("f_interval");
+  const weeklyDaysWrap        = document.getElementById("weeklyDaysWrap");
+  const f_repeatEndType       = document.getElementById("f_repeatEndType");
+  const repeatCountWrap       = document.getElementById("repeatCountWrap");
+  const f_repeatCount         = document.getElementById("f_repeatCount");
+  const repeatUntilWrap       = document.getElementById("repeatUntilWrap");
+  const f_repeatUntil         = document.getElementById("f_repeatUntil");
 
   // Delete modal
-  const delModalEl = document.getElementById("delModal");
-  const delModal = new bootstrap.Modal(delModalEl);
-  const delMsg = document.getElementById("delMsg");
-  const delErr = document.getElementById("delErr");
-  const delBusy = document.getElementById("delBusy");
-  const btnDoDelete = document.getElementById("btnDoDelete");
+  const delModalEl            = document.getElementById("delModal");
+  const delModal              = new bootstrap.Modal(delModalEl);
+  const delMsg                = document.getElementById("delMsg");
+  const delErr                = document.getElementById("delErr");
+  const delBusy               = document.getElementById("delBusy");
+  const btnDoDelete           = document.getElementById("btnDoDelete");
 
   // Banner elements
-  const f_bannerPreview = document.getElementById("f_bannerPreview");
-  const f_bannerPlaceholder = document.getElementById("f_bannerPlaceholder");
-  const f_bannerFile = document.getElementById("f_bannerFile");
-  const bannerProgWrap = document.getElementById("bannerProgWrap");
-  const bannerProg = document.getElementById("bannerProg");
-  const f_bannerRemove = document.getElementById("f_bannerRemove");
-  const f_bannerMeta = document.getElementById("f_bannerMeta");
+  const f_bannerPreview       = document.getElementById("f_bannerPreview");
+  const f_bannerPlaceholder   = document.getElementById("f_bannerPlaceholder");
+  const f_bannerFile          = document.getElementById("f_bannerFile");
+  const bannerProgWrap        = document.getElementById("bannerProgWrap");
+  const bannerProg            = document.getElementById("bannerProg");
+  const f_bannerRemove        = document.getElementById("f_bannerRemove");
+  const f_bannerMeta          = document.getElementById("f_bannerMeta");
 
-  // Toast (for copy feedback)
-  const copyToastEl = document.getElementById("copyToast");
-  const copyToast = copyToastEl ? new bootstrap.Toast(copyToastEl, { delay: 2000 }) : null;
+  // Toast (optional) for copy feedback (only if you add an element with id="copyToast" in HTML)
+  const copyToastEl           = document.getElementById("copyToast");
+  const copyToast             = copyToastEl ? new bootstrap.Toast(copyToastEl, { delay: 2000 }) : null;
 
   // ---------- State ----------
   let resources = [];
   let allEvents = [];
-  let filtered = [];
+  let filtered  = [];
   let editingId = null;
   let pendingDeleteId = null;
   let unsubscribeEvents = null;
@@ -90,8 +100,8 @@
   let pendingBannerFile = null;  // File selected (not yet uploaded)
   let pendingBannerMeta = null;  // {width,height,type,size}
   let existingBannerPath = null;
-  let existingBannerUrl = null;
-  let flagRemoveBanner = false;
+  let existingBannerUrl  = null;
+  let flagRemoveBanner   = false;
 
   // ---------- Storage (force correct bucket) ----------
   const STORAGE_BUCKET_URL = "gs://kwlrintranet.firebasestorage.app";
@@ -105,21 +115,15 @@
   // ---------- OPERATOR (O365 via MSAL guard) ----------
   function getOperator() {
     const msalUser = (window.KWLR && window.KWLR.currentUser) ? window.KWLR.currentUser : null;
-    const fbUser = (firebase.auth && firebase.auth().currentUser) ? firebase.auth().currentUser : null;
+    const fbUser   = (firebase.auth && firebase.auth().currentUser) ? firebase.auth().currentUser : null;
 
-    const email =
-      (msalUser && msalUser.email) ||
-      (fbUser && fbUser.email) ||
-      null;
+    const email = (msalUser && msalUser.email) ||
+                  (fbUser && fbUser.email) || null;
 
-    const name =
-      (msalUser && msalUser.name) ||
-      (fbUser && (fbUser.displayName || fbUser.email)) ||
-      null;
+    const name  = (msalUser && msalUser.name) ||
+                  (fbUser && (fbUser.displayName || fbUser.email)) || null;
 
-    const oid =
-      (msalUser && (msalUser.oid || msalUser.objectId)) ||
-      null;
+    const oid   = (msalUser && (msalUser.oid || msalUser.objectId)) || null;
 
     return { email, name, oid, source: msalUser ? "msal" : (fbUser ? "firebase" : "none") };
   }
@@ -151,7 +155,6 @@
   function showCopyToast() {
     if (copyToast) copyToast.show();
   }
-
   async function copyToClipboard(text) {
     try {
       if (navigator.clipboard && window.isSecureContext) {
@@ -174,17 +177,16 @@
       alert("Copy failed. Please copy manually:\n" + text);
     }
   }
-
   function publicEventUrl(eventId) {
     return `${PUBLIC_EVENT_URL_BASE}${encodeURIComponent(eventId)}`;
   }
 
   // Registration windows
   function deriveRegWindowDays(startDate, opensDays, closesDays) {
-    const openMs = (Number(opensDays) || 0) * 24 * 60 * 60 * 1000;
-    const closeMs = (Number(closesDays) || 0) * 24 * 60 * 60 * 1000;
+    const openMs = (Number(opensDays) || 0) * 86400000;
+    const closeMs = (Number(closesDays) || 0) * 86400000;
     const regOpensAt = new Date(startDate.getTime() - openMs);
-    let regClosesAt = new Date(startDate.getTime() - closeMs);
+    let regClosesAt  = new Date(startDate.getTime() - closeMs);
     if (regOpensAt >= regClosesAt) regClosesAt = new Date(regOpensAt.getTime() + 30 * 60000);
     return { regOpensAt, regClosesAt };
   }
@@ -313,12 +315,10 @@
       });
     });
 
-    // enable tooltips for icon buttons
-    containerList.querySelectorAll("[data-bs-toggle='tooltip']").forEach((el) => {
-      new bootstrap.Tooltip(el);
-    });
+    // tooltips
+    containerList.querySelectorAll("[data-bs-toggle='tooltip']").forEach((el) => new bootstrap.Tooltip(el));
 
-    // resolve thumbnails async
+    // thumbs
     filtered.forEach((e) => {
       resolveBannerUrl(e).then((url) => {
         const mount = document.getElementById(`thumb-${e._id}`);
@@ -336,20 +336,19 @@
     });
   }
 
-  function shareButtonsHTML(eid) {
+  // Share block HTML (label + hyperlink + copy icon)
+  function shareAreaHTML(eid) {
     const url = publicEventUrl(eid);
     return `
-      <div class="d-flex align-items-center gap-1 flex-wrap">
-        <a href="${esc(url)}"
-           target="_blank" rel="noopener"
-           class="btn btn-light btn-sm p-1"
-           data-bs-toggle="tooltip" data-bs-title="Open Event Detail Page" aria-label="Open Event Detail Page">
-          <i class="bi bi-box-arrow-up-right"></i>
+      <div class="d-flex align-items-center gap-2 flex-wrap">
+        <span class="small text-muted">Event Detail Page</span>
+        <a href="${esc(url)}" target="_blank" rel="noopener" class="small link-primary text-decoration-underline">
+          Open Public Page
         </a>
         <button type="button"
                 class="btn btn-light btn-sm p-1"
                 data-action="copy-link" data-id="${esc(eid)}"
-                data-bs-toggle="tooltip" data-bs-title="Copy Event Detail link" aria-label="Copy link">
+                data-bs-toggle="tooltip" data-bs-title="Copy public link" aria-label="Copy link">
           <i class="bi bi-clipboard"></i>
         </button>
       </div>
@@ -395,7 +394,7 @@
 
     const share = `
       <div class="mt-2">
-        ${shareButtonsHTML(e._id)}
+        ${shareAreaHTML(e._id)}
       </div>`;
 
     const body = `
@@ -499,11 +498,9 @@
     editingId = id || null;
     editTitle.textContent = editingId ? "Edit Event" : "New Event";
 
-    // Remove previous share box if injected
+    // remove prior share box if injected
     const oldShare = editModalEl.querySelector("#editShareBox");
-    if (oldShare && oldShare.parentElement) {
-      oldShare.parentElement.removeChild(oldShare);
-    }
+    if (oldShare && oldShare.parentElement) oldShare.parentElement.removeChild(oldShare);
 
     // Defaults
     f_title.value = "";
@@ -585,7 +582,7 @@
     backfillRegDays(ev);
     loadBannerFromEvent(ev);
 
-    // Shareable Link box (icon-only)
+    // Shareable link box: label + hyperlink + copy icon
     try {
       const modalBody = editModalEl.querySelector(".modal-body");
       if (modalBody) {
@@ -595,15 +592,12 @@
         const url = publicEventUrl(editingId);
         box.innerHTML = `
           <div class="me-2 mb-2 mb-sm-0">
-            <div class="fw-semibold">Shareable Link</div>
-            <div class="small mono text-break">${esc(url)}</div>
+            <div class="fw-semibold">Event Detail Page</div>
+            <a href="${esc(url)}" target="_blank" rel="noopener" class="link-primary text-decoration-underline">
+              Open Public Page
+            </a>
           </div>
           <div class="d-flex align-items-center gap-1">
-            <a href="${esc(url)}" target="_blank" rel="noopener"
-               class="btn btn-light btn-sm p-1"
-               data-bs-toggle="tooltip" data-bs-title="Open public page" aria-label="Open link">
-              <i class="bi bi-box-arrow-up-right"></i>
-            </a>
             <button type="button"
                     class="btn btn-light btn-sm p-1"
                     id="btnEditCopyLink"
@@ -615,14 +609,9 @@
         modalBody.prepend(box);
 
         const btnEditCopyLink = box.querySelector("#btnEditCopyLink");
-        if (btnEditCopyLink) {
-          btnEditCopyLink.addEventListener("click", () => copyToClipboard(url));
-        }
+        if (btnEditCopyLink) btnEditCopyLink.addEventListener("click", () => copyToClipboard(url));
 
-        // enable tooltips in the modal box
-        box.querySelectorAll("[data-bs-toggle='tooltip']").forEach((el) => {
-          new bootstrap.Tooltip(el);
-        });
+        box.querySelectorAll("[data-bs-toggle='tooltip']").forEach((el) => new bootstrap.Tooltip(el));
       }
     } catch (e) {
       console.warn("Failed to inject share box:", e);
@@ -639,7 +628,7 @@
       if (!start || !other) return null;
       const ms = start.getTime() - other.getTime();
       if (ms <= 0) return 0;
-      return Math.round(ms / (24 * 60 * 60 * 1000));
+      return Math.round(ms / 86400000);
     }
     const openDays = daysBefore(startDate, opensAt);
     const closeDays = daysBefore(startDate, closesAt);
@@ -654,12 +643,6 @@
         f_regOpenNow.checked = false;
       }
     }
-  }
-
-  function textFromHtml(html) {
-    const div = document.createElement("div");
-    div.innerHTML = html || "";
-    return div.innerText || "";
   }
 
   function isPreset(hex) {
@@ -699,16 +682,14 @@
     }
   });
 
-  // ---------- Color picker link ----------
+  // ---------- Color + Recurrence UI ----------
   f_colorPreset.addEventListener("change", () => {
-    if (f_colorPreset.value === "__custom") return;
-    f_color.value = f_colorPreset.value;
+    if (f_colorPreset.value !== "__custom") f_color.value = f_colorPreset.value;
   });
   f_color.addEventListener("input", () => {
     f_colorPreset.value = "__custom";
   });
 
-  // ---------- Recurrence UI ----------
   f_repeat.addEventListener("change", () => {
     weeklyDaysWrap.style.display = f_repeat.value === "weekly" ? "" : "none";
   });
@@ -723,7 +704,7 @@
     const start = dtLocalFromInput(f_start.value);
     if (!start) return;
     const now = new Date();
-    let days = Math.ceil((start.getTime() - now.getTime()) / (24 * 60 * 60 * 1000));
+    let days = Math.ceil((start.getTime() - now.getTime()) / 86400000);
     if (days < 0) days = 0;
     f_regOpensDays.value = String(days);
   }
@@ -743,6 +724,7 @@
   f_detailDescription.addEventListener("input", () => {
     editDetailTouched = true;
     f_detailPreview.innerHTML = plainToHtml(f_detailDescription.value);
+    // Note: f_detailPreview is not content-editable; it mirrors parsed HTML.
   });
 
   // ---------- Resource auto-fill ----------
@@ -778,7 +760,7 @@
 
   function loadBannerFromEvent(ev) {
     existingBannerPath = ev.bannerPath || null;
-    existingBannerUrl = ev.bannerUrl || null;
+    existingBannerUrl  = ev.bannerUrl || null;
 
     if (existingBannerUrl) {
       if (f_bannerPreview) {
@@ -1110,7 +1092,7 @@
 
       for (const occ of occurrences) {
         const occStart = occ.start;
-        const occEnd = occ.end;
+        const occEnd   = occ.end;
 
         const conflictMsg = await hasConflict(branch, resourceId, occStart, occEnd, null);
         if (conflictMsg) {
@@ -1148,7 +1130,7 @@
         };
 
         if (allowRegistration) {
-          const { regOpensAt, regClosesAt } = deriveRegWindowDays(occStart, Number(f_regOpensDays.value || 0), Number(f_regClosesDays.value || 0));
+          const { regOpensAt, regClosesAt } = deriveRegWindowDays(occStart, opensDays, closesDays);
           payload.regOpensAt = regOpensAt;
           payload.regClosesAt = regClosesAt;
         }
@@ -1207,7 +1189,7 @@
         if (!limitUntil || cursor <= limitUntil) pushOcc(cursor);
         else break;
         made++;
-        cursor = new Date(cursor.getTime() + interval * 24 * 60 * 60 * 1000);
+        cursor = new Date(cursor.getTime() + interval * 86400000);
       }
     } else if (repeat === "weekly") {
       const startDow = start.getDay();
@@ -1215,7 +1197,7 @@
       weekStart.setHours(0, 0, 0, 0);
       weekStart.setDate(weekStart.getDate() - startDow); // to Sunday
       while (made < limitCount) {
-        for (const dow of weekdays.length ? weekdays : [startDow]) {
+        for (const dow of (weekdays.length ? weekdays : [startDow])) {
           const occStart = new Date(weekStart);
           occStart.setDate(weekStart.getDate() + dow);
           occStart.setHours(start.getHours(), start.getMinutes(), 0, 0);
@@ -1228,7 +1210,7 @@
           made++;
           if (made >= limitCount) break;
         }
-        weekStart = new Date(weekStart.getTime() + interval * 7 * 24 * 60 * 60 * 1000);
+        weekStart = new Date(weekStart.getTime() + interval * 7 * 86400000);
       }
     } else if (repeat === "monthly") {
       const startDay = start.getDate();
@@ -1269,6 +1251,8 @@
 
       return overlap ? "Time conflict: same branch & resource already occupied in that time range." : null;
     } catch (err) {
+      // If you see an "index required" error, create a composite index for:
+      // collection: events, where: branch==, resourceId==, start<, orderBy: start asc
       console.warn("conflict check failed; allowing save:", err);
       return null; // fail-open
     }
