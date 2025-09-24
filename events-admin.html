@@ -73,54 +73,54 @@
 </head>
 <body class="bg-light">
 
-  <!-- THEME NAVBAR (inline loader with fallbacks; no dependency on include.js) -->
-  <div id="navbarMount">
-    <div class="container py-2 text-muted small">Loading navbar…</div>
-  </div>
-  <script>
-    (async () => {
-      const mount = document.getElementById('navbarMount');
-      const candidates = [
-        './partials/navbar.html',
-        '/partials/navbar.html',
-        '../partials/navbar.html',
-        '../../partials/navbar.html'
-      ];
-      let loaded = false, lastErr = null, used = null;
-      for (const url of candidates) {
-        try {
-          const res = await fetch(url, { credentials: 'same-origin' });
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          const html = await res.text();
-          mount.innerHTML = html;
-          used = url;
-          // Re-init Bootstrap widgets inside navbar
-          if (window.bootstrap) {
-            try {
-              mount.querySelectorAll('[data-bs-toggle="dropdown"]').forEach(el => new bootstrap.Dropdown(el));
-              mount.querySelectorAll('.collapse').forEach(el => new bootstrap.Collapse(el, { toggle:false }));
-            } catch (e) { console.warn('[navbar] bootstrap init skipped:', e); }
-          }
-          loaded = true; break;
-        } catch (e) {
-          lastErr = e;
-          console.warn('[navbar] failed:', url, e && e.message);
-        }
-      }
-      if (!loaded) {
-        mount.innerHTML = `
-          <div class="container my-2">
-            <div class="alert alert-warning">
-              <strong>Navbar failed to load.</strong>
-              <div class="small text-muted">Tried ${candidates.map(c => `<code>${c}</code>`).join(', ')}.
-              ${lastErr ? ` Last error: ${lastErr.message || lastErr}` : ''}</div>
-            </div>
-          </div>`;
-      } else {
-        mount.setAttribute('data-navbar-loaded-from', used);
-      }
-    })();
-  </script>
+  <!-- INLINE NAVBAR (starts hidden; shown after auth passes) -->
+  <nav id="appNav" class="navbar navbar-expand-lg navbar-light bg-white shadow-sm px-3 d-none">
+    <a class="navbar-brand fw-semibold" href="/#home">
+      <img src="/images/logos2square.png" alt="Logo" height="40" class="me-2" style="border: 1px solid #ccc;">
+      KW Living Portal
+    </a>
+
+    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav"
+            aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
+      <span class="navbar-toggler-icon"></span>
+    </button>
+
+    <div class="collapse navbar-collapse" id="navbarNav">
+      <!-- Portal menu -->
+      <ul class="navbar-nav me-auto">
+        <li class="nav-item">
+          <a class="nav-link" href="/directory.html">Company Directory</a>
+        </li>
+
+        <li class="nav-item">
+          <a class="nav-link" href="/agentlist.html">Agent List</a>
+        </li>
+
+        <!-- Event Booking dropdown -->
+        <li class="nav-item dropdown">
+          <a class="nav-link dropdown-toggle" href="#" id="eventsDropdown" role="button"
+             data-bs-toggle="dropdown" aria-expanded="false">
+            Event Booking
+          </a>
+          <ul class="dropdown-menu" aria-labelledby="eventsDropdown">
+            <li><a class="dropdown-item" href="/events-admin.html" rel="noopener">Events Admin</a></li>
+            <li><a class="dropdown-item" href="/events-private.html" target="_blank" rel="noopener">Private Calendar</a></li>
+            <li><a class="dropdown-item" href="/events-public.html" target="_blank" rel="noopener">Public Calendar</a></li>
+          </ul>
+        </li>
+      </ul>
+
+      <!-- Right side: profile + logout -->
+      <ul class="navbar-nav ms-auto">
+        <li class="nav-item me-3 d-flex align-items-center">
+          <span id="navUser" class="text-muted small"></span>
+        </li>
+        <li class="nav-item">
+          <button id="btnLogout" class="btn btn-outline-secondary btn-sm">Logout</button>
+        </li>
+      </ul>
+    </div>
+  </nav>
 
   <!-- AUTH GATE (spinner/403) -->
   <div id="authGate" class="container py-5">
@@ -254,9 +254,7 @@
                 <input type="number" class="form-control" id="f_regOpensDays" placeholder="7" value="7" min="0" step="1">
                 <div class="form-check mt-2">
                   <input class="form-check-input" type="checkbox" id="f_regOpenNow">
-                  <label class="form-check-label" for="f_regOpenNow">
-                    Open registration now (auto-calculate days)
-                  </label>
+                  <label class="form-check-label" for="f_regOpenNow">Open registration now (auto-calculate days)</label>
                 </div>
               </div>
               <div class="col-md-6">
@@ -482,16 +480,20 @@
   <!-- Firebase config (defines window.db & storage) -->
   <script src="./js/firebaseConfig.js"></script>
 
-  <!-- MSAL then YOUR auth wrapper (use RELATIVE path like on index.html) -->
+  <!-- MSAL then YOUR auth wrapper (relative path like index.html) -->
   <script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@2.39.0/lib/msal-browser.min.js"></script>
   <script src="./js/auth.js"></script>
 
-  <!-- O365 SIGN-IN + INTERNAL-ONLY GUARD -->
+  <!-- O365 SIGN-IN + INTERNAL-ONLY GUARD + NAVBAR WIRING -->
   <script>
     (async function () {
       const authGate = document.getElementById('authGate');
       const appWrap  = document.getElementById('appWrap');
       const badge    = document.getElementById('signedInBadge');
+
+      const nav      = document.getElementById('appNav');
+      const navUser  = document.getElementById('navUser');
+      const btnLogout= document.getElementById('btnLogout');
 
       const INTERNAL_DOMAINS = [
         'livingrealtykw.com',
@@ -564,6 +566,19 @@
       // Expose current user to page scripts (events_admin.js uses this)
       window.KWLR = window.KWLR || {};
       window.KWLR.currentUser = { name, email, oid, domain };
+
+      // NAVBAR: unhide + populate + wire logout
+      try {
+        if (nav) nav.classList.remove('d-none');
+        if (navUser) navUser.textContent = name ? `${name} (${email})` : email;
+        if (btnLogout) btnLogout.addEventListener('click', () => {
+          if (window._auth && typeof window._auth.signOut === 'function') {
+            window._auth.signOut();
+          }
+        });
+      } catch (e) {
+        console.warn('[navbar] wiring issue:', e);
+      }
 
       // Decorate UI and open app
       if (badge) {
