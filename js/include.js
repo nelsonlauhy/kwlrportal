@@ -1,102 +1,110 @@
-// include.js (hardened partial loader)
-// - Replaces any element with data-include="path/to/file.html" with the fetched HTML
-// - Works with relative ("./partials/x.html") and absolute ("/partials/x.html") URLs
-// - Never fails silently: it will render a visible error message on failure
-// - Re-initializes Bootstrap JS components inside the injected partial
-
+// /js/include.js — robust partial loader with path fallbacks & visible errors
 (function () {
-  function resolveUrl(attr) {
-    if (!attr) return null;
-    try {
-      // If it's already absolute (http/https), keep it
-      if (/^https?:\/\//i.test(attr)) return attr;
-      // If it starts with "/", use same origin
-      if (attr.startsWith("/")) return window.location.origin + attr;
-      // Otherwise resolve relative to current page
-      const base = new URL(window.location.href);
-      return new URL(attr, base).toString();
-    } catch (e) {
-      console.warn("[include] URL resolve error for:", attr, e);
-      return null;
+  const log = (...args) => console.log("[include]", ...args);
+
+  function buildCandidates(srcAttr) {
+    // If absolute http(s), just use it
+    if (/^https?:\/\//i.test(srcAttr)) return [srcAttr];
+
+    const path = srcAttr.trim();
+
+    // Current page info
+    const { pathname, origin } = window.location;
+
+    const candidates = [];
+
+    // 1) As provided (relative to current page)
+    candidates.push(new URL(path, window.location.href).toString());
+
+    // 2) Root-relative
+    if (!path.startsWith("/")) {
+      candidates.push(origin + (path.startsWith("./") ? path.slice(1) : "/" + path));
+    } else {
+      candidates.push(origin + path);
     }
+
+    // 3) One-level up (../)
+    const oneUp = pathname.endsWith("/") ? pathname.slice(0, -1) : pathname;
+    const parent1 = oneUp.substring(0, oneUp.lastIndexOf("/")) || "/";
+    candidates.push(new URL(path.replace(/^\.\//, ""), origin + parent1 + "/").toString());
+
+    // 4) Two-levels up (../../)
+    const parent2 = parent1.substring(0, parent1.lastIndexOf("/")) || "/";
+    candidates.push(new URL(path.replace(/^\.\//, ""), origin + parent2 + "/").toString());
+
+    // De-dup
+    return [...new Set(candidates)];
   }
 
-  async function fetchText(url) {
-    const isDev = !/^https?:\/\//.test(window.location.origin) || window.location.hostname === "localhost";
-    const bust = isDev ? (url.includes("?") ? "&" : "?") + "v=" + Date.now() : "";
-    const finalUrl = url + bust;
-    const resp = await fetch(finalUrl, { credentials: "same-origin" });
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    return await resp.text();
+  async function tryFetch(url) {
+    try {
+      const resp = await fetch(url, { credentials: "same-origin" });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      return await resp.text();
+    } catch (e) {
+      throw e;
+    }
   }
 
   function initBootstrapInside(root) {
-    // Re-init Bootstrap dropdowns/collapse if your navbar uses them
+    if (!window.bootstrap || !root.querySelectorAll) return;
     try {
-      if (window.bootstrap && root.querySelectorAll) {
-        // Dropdowns
-        root.querySelectorAll('[data-bs-toggle="dropdown"]').forEach((el) => {
-          // eslint-disable-next-line no-new
-          new bootstrap.Dropdown(el);
-        });
-        // Collapses (e.g., navbar toggler)
-        root.querySelectorAll('.collapse').forEach((el) => {
-          // eslint-disable-next-line no-new
-          new bootstrap.Collapse(el, { toggle: false });
-        });
-      }
+      root.querySelectorAll('[data-bs-toggle="dropdown"]').forEach((el) => new bootstrap.Dropdown(el));
+      root.querySelectorAll(".collapse").forEach((el) => new bootstrap.Collapse(el, { toggle: false }));
     } catch (e) {
-      console.warn("[include] bootstrap init skipped:", e);
+      log("bootstrap init skipped:", e);
     }
+  }
+
+  async function processNode(node) {
+    const srcAttr = node.getAttribute("data-include");
+    if (!srcAttr) return;
+
+    const candidates = buildCandidates(srcAttr);
+    log("attempting", srcAttr, "->", candidates);
+
+    let html = null, used = null, lastErr = null;
+    for (const url of candidates) {
+      try {
+        html = await tryFetch(url);
+        used = url;
+        log("loaded:", used);
+        break;
+      } catch (e) {
+        lastErr = e;
+        log("failed:", url, e.message || e);
+      }
+    }
+
+    if (!html) {
+      node.innerHTML = `
+        <div class="container">
+          <div class="alert alert-warning my-2">
+            <strong>Partial failed to load:</strong> <code>${srcAttr}</code>
+            <div class="small text-muted">Tried ${candidates.length} paths. Last error: ${String(lastErr && lastErr.message || lastErr)}</div>
+          </div>
+        </div>`;
+      return;
+    }
+
+    node.innerHTML = html;
+    node.setAttribute("data-include-loaded-from", used);
+
+    // Nested includes (one pass is usually enough)
+    const nested = node.querySelectorAll("[data-include]");
+    if (nested.length) setTimeout(processIncludes, 0);
+
+    initBootstrapInside(node);
   }
 
   async function processIncludes() {
     const nodes = Array.from(document.querySelectorAll("[data-include]"));
-    if (!nodes.length) return;
-
-    await Promise.all(
-      nodes.map(async (node) => {
-        const srcAttr = node.getAttribute("data-include");
-        const url = resolveUrl(srcAttr);
-        if (!url) {
-          node.outerHTML = `<div class="alert alert-danger m-2">Invalid include path: <code>${srcAttr}</code></div>`;
-          return;
-        }
-        try {
-          const html = await fetchText(url);
-          // Inject
-          node.innerHTML = html;
-
-          // Allow nested includes (one level deep is usually enough)
-          const nested = node.querySelectorAll("[data-include]");
-          if (nested.length) {
-            // Process nested after this tick to avoid recursion pitfalls
-            setTimeout(processIncludes, 0);
-          }
-
-          // Re-init bootstrap components in the injected markup
-          initBootstrapInside(node);
-
-        } catch (err) {
-          console.error("[include] failed:", url, err);
-          node.outerHTML = `
-            <div class="container">
-              <div class="alert alert-warning my-2">
-                <strong>Navbar failed to load</strong> from <code>${srcAttr}</code>.
-                <div class="small text-muted">Error: ${String(err.message || err)}</div>
-              </div>
-            </div>`;
-        }
-      })
-    );
+    await Promise.all(nodes.map(processNode));
   }
 
-  // Run after DOM is ready
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", processIncludes);
   } else {
     processIncludes();
   }
 })();
-
-
