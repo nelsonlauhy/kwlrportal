@@ -1,6 +1,6 @@
-// Public Event Detail Page (Firestore v8)
+// Public/Private Event Detail Page (Firestore v8)
 // Expects ?id=<eventDocId> in the URL.
-// Mirrors the modal UI used in events-public.html, but as a full page.
+// Shows any event (public or private) by ID.
 
 (function(){
   // ---------- DOM ----------
@@ -36,7 +36,6 @@
   const btnSubmitReg = document.getElementById("btnSubmitReg");
 
   // ---------- Config ----------
-  // Optional, from firebaseConfig.js
   const MAPS_EMBED_API_KEY = (typeof window !== "undefined" && window.MAPS_EMBED_API_KEY)
     ? String(window.MAPS_EMBED_API_KEY) : null;
   const MAP_MODE = "auto"; // "auto" | "link"
@@ -63,7 +62,7 @@
     let s=String(url||"").trim();
     if(!s) return "";
     if(s.startsWith("ttps://")) s="h"+s;
-    if(/^gs:\/\//i.test(s)) return ""; // not handling gs:// here
+    if(/^gs:\/\//i.test(s)) return "";
     if(!/^https?:\/\//i.test(s) && !s.startsWith("/")) s="https://"+s;
     return s;
   }
@@ -109,9 +108,9 @@
     return "";
   }
 
+  // Registration is allowed purely by business fields (not by visibility/status)
   function canRegister(ev) {
     const now = new Date();
-    if (ev.status !== "published" || (ev.visibility || "").toLowerCase() !== "public") return false;
     if (ev.allowRegistration === false) return false;
     const opens = toDate(ev.regOpensAt), closes = toDate(ev.regClosesAt);
     if (opens && now < opens) return false;
@@ -321,10 +320,7 @@
     if (!snap.exists) throw new Error("Event not found.");
     const data = snap.data();
     eventObj = { _id: snap.id, ...data };
-    // only allow viewing public/published on this page:
-    if (eventObj.visibility !== "public" || eventObj.status !== "published") {
-      throw new Error("This event is not available publicly.");
-    }
+    // No visibility/status gating here: both public and private can be viewed by ID
     renderEvent(eventObj);
   }
 
@@ -346,7 +342,7 @@
         if (!evSnap.exists) throw new Error("Event not found.");
         const ev = evSnap.data();
 
-        if (ev.status !== "published" || ev.visibility !== "public") throw new Error("Registration is closed for this event.");
+        // Only enforce business fields (not visibility/status)
         const now = new Date();
         const opens = ev.regOpensAt?.toDate ? ev.regOpensAt.toDate() : (ev.regOpensAt ? new Date(ev.regOpensAt) : null);
         const closes = ev.regClosesAt?.toDate ? ev.regClosesAt.toDate() : (ev.regClosesAt ? new Date(ev.regClosesAt) : null);
@@ -376,9 +372,6 @@
       window.dispatchEvent(new CustomEvent("event:registered", { detail: { event: eventObj, attendee: { name, email } } }));
       setTimeout(() => regModal.hide(), 1200);
 
-      // Optional: you can trigger your email flow in events_comm.js if you use it
-      // window.dispatchEvent(new CustomEvent("event:email:send-confirmation", {...}));
-
     } catch (err) {
       console.error("registration error:", err);
       regErr.textContent = err.message || "Registration failed. Please try again.";
@@ -397,9 +390,7 @@
       await loadEventById(id);
     } catch (err) {
       console.error(err);
-      // Swap the header into an error state
       if (evTitleEl) evTitleEl.textContent = err.message || "Failed to load event.";
-      // Hide pieces that depend on event
       btnOpenReg.disabled = true;
       evBannerBox.classList.add("d-none");
       evShortDescEl.style.display = "none";
