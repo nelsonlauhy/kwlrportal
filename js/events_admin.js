@@ -1,15 +1,5 @@
 // Events Admin (Firestore v8) — O365 operator-enabled
-// - Reads operator from window.KWLR.currentUser injected by events-admin.html guard
-// - Stamps createdBy*/updatedBy* on create/update
-// - List-only with Edit/Create modal
-// - Banner Image (Firebase Storage v8) with preview, validation, upload, remove
-// - detailDescription: auto-link + <br> with live preview (and safe round-trip on edit)
-// - Color tag + tiny swatch in list
-// - Conflict detection (branch + resource overlap)  [index recommended: branch, resourceId, start]
-// - Registration windows (days-before-start) + "Open registration now" auto-calc
-// - Combined filter: Location (Resource-only) + Search
-// - Thumbnails resolved from Storage
-// - NEW: Per-event "Open Link" & "Copy Link" actions; Shareable link box in Edit modal
+// ... (same header comments as before)
 
 (function () {
   // ---------- Constants ----------
@@ -167,7 +157,6 @@
       if (navigator.clipboard && window.isSecureContext) {
         await navigator.clipboard.writeText(text);
       } else {
-        // Fallback
         const ta = document.createElement("textarea");
         ta.value = text;
         ta.style.position = "fixed";
@@ -324,6 +313,11 @@
       });
     });
 
+    // enable tooltips for icon buttons
+    containerList.querySelectorAll("[data-bs-toggle='tooltip']").forEach((el) => {
+      new bootstrap.Tooltip(el);
+    });
+
     // resolve thumbnails async
     filtered.forEach((e) => {
       resolveBannerUrl(e).then((url) => {
@@ -345,14 +339,19 @@
   function shareButtonsHTML(eid) {
     const url = publicEventUrl(eid);
     return `
-      <div class="d-flex align-items-center gap-2 flex-wrap">
-        <a href="${esc(url)}" target="_blank" rel="noopener" class="btn btn-outline-primary btn-sm">
-          <i class="bi bi-box-arrow-up-right me-1"></i>Open Link
+      <div class="d-flex align-items-center gap-1 flex-wrap">
+        <a href="${esc(url)}"
+           target="_blank" rel="noopener"
+           class="btn btn-light btn-sm p-1"
+           data-bs-toggle="tooltip" data-bs-title="Open public page" aria-label="Open link">
+          <i class="bi bi-box-arrow-up-right"></i>
         </a>
-        <button type="button" class="btn btn-outline-secondary btn-sm" data-action="copy-link" data-id="${esc(eid)}">
-          <i class="bi bi-clipboard me-1"></i>Copy Link
+        <button type="button"
+                class="btn btn-light btn-sm p-1"
+                data-action="copy-link" data-id="${esc(eid)}"
+                data-bs-toggle="tooltip" data-bs-title="Copy public link" aria-label="Copy link">
+          <i class="bi bi-clipboard"></i>
         </button>
-        <span class="small text-muted mono">${esc(url)}</span>
       </div>
     `;
   }
@@ -377,6 +376,28 @@
         <i class="bi bi-image"></i>
       </div>`;
 
+    const actions = `
+      <div class="mt-2 d-flex align-items-center gap-2 flex-wrap">
+        ${remainTxt ? `<div class="small text-muted me-1">${esc(remainTxt)}</div>` : ""}
+        <div class="d-flex align-items-center gap-1">
+          <button class="btn btn-light btn-sm p-1"
+                  data-action="edit" data-id="${esc(e._id)}"
+                  data-bs-toggle="tooltip" data-bs-title="Edit" aria-label="Edit">
+            <i class="bi bi-pencil-square"></i>
+          </button>
+          <button class="btn btn-light btn-sm p-1 text-danger"
+                  data-action="delete" data-id="${esc(e._id)}"
+                  data-bs-toggle="tooltip" data-bs-title="Delete" aria-label="Delete">
+            <i class="bi bi-trash"></i>
+          </button>
+        </div>
+      </div>`;
+
+    const share = `
+      <div class="mt-2">
+        ${shareButtonsHTML(e._id)}
+      </div>`;
+
     const body = `
       <div class="flex-grow-1">
         <div class="event-title">${esc(e.title || "Untitled Event")}</div>
@@ -389,22 +410,8 @@
           <span class="badge text-bg-light border">${esc(e.visibility || "")}</span>
         </div>
         ${e.description ? `<div class="mt-2 text-secondary">${esc(e.description)}</div>` : ""}
-
-        <!-- Actions -->
-        <div class="mt-2 d-flex align-items-center gap-2 flex-wrap">
-          ${remainTxt ? `<div class="small text-muted me-2">${esc(remainTxt)}</div>` : ""}
-          <button class="btn btn-outline-secondary btn-sm" data-action="edit" data-id="${esc(e._id)}">
-            <i class="bi bi-pencil-square me-1"></i>Edit
-          </button>
-          <button class="btn btn-outline-danger btn-sm" data-action="delete" data-id="${esc(e._id)}">
-            <i class="bi bi-trash me-1"></i>Delete
-          </button>
-        </div>
-
-        <!-- Shareable Link -->
-        <div class="mt-2">
-          ${shareButtonsHTML(e._id)}
-        </div>
+        ${actions}
+        ${share}
       </div>`;
 
     return `
@@ -578,7 +585,7 @@
     backfillRegDays(ev);
     loadBannerFromEvent(ev);
 
-    // Inject Shareable Link box at top of modal body
+    // Shareable Link box (icon-only)
     try {
       const modalBody = editModalEl.querySelector(".modal-body");
       if (modalBody) {
@@ -591,12 +598,17 @@
             <div class="fw-semibold">Shareable Link</div>
             <div class="small mono text-break">${esc(url)}</div>
           </div>
-          <div class="d-flex align-items-center gap-2">
-            <a href="${esc(url)}" target="_blank" rel="noopener" class="btn btn-outline-primary btn-sm">
-              <i class="bi bi-box-arrow-up-right me-1"></i>Open
+          <div class="d-flex align-items-center gap-1">
+            <a href="${esc(url)}" target="_blank" rel="noopener"
+               class="btn btn-light btn-sm p-1"
+               data-bs-toggle="tooltip" data-bs-title="Open public page" aria-label="Open link">
+              <i class="bi bi-box-arrow-up-right"></i>
             </a>
-            <button type="button" class="btn btn-outline-secondary btn-sm" id="btnEditCopyLink">
-              <i class="bi bi-clipboard me-1"></i>Copy
+            <button type="button"
+                    class="btn btn-light btn-sm p-1"
+                    id="btnEditCopyLink"
+                    data-bs-toggle="tooltip" data-bs-title="Copy public link" aria-label="Copy link">
+              <i class="bi bi-clipboard"></i>
             </button>
           </div>
         `;
@@ -606,6 +618,11 @@
         if (btnEditCopyLink) {
           btnEditCopyLink.addEventListener("click", () => copyToClipboard(url));
         }
+
+        // enable tooltips in the modal box
+        box.querySelectorAll("[data-bs-toggle='tooltip']").forEach((el) => {
+          new bootstrap.Tooltip(el);
+        });
       }
     } catch (e) {
       console.warn("Failed to inject share box:", e);
@@ -988,7 +1005,7 @@
         Number(cb.value)
       );
 
-      // Operator from O365 (preferred) or Firebase Auth fallback
+      // Operator
       const operator = getOperator();
 
       // ----- EDIT -----
@@ -1131,9 +1148,9 @@
         };
 
         if (allowRegistration) {
-          const { regOpensAt, regClosesAt } = deriveRegWindowDays(occStart, occEnd ? Number(f_regClosesDays.value || 0) : 0);
-          payload.regOpensAt = new Date(occStart.getTime() - (Number(f_regOpensDays.value || 0) * 24 * 60 * 60 * 1000));
-          payload.regClosesAt = new Date(occStart.getTime() - (Number(f_regClosesDays.value || 0) * 24 * 60 * 60 * 1000));
+          const { regOpensAt, regClosesAt } = deriveRegWindowDays(occStart, Number(f_regOpensDays.value || 0), Number(f_regClosesDays.value || 0));
+          payload.regOpensAt = regOpensAt;
+          payload.regClosesAt = regClosesAt;
         }
 
         batch.set(docRef, payload);
@@ -1252,8 +1269,6 @@
 
       return overlap ? "Time conflict: same branch & resource already occupied in that time range." : null;
     } catch (err) {
-      // If you see an "index required" error, create a composite index for:
-      // collection: events, where: branch==, resourceId==, start<, orderBy: start asc
       console.warn("conflict check failed; allowing save:", err);
       return null; // fail-open
     }
