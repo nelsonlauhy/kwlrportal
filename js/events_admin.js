@@ -9,8 +9,12 @@
 // - Registration windows (days-before-start) + "Open registration now" auto-calc
 // - Combined filter: Location (Resource-only) + Search
 // - Thumbnails resolved from Storage
+// - NEW: Per-event "Open Link" & "Copy Link" actions; Shareable link box in Edit modal
 
 (function () {
+  // ---------- Constants ----------
+  const PUBLIC_EVENT_URL_BASE = "https://intranet.livingrealtykw.com/event_public.html?id=";
+
   // ---------- DOM ----------
   const containerList = document.getElementById("eventsContainer");
   const locationFilter = document.getElementById("locationFilter");
@@ -77,6 +81,10 @@
   const f_bannerRemove = document.getElementById("f_bannerRemove");
   const f_bannerMeta = document.getElementById("f_bannerMeta");
 
+  // Toast (for copy feedback)
+  const copyToastEl = document.getElementById("copyToast");
+  const copyToast = copyToastEl ? new bootstrap.Toast(copyToastEl, { delay: 2000 }) : null;
+
   // ---------- State ----------
   let resources = [];
   let allEvents = [];
@@ -96,7 +104,6 @@
   let flagRemoveBanner = false;
 
   // ---------- Storage (force correct bucket) ----------
-  // Ensure this matches your Firebase Storage bucket.
   const STORAGE_BUCKET_URL = "gs://kwlrintranet.firebasestorage.app";
   const storage =
     window.storage && typeof window.storage.ref === "function"
@@ -106,7 +113,6 @@
   try { console.log("[Storage bucket]", storage.ref().toString()); } catch (_) {}
 
   // ---------- OPERATOR (O365 via MSAL guard) ----------
-  // Prefer MSAL operator injected by events-admin.html; fall back to Firebase Auth email if present.
   function getOperator() {
     const msalUser = (window.KWLR && window.KWLR.currentUser) ? window.KWLR.currentUser : null;
     const fbUser = (firebase.auth && firebase.auth().currentUser) ? firebase.auth().currentUser : null;
@@ -150,6 +156,38 @@
   }
   function dtLocalFromInput(value) {
     return value ? new Date(value) : null;
+  }
+
+  function showCopyToast() {
+    if (copyToast) copyToast.show();
+  }
+
+  async function copyToClipboard(text) {
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        // Fallback
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.position = "fixed";
+        ta.style.top = "-1000px";
+        ta.style.left = "-1000px";
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+      }
+      showCopyToast();
+    } catch (e) {
+      console.warn("Copy failed:", e);
+      alert("Copy failed. Please copy manually:\n" + text);
+    }
+  }
+
+  function publicEventUrl(eventId) {
+    return `${PUBLIC_EVENT_URL_BASE}${encodeURIComponent(eventId)}`;
   }
 
   // Registration windows
@@ -271,11 +309,19 @@
       });
     containerList.innerHTML = parts.join("");
 
+    // wire actions
     containerList.querySelectorAll("[data-action='edit']").forEach((btn) => {
       btn.addEventListener("click", () => openEdit(btn.getAttribute("data-id")));
     });
     containerList.querySelectorAll("[data-action='delete']").forEach((btn) => {
       btn.addEventListener("click", () => openDelete(btn.getAttribute("data-id")));
+    });
+    containerList.querySelectorAll("[data-action='copy-link']").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const id = btn.getAttribute("data-id");
+        if (!id) return;
+        copyToClipboard(publicEventUrl(id));
+      });
     });
 
     // resolve thumbnails async
@@ -294,6 +340,21 @@
         }
       });
     });
+  }
+
+  function shareButtonsHTML(eid) {
+    const url = publicEventUrl(eid);
+    return `
+      <div class="d-flex align-items-center gap-2 flex-wrap">
+        <a href="${esc(url)}" target="_blank" rel="noopener" class="btn btn-outline-primary btn-sm">
+          <i class="bi bi-box-arrow-up-right me-1"></i>Open Link
+        </a>
+        <button type="button" class="btn btn-outline-secondary btn-sm" data-action="copy-link" data-id="${esc(eid)}">
+          <i class="bi bi-clipboard me-1"></i>Copy Link
+        </button>
+        <span class="small text-muted mono">${esc(url)}</span>
+      </div>
+    `;
   }
 
   function renderEventRow(e) {
@@ -328,7 +389,9 @@
           <span class="badge text-bg-light border">${esc(e.visibility || "")}</span>
         </div>
         ${e.description ? `<div class="mt-2 text-secondary">${esc(e.description)}</div>` : ""}
-        <div class="mt-2 d-flex align-items-center gap-2">
+
+        <!-- Actions -->
+        <div class="mt-2 d-flex align-items-center gap-2 flex-wrap">
           ${remainTxt ? `<div class="small text-muted me-2">${esc(remainTxt)}</div>` : ""}
           <button class="btn btn-outline-secondary btn-sm" data-action="edit" data-id="${esc(e._id)}">
             <i class="bi bi-pencil-square me-1"></i>Edit
@@ -336,6 +399,11 @@
           <button class="btn btn-outline-danger btn-sm" data-action="delete" data-id="${esc(e._id)}">
             <i class="bi bi-trash me-1"></i>Delete
           </button>
+        </div>
+
+        <!-- Shareable Link -->
+        <div class="mt-2">
+          ${shareButtonsHTML(e._id)}
         </div>
       </div>`;
 
@@ -424,6 +492,12 @@
     editingId = id || null;
     editTitle.textContent = editingId ? "Edit Event" : "New Event";
 
+    // Remove previous share box if injected
+    const oldShare = editModalEl.querySelector("#editShareBox");
+    if (oldShare && oldShare.parentElement) {
+      oldShare.parentElement.removeChild(oldShare);
+    }
+
     // Defaults
     f_title.value = "";
     f_status.value = "draft";
@@ -503,6 +577,39 @@
 
     backfillRegDays(ev);
     loadBannerFromEvent(ev);
+
+    // Inject Shareable Link box at top of modal body
+    try {
+      const modalBody = editModalEl.querySelector(".modal-body");
+      if (modalBody) {
+        const box = document.createElement("div");
+        box.id = "editShareBox";
+        box.className = "alert alert-light border d-flex align-items-center justify-content-between flex-wrap";
+        const url = publicEventUrl(editingId);
+        box.innerHTML = `
+          <div class="me-2 mb-2 mb-sm-0">
+            <div class="fw-semibold">Shareable Link</div>
+            <div class="small mono text-break">${esc(url)}</div>
+          </div>
+          <div class="d-flex align-items-center gap-2">
+            <a href="${esc(url)}" target="_blank" rel="noopener" class="btn btn-outline-primary btn-sm">
+              <i class="bi bi-box-arrow-up-right me-1"></i>Open
+            </a>
+            <button type="button" class="btn btn-outline-secondary btn-sm" id="btnEditCopyLink">
+              <i class="bi bi-clipboard me-1"></i>Copy
+            </button>
+          </div>
+        `;
+        modalBody.prepend(box);
+
+        const btnEditCopyLink = box.querySelector("#btnEditCopyLink");
+        if (btnEditCopyLink) {
+          btnEditCopyLink.addEventListener("click", () => copyToClipboard(url));
+        }
+      }
+    } catch (e) {
+      console.warn("Failed to inject share box:", e);
+    }
 
     editModal.show();
   }
@@ -1024,9 +1131,9 @@
         };
 
         if (allowRegistration) {
-          const { regOpensAt, regClosesAt } = deriveRegWindowDays(occStart, opensDays, closesDays);
-          payload.regOpensAt = regOpensAt;
-          payload.regClosesAt = regClosesAt;
+          const { regOpensAt, regClosesAt } = deriveRegWindowDays(occStart, occEnd ? Number(f_regClosesDays.value || 0) : 0);
+          payload.regOpensAt = new Date(occStart.getTime() - (Number(f_regOpensDays.value || 0) * 24 * 60 * 60 * 1000));
+          payload.regClosesAt = new Date(occStart.getTime() - (Number(f_regClosesDays.value || 0) * 24 * 60 * 60 * 1000));
         }
 
         batch.set(docRef, payload);
