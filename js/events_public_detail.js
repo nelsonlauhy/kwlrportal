@@ -1,6 +1,8 @@
-// Public/Private Event Detail Page (Firestore v8)
+// Event Detail Page (Firestore v8)
 // Expects ?id=<eventDocId> in the URL.
-// Shows any event (public or private) by ID.
+// Works for BOTH public and private events (no visibility/status gating).
+// Includes: dynamic "Back to Events" link, banner, badges, time, address/map, descriptions,
+// and registration (honors allowRegistration, reg windows, capacity, not-started).
 
 (function(){
   // ---------- DOM ----------
@@ -35,7 +37,11 @@
   const regBusy = document.getElementById("regBusy");
   const btnSubmitReg = document.getElementById("btnSubmitReg");
 
+  // Back link element in header
+  const backLink = document.querySelector(".back-link");
+
   // ---------- Config ----------
+  // Optional (expose in firebaseConfig.js): window.MAPS_EMBED_API_KEY = "YOUR_KEY";
   const MAPS_EMBED_API_KEY = (typeof window !== "undefined" && window.MAPS_EMBED_API_KEY)
     ? String(window.MAPS_EMBED_API_KEY) : null;
   const MAP_MODE = "auto"; // "auto" | "link"
@@ -48,21 +54,38 @@
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, m => (
     { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[m]
   ));
-  function toDate(ts){ if(!ts) return null; if(typeof ts.toDate==="function") return ts.toDate(); const d=new Date(ts); return isNaN(d)?null:d; }
-  function fmtDateTime(d){ if(!d) return ""; const pad=n=>String(n).padStart(2,"0"); return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;}
-  function stripHtmlToText(html) { const tmp=document.createElement("div"); tmp.innerHTML=html||""; return (tmp.textContent||tmp.innerText||"").trim(); }
-  function normalizeHex(c){ if(!c) return "#3b82f6"; let x=String(c).trim(); if(!x.startsWith("#")) x="#"+x; if(x.length===4) x="#"+x[1]+x[1]+x[2]+x[2]+x[3]+x[3]; return x.toLowerCase(); }
-
+  function toDate(ts){
+    if (!ts) return null;
+    if (typeof ts.toDate === "function") return ts.toDate();
+    const d = new Date(ts);
+    return isNaN(d) ? null : d;
+  }
+  function fmtDateTime(d){
+    if (!d) return "";
+    const pad = n => String(n).padStart(2,"0");
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+  function stripHtmlToText(html) {
+    const tmp=document.createElement("div");
+    tmp.innerHTML=html||"";
+    return (tmp.textContent||tmp.innerText||"").trim();
+  }
+  function normalizeHex(c){
+    if(!c) return "#3b82f6";
+    let x=String(c).trim();
+    if(!x.startsWith("#")) x="#"+x;
+    if(x.length===4) x="#"+x[1]+x[1]+x[2]+x[2]+x[3]+x[3];
+    return x.toLowerCase();
+  }
   function getParam(name){
     const url = new URL(location.href);
     return url.searchParams.get(name);
   }
-
   function ensureHttps(url){
     let s=String(url||"").trim();
     if(!s) return "";
     if(s.startsWith("ttps://")) s="h"+s;
-    if(/^gs:\/\//i.test(s)) return "";
+    if(/^gs:\/\//i.test(s)) return ""; // not handling gs:// here
     if(!/^https?:\/\//i.test(s) && !s.startsWith("/")) s="https://"+s;
     return s;
   }
@@ -108,7 +131,7 @@
     return "";
   }
 
-  // Registration is allowed purely by business fields (not by visibility/status)
+  // Registration allowed purely by business fields (not visibility/status)
   function canRegister(ev) {
     const now = new Date();
     if (ev.allowRegistration === false) return false;
@@ -132,18 +155,36 @@
     const col = window.db.collection("resources");
 
     if (rid) {
-      try { const snap = await col.doc(rid).get();
-        if (snap.exists) { const data = snap.data(); resourceCache[`id:${rid}`]=data; return data; } } catch(_){}
+      try {
+        const snap = await col.doc(rid).get();
+        if (snap.exists) {
+          const data = snap.data();
+          resourceCache[`id:${rid}`]=data; return data;
+        }
+      } catch(_){}
     }
     if (rid) {
-      try { const q = await col.where("id","==",rid).limit(1).get();
-        if (!q.empty){ const data=q.docs[0].data(); resourceCache[`id:${rid}`]=data; return data; } } catch(_){}
+      try {
+        const q = await col.where("id","==",rid).limit(1).get();
+        if (!q.empty){
+          const data=q.docs[0].data();
+          resourceCache[`id:${rid}`]=data; return data;
+        }
+      } catch(_){}
     }
     if (rname) {
-      try { const q2 = await col.where("name","==",rname).get();
-        if (!q2.empty){ const all=q2.docs.map(d=>d.data()); let best=all[0];
-          if (rbranch){ const exact=all.find(x => (x.branch||"")===rbranch); if (exact) best=exact; }
-          resourceCache[`name:${rname}|${rbranch||""}`]=best; return best; } } catch(_){}
+      try {
+        const q2 = await col.where("name","==",rname).get();
+        if (!q2.empty){
+          const all=q2.docs.map(d=>d.data());
+          let best=all[0];
+          if (rbranch){
+            const exact=all.find(x => (x.branch||"")===rbranch);
+            if (exact) best=exact;
+          }
+          resourceCache[`name:${rname}|${rbranch||""}`]=best; return best;
+        }
+      } catch(_){}
     }
     return null;
   }
@@ -291,6 +332,12 @@
       fetchResourceDataByAny(ev).then(applyMeta).catch(()=> setMapUI({}));
     }
 
+    // --- Dynamic "Back to Events" link ---
+    if (backLink) {
+      const v = (ev.visibility || "").toLowerCase();
+      backLink.href = (v === "public") ? "/events-public.html" : "/events-private.html";
+    }
+
     // Register button
     const enabled = canRegister(ev);
     btnOpenReg.disabled = !enabled;
@@ -320,7 +367,7 @@
     if (!snap.exists) throw new Error("Event not found.");
     const data = snap.data();
     eventObj = { _id: snap.id, ...data };
-    // No visibility/status gating here: both public and private can be viewed by ID
+    // NOTE: No visibility/status gating; show any event loaded by ID
     renderEvent(eventObj);
   }
 
@@ -391,11 +438,13 @@
     } catch (err) {
       console.error(err);
       if (evTitleEl) evTitleEl.textContent = err.message || "Failed to load event.";
+      // Hide dependent sections if load failed
       btnOpenReg.disabled = true;
-      evBannerBox.classList.add("d-none");
-      evShortDescEl.style.display = "none";
-      evDetailDescEl.style.display = "none";
-      evAddressRow.classList.add("d-none");
+      evBannerBox?.classList.add("d-none");
+      if (evShortDescEl) evShortDescEl.style.display = "none";
+      if (evDetailDescEl) evDetailDescEl.style.display = "none";
+      evAddressRow?.classList.add("d-none");
+      if (backLink) backLink.href = "/events-public.html";
     }
   });
 })();
