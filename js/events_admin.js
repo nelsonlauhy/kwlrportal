@@ -343,13 +343,13 @@
         <a href="${esc(url)}"
            target="_blank" rel="noopener"
            class="btn btn-light btn-sm p-1"
-           data-bs-toggle="tooltip" data-bs-title="Open public page" aria-label="Open link">
+           data-bs-toggle="tooltip" data-bs-title="Open Event Detail Page" aria-label="Open Event Detail Page">
           <i class="bi bi-box-arrow-up-right"></i>
         </a>
         <button type="button"
                 class="btn btn-light btn-sm p-1"
                 data-action="copy-link" data-id="${esc(eid)}"
-                data-bs-toggle="tooltip" data-bs-title="Copy public link" aria-label="Copy link">
+                data-bs-toggle="tooltip" data-bs-title="Copy Event Detail link" aria-label="Copy link">
           <i class="bi bi-clipboard"></i>
         </button>
       </div>
