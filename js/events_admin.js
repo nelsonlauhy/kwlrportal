@@ -184,7 +184,7 @@
   // Registration windows
   function deriveRegWindowDays(startDate, opensDays, closesDays) {
     const openMs = (Number(opensDays) || 0) * 86400000;
-    const closeMs = (Number(closesDays) || 0) * 86400000;
+       const closeMs = (Number(closesDays) || 0) * 86400000;
     const regOpensAt = new Date(startDate.getTime() - openMs);
     let regClosesAt  = new Date(startDate.getTime() - closeMs);
     if (regOpensAt >= regClosesAt) regClosesAt = new Date(regOpensAt.getTime() + 30 * 60000);
@@ -286,18 +286,14 @@
       const d = toDate(e.start);
       if (!d) continue;
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-      (groups[key] ||= { label: d.toLocaleString(undefined, { month: "long", year: "numeric" }), events: [] }).events.push(
-        e
-      );
+      (groups[key] ||= { label: d.toLocaleString(undefined, { month: "long", year: "numeric" }), events: [] }).events.push(e);
     }
     const parts = [];
-    Object.keys(groups)
-      .sort()
-      .forEach((key) => {
-        const g = groups[key];
-        parts.push(`<div class="month-header">${esc(g.label)}</div>`);
-        for (const e of g.events) parts.push(renderEventRow(e));
-      });
+    Object.keys(groups).sort().forEach((key) => {
+      const g = groups[key];
+      parts.push(`<div class="month-header">${esc(g.label)}</div>`);
+      for (const e of g.events) parts.push(renderEventRow(e));
+    });
     containerList.innerHTML = parts.join("");
 
     // wire actions
@@ -312,13 +308,6 @@
         const id = btn.getAttribute("data-id");
         if (!id) return;
         copyToClipboard(publicEventUrl(id));
-      });
-    });
-    containerList.querySelectorAll("[data-action='registrations']").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const id = btn.getAttribute("data-id");
-        if (!id) return;
-        openRegistrations(id);
       });
     });
 
@@ -364,18 +353,18 @@
 
   // Row renderer
   function renderEventRow(e) {
-    const s = toDate(e.start), ee = toDate(e.end);
+    const s  = toDate(e.start), ee = toDate(e.end);
     const dateLine = `${fmtDateTime(s)} – ${fmtDateTime(ee)}`;
     const remaining = typeof e.remaining === "number" ? e.remaining : null;
-    const capacity = typeof e.capacity === "number" ? e.capacity : null;
+    const capacity  = typeof e.capacity === "number" ? e.capacity  : null;
     const remainTxt =
-      remaining != null && capacity != null ? `${remaining}/${capacity} left` : remaining != null ? `${remaining} left` : "";
+      remaining != null && capacity != null ? `${remaining}/${capacity} left`
+      : remaining != null ? `${remaining} left`
+      : "";
 
     const colorHex = e.color ? normalizeHex(e.color) : null;
     const colorBadge = colorHex
-      ? `<span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:${esc(
-          colorHex
-        )};border:1px solid #cbd5e1;vertical-align:middle;margin-right:.4rem;"></span>`
+      ? `<span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:${esc(colorHex)};border:1px solid #cbd5e1;vertical-align:middle;margin-right:.4rem;"></span>`
       : "";
 
     const thumb = `
@@ -383,13 +372,21 @@
         <i class="bi bi-image"></i>
       </div>`;
 
+    // IMPORTANT: Registrations icon is a REAL Bootstrap modal trigger with rich data-* for regs script
     const actions = `
       <div class="mt-2 d-flex align-items-center gap-2 flex-wrap">
         ${remainTxt ? `<div class="small text-muted me-1">${esc(remainTxt)}</div>` : ""}
         <div class="d-flex align-items-center gap-1">
           <button class="btn btn-light btn-sm p-1"
-                  data-action="registrations" data-id="${esc(e._id)}"
-                  data-bs-toggle="tooltip" data-bs-title="Registrations" aria-label="Registrations">
+                  data-bs-toggle="modal" data-bs-target="#regListModal"
+                  data-action="registrations"
+                  data-eid="${esc(e._id)}" data-id="${esc(e._id)}"
+                  data-title="${esc(e.title || "")}"
+                  data-start="${esc(s ? s.toISOString() : "")}"
+                  data-end="${esc(ee ? ee.toISOString() : "")}"
+                  data-branch="${esc(e.branch || "")}"
+                  data-resource="${esc(e.resourceName || "")}"
+                  data-bs-toggle2="tooltip" data-bs-title="Registrations" aria-label="Registrations">
             <i class="bi bi-people"></i>
           </button>
           <button class="btn btn-light btn-sm p-1"
@@ -440,7 +437,8 @@
     if (!locationFilter) return;
     const opts = [`<option value="ALL">All Locations</option>`];
     const byBranchThenName = [...resources].sort(
-      (a, b) => String(a.branch || "").localeCompare(String(b.branch || "")) || String(a.name || "").localeCompare(String(b.name || ""))
+      (a, b) => String(a.branch || "").localeCompare(String(b.branch || "")) ||
+                String(a.name || "").localeCompare(String(b.name || ""))
     );
     byBranchThenName.forEach((r) => {
       const br = (r.branch || "").toUpperCase();
@@ -754,7 +752,7 @@
     pendingBannerFile = null;
     pendingBannerMeta = null;
     existingBannerPath = null;
-    existingBannerUrl = null;
+       existingBannerUrl = null;
     flagRemoveBanner = false;
 
     f_bannerFile.value = "";
@@ -835,9 +833,7 @@
       size: file.size,
     };
     const softWarn = dim.width !== 2160 || dim.height !== 1080 ? " (tip: recommended 2160×1080)" : "";
-    f_bannerMeta.textContent = `${dim.width || "?"}×${dim.height || "?"} · ${(file.size / 1024 / 1024).toFixed(
-      2
-    )} MB · ${(file.type || "").toUpperCase()}${softWarn}`;
+    f_bannerMeta.textContent = `${dim.width || "?"}×${dim.height || "?"} · ${(file.size / 1024 / 1024).toFixed(2)} MB · ${(file.type || "").toUpperCase()}${softWarn}`;
 
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -1267,25 +1263,6 @@
       // collection: events, where: branch==, resourceId==, start<, orderBy: start asc
       console.warn("conflict check failed; allowing save:", err);
       return null; // fail-open
-    }
-  }
-
-  // ---------- Registrations opener (icon button) ----------
-  function openRegistrations(eventId) {
-    // Provide a flag for events_admin_regs.js
-    window.KWLR = window.KWLR || {};
-    window.KWLR.regsEventId = eventId;
-
-    // Fire a custom event that registrations script can listen to
-    try {
-      document.dispatchEvent(new CustomEvent("kwlr:openRegistrations", { detail: { eventId } }));
-    } catch (_) {}
-
-    // Ensure the modal is shown (in case regs script expects it visible)
-    const modalEl = document.getElementById("regListModal");
-    if (modalEl && typeof bootstrap.Modal === "function") {
-      const m = bootstrap.Modal.getOrCreateInstance(modalEl);
-      m.show();
     }
   }
 
