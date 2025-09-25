@@ -9,7 +9,7 @@
 // - Registration windows (days-before-start) + "Open registration now" auto-calc
 // - Combined filter: Location (Resource-only) + Search
 // - Thumbnails resolved from Storage
-// - Compact icon buttons (Edit/Delete/Copy) + "Event Detail Page" hyperlink (Open Public Page)
+// - Compact icon buttons (Registrations/Edit/Delete/Copy) + "Event Detail Page" hyperlink
 
 (function () {
   // ---------- Constants ----------
@@ -314,6 +314,13 @@
         copyToClipboard(publicEventUrl(id));
       });
     });
+    containerList.querySelectorAll("[data-action='registrations']").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const id = btn.getAttribute("data-id");
+        if (!id) return;
+        openRegistrations(id);
+      });
+    });
 
     // tooltips
     containerList.querySelectorAll("[data-bs-toggle='tooltip']").forEach((el) => new bootstrap.Tooltip(el));
@@ -355,6 +362,7 @@
     `;
   }
 
+  // Row renderer
   function renderEventRow(e) {
     const s = toDate(e.start), ee = toDate(e.end);
     const dateLine = `${fmtDateTime(s)} – ${fmtDateTime(ee)}`;
@@ -379,6 +387,11 @@
       <div class="mt-2 d-flex align-items-center gap-2 flex-wrap">
         ${remainTxt ? `<div class="small text-muted me-1">${esc(remainTxt)}</div>` : ""}
         <div class="d-flex align-items-center gap-1">
+          <button class="btn btn-light btn-sm p-1"
+                  data-action="registrations" data-id="${esc(e._id)}"
+                  data-bs-toggle="tooltip" data-bs-title="Registrations" aria-label="Registrations">
+            <i class="bi bi-people"></i>
+          </button>
           <button class="btn btn-light btn-sm p-1"
                   data-action="edit" data-id="${esc(e._id)}"
                   data-bs-toggle="tooltip" data-bs-title="Edit" aria-label="Edit">
@@ -724,7 +737,6 @@
   f_detailDescription.addEventListener("input", () => {
     editDetailTouched = true;
     f_detailPreview.innerHTML = plainToHtml(f_detailDescription.value);
-    // Note: f_detailPreview is not content-editable; it mirrors parsed HTML.
   });
 
   // ---------- Resource auto-fill ----------
@@ -1255,6 +1267,25 @@
       // collection: events, where: branch==, resourceId==, start<, orderBy: start asc
       console.warn("conflict check failed; allowing save:", err);
       return null; // fail-open
+    }
+  }
+
+  // ---------- Registrations opener (icon button) ----------
+  function openRegistrations(eventId) {
+    // Provide a flag for events_admin_regs.js
+    window.KWLR = window.KWLR || {};
+    window.KWLR.regsEventId = eventId;
+
+    // Fire a custom event that registrations script can listen to
+    try {
+      document.dispatchEvent(new CustomEvent("kwlr:openRegistrations", { detail: { eventId } }));
+    } catch (_) {}
+
+    // Ensure the modal is shown (in case regs script expects it visible)
+    const modalEl = document.getElementById("regListModal");
+    if (modalEl && typeof bootstrap.Modal === "function") {
+      const m = bootstrap.Modal.getOrCreateInstance(modalEl);
+      m.show();
     }
   }
 
