@@ -395,13 +395,14 @@
         ${remainTxt ? `<div class="small text-muted me-1">${esc(remainTxt)}</div>` : ""}
         <div class="d-flex align-items-center gap-1">
           <!-- visible icon -->
+          <!-- 
           <button class="btn btn-light btn-sm p-1"
                   data-action="registrations"
                   data-proxy="${proxyId}"
                   data-bs-toggle="tooltip" data-bs-title="Registrations" aria-label="Registrations">
             <i class="bi bi-people"></i>
           </button>
-
+          --> 
           <!-- hidden proxy trigger: this is what Bootstrap will treat as relatedTarget -->
           <button id="${proxyId}"
                   type="button"
