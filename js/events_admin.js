@@ -630,7 +630,7 @@
           <div class="me-2 mb-2 mb-sm-0">
             <div class="fw-semibold">Event Detail Page</div>
             <a href="${esc(url)}" target="_blank" rel="noopener" class="link-primary text-decoration-underline">
-              Open Detail Page
+              "${esc(url)}"
             </a>
           </div>
           <div class="d-flex align-items-center gap-1">
