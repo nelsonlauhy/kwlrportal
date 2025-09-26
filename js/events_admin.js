@@ -354,7 +354,7 @@
       <div class="d-flex align-items-center gap-2 flex-wrap">
         <span class="small text-muted">Event Detail Page</span>
         <a href="${esc(url)}" target="_blank" rel="noopener" class="small link-primary text-decoration-underline">
-          Open Detail Page
+          ${esc(url)}
         </a>
         <button type="button"
                 class="btn btn-light btn-sm p-1"
@@ -630,7 +630,7 @@
           <div class="me-2 mb-2 mb-sm-0">
             <div class="fw-semibold">Event Detail Page</div>
             <a href="${esc(url)}" target="_blank" rel="noopener" class="link-primary text-decoration-underline">
-              "${esc(url)}"
+              ${esc(url)}
             </a>
           </div>
           <div class="d-flex align-items-center gap-1">
