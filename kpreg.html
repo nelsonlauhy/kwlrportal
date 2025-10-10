@@ -1,8 +1,10 @@
 <!-- =========================
   kpreg.html — Kids Party Registration Form (Netlify + Firebase)
   - Single static page, no build step required
-  - Uses Firestore subcollection: party_submissions/{id}/kids
-  - Branch options: ICI, Woodbine, North Markham, Mississauga, Younge & Eglinton
+  - Firestore structure:
+      party_submissions/{submissionId}
+        • agentName, branch, email, createdAt
+        • kids subcollection: kids/{kidId} -> { fullName, age, relationship }
 ========================= -->
 <!DOCTYPE html>
 <html lang="en">
@@ -29,17 +31,25 @@
     .kid { border:1px solid var(--border); border-radius:12px; padding:12px; background:#fcfdff; }
     .footer { margin-top: 24px; font-size: 12px; color: var(--muted); }
   </style>
+
   <!-- Firebase CDN v10 (modular) -->
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
-    import { getFirestore, collection, addDoc, serverTimestamp, doc, collection as fsCollection } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
+    import {
+      getFirestore,
+      collection,
+      addDoc,
+      serverTimestamp,
+      doc,
+      collection as fsCollection
+    } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
-    // === Firebase config (provided) ===
+    // === Your Firebase config ===
     const firebaseConfig = {
       apiKey: "AIzaSyCGr7f6BxxsOO1BJMxfdOF7wMjintKYwiY",
       authDomain: "kwlrintranet.firebaseapp.com",
       projectId: "kwlrintranet",
-      storageBucket: "kwlrintranet.firebasestorage.app",
+      storageBucket: "kwlrintranet.firebasestorage.app", // <-- IMPORTANT: use the real bucket
       messagingSenderId: "601132046075",
       appId: "1:601132046075:web:b840ed4a2187ab60e8825e",
       measurementId: "G-PK4MVBSJPB"
@@ -48,16 +58,13 @@
     const app = initializeApp(firebaseConfig);
     const db = getFirestore(app);
 
-    // --- UI state ---
-    const form = {
-      agentName: document.addEventListener('DOMContentLoaded', () => {})
-    }
-
-    // Helper: create element
+    // ---------- DOM helpers ----------
     const el = (tag, attrs={}, children=[]) => {
       const n = document.createElement(tag);
       Object.entries(attrs).forEach(([k,v]) => {
-        if (k === 'class') n.className = v; else if (k === 'text') n.textContent = v; else n.setAttribute(k, v);
+        if (k === 'class') n.className = v;
+        else if (k === 'text') n.textContent = v;
+        else n.setAttribute(k, v);
       });
       children.forEach(c => n.appendChild(c));
       return n;
@@ -70,16 +77,26 @@
       box.innerHTML = '';
       kids.forEach((k, idx) => {
         const row = el('div', { class:'kid' }, [
-          el('div', { class:'row', }, [ el('span', { class:'tag', text:`Kid #${idx+1}` }) ]),
-          el('div', { class:'grid grid-2', }, [
+          el('div', { class:'row' }, [ el('span', { class:'tag', text:`Kid #${idx+1}` }) ]),
+          el('div', { class:'grid grid-2' }, [
             // Full name
-            (()=>{ const w=el('div'); w.appendChild(el('label',{text:"Kid's Full Name"})); const i=el('input',{placeholder:'e.g. Emma Chan', value:k.fullName}); i.addEventListener('input', e=>{ k.fullName=e.target.value; }); return w.appendChild(i), w; })(),
+            (()=>{ const w=el('div'); w.appendChild(el('label',{text:"Kid's Full Name"}));
+              const i=el('input',{placeholder:'e.g. Emma Chan', value:k.fullName});
+              i.addEventListener('input', e=>{ k.fullName=e.target.value; });
+              w.appendChild(i); return w; })(),
             // Age
-            (()=>{ const w=el('div'); w.appendChild(el('label',{text:'Age'})); const i=el('input',{type:'number', min:'0', max:'18', placeholder:'e.g. 8', value:k.age}); i.addEventListener('input', e=>{ k.age=e.target.value; }); return w.appendChild(i), w; })(),
-            // Relationship (full width on md via CSS grid-2 handling)
-            (()=>{ const w=el('div'); w.style.gridColumn='1 / span 2'; w.appendChild(el('label',{text:'Relationship'})); const i=el('input',{placeholder:'Son / Daughter / Nephew ...', value:k.relationship}); i.addEventListener('input', e=>{ k.relationship=e.target.value; }); return w.appendChild(i), w; })(),
+            (()=>{ const w=el('div'); w.appendChild(el('label',{text:'Age'}));
+              const i=el('input',{type:'number', min:'0', max:'18', placeholder:'e.g. 8', value:k.age});
+              i.addEventListener('input', e=>{ k.age=e.target.value; });
+              w.appendChild(i); return w; })(),
+            // Relationship
+            (()=>{ const w=el('div'); w.style.gridColumn='1 / span 2';
+              w.appendChild(el('label',{text:'Relationship'}));
+              const i=el('input',{placeholder:'Son / Daughter / Nephew ...', value:k.relationship});
+              i.addEventListener('input', e=>{ k.relationship=e.target.value; });
+              w.appendChild(i); return w; })(),
           ]),
-          el('div', { class:'row', }, [
+          el('div', { class:'row' }, [
             el('button', { class:'btn', type:'button' }, [document.createTextNode('Remove')])
           ])
         ]);
@@ -99,6 +116,7 @@
       document.getElementById('email').value = '';
       kids = [ { fullName:'', age:'', relationship:'' } ];
       renderKids();
+      document.getElementById('saveTag').textContent = '';
     }
 
     async function submitForm(e){
@@ -147,7 +165,16 @@
   <div class="wrap">
     <header style="margin: 0 0 16px;">
       <h1>Kids Party — Staff Registration</h1>
-      <div class="muted">kpreg.html · Netlify + Firebase（Firestore 子集合）</div>
+      <div class="muted">kpreg.html · Netlify + Firebase（Firestore subcollection）</div>
+
+      <p style="margin-top:12px; font-size:14px; line-height:1.6;">
+        <strong>Kids Party</strong><br/>
+        Open only to KW Living Realty agents’ and staff’s children/grandchildren ages 12 &amp; under.
+        Gift for every registered child. Registration through Google Forms.<br/><br/>
+        Each participating child must bring a non-perishable food donation of 10 lbs or more.<br/><br/>
+        All food donations will be donated to the Haven on the Queensway Food Bank,
+        a Daily Bread Food Bank network.
+      </p>
     </header>
 
     <div class="card">
@@ -178,6 +205,7 @@
           <strong>Kid(s)</strong>
           <button id="addKid" type="button" class="btn">＋ Add Kid</button>
         </div>
+
         <div id="kidsBox" class="grid" style="gap:12px;"></div>
 
         <div class="row" style="gap:12px;">
@@ -187,10 +215,9 @@
         </div>
       </form>
     </div>
+
     <div class="footer">© <span id="yr"></span> Kids Party</div>
   </div>
   <script>document.getElementById('yr').textContent = new Date().getFullYear();</script>
 </body>
 </html>
-
-
