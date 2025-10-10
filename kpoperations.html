@@ -1,5 +1,8 @@
 <!-- =========================
-  kpoperations.html — Submissions Viewer + Export CSV (no Auth)
+  kpoperations.html — Kids Party Submissions Viewer (Netlify + Firebase)
+  - View all submissions
+  - Expand to view kids (subcollection)
+  - Export flattened CSV (one kid per row)
 ========================= -->
 <!DOCTYPE html>
 <html lang="en">
@@ -14,18 +17,30 @@
     .card { background:var(--card); border:1px solid var(--border); border-radius: 16px; box-shadow: 0 10px 24px rgba(2,6,23,.04); padding: 20px; }
     h1 { font-size: 22px; margin: 0 0 8px; }
     .muted { color: var(--muted); font-size: 14px; }
+    .descbox { background:#f1f5f9; border:1px solid var(--border); border-radius:12px; padding:12px 14px; font-size:13px; margin:12px 0 16px; line-height:1.4; }
     table { width:100%; border-collapse: collapse; font-size:14px; }
     th, td { text-align:left; border-bottom:1px solid var(--border); padding:10px; vertical-align: top; }
     .btn { display:inline-flex; align-items:center; gap:8px; padding:8px 12px; border-radius:10px; border:1px solid var(--border); background:#fff; cursor:pointer; }
     .btn:hover { background:#f8fafc; }
-    details { background:#fcfdff; border:1px solid var(--border); border-radius:12px; padding:10px 12px; }
     .toolbar { display:flex; gap:10px; align-items:center; justify-content: space-between; margin: 0 0 12px; }
+    details { background:#fcfdff; border:1px solid var(--border); border-radius:12px; padding:10px 12px; }
+    .footer { margin-top: 16px; font-size:12px; color:var(--muted); }
   </style>
+
   <!-- Firebase CDN v10 (modular) -->
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
-    import { getFirestore, collection, getDocs, orderBy, query, doc, collection as fsCollection } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
+    import {
+      getFirestore,
+      collection,
+      getDocs,
+      orderBy,
+      query,
+      doc,
+      collection as fsCollection
+    } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
+    // === Firebase config (same project as kpreg.html) ===
     const firebaseConfig = {
       apiKey: "AIzaSyCGr7f6BxxsOO1BJMxfdOF7wMjintKYwiY",
       authDomain: "kwlrintranet.firebaseapp.com",
@@ -39,47 +54,59 @@
     const app = initializeApp(firebaseConfig);
     const db = getFirestore(app);
 
+    // ---------- Helpers ----------
     const tbody = () => document.querySelector('#subsBody');
     const status = (msg) => document.querySelector('#status').textContent = msg || '';
 
+    function fmtDate(ts){
+      return ts?.toDate ? ts.toDate().toLocaleString() : '';
+    }
+    function csvCell(v){
+      const s = (v ?? '').toString().replaceAll('"','""');
+      return `"${s}"`;
+    }
+
+    // ---------- Load submissions ----------
     async function loadSubmissions(){
       status('Loading…');
       const qref = query(collection(db, 'party_submissions'), orderBy('createdAt','desc'));
       const snap = await getDocs(qref);
-      const rows = snap.docs.map(d=> ({ id:d.id, ...d.data() }));
+      const rows = snap.docs.map(d => ({ id:d.id, ...d.data() }));
+
       const body = tbody();
       body.innerHTML = '';
-      for (let i=0;i<rows.length;i++){
-        const it = rows[i];
+      rows.forEach((it, idx) => {
         const tr = document.createElement('tr');
-        const created = it.createdAt?.toDate ? it.createdAt.toDate().toLocaleString() : '—';
         tr.innerHTML = `
-          <td>${i+1}</td>
+          <td>${idx + 1}</td>
           <td>${it.agentName || ''}</td>
           <td>${it.branch || ''}</td>
           <td>${it.email || ''}</td>
-          <td>${created}</td>
+          <td>${fmtDate(it.createdAt) || '—'}</td>
           <td><button class="btn" data-id="${it.id}">View</button></td>
         `;
         body.appendChild(tr);
         tr.querySelector('button').addEventListener('click', () => toggleKids(it.id, tr));
-      }
+      });
+
       status(rows.length ? '' : 'No submissions yet.');
     }
 
+    // ---------- Expand/Collapse kids for a submission ----------
     async function toggleKids(submissionId, hostTr){
-      // If already open, close
       const next = hostTr.nextElementSibling;
       if (next && next.classList.contains('kids-row')) { next.remove(); return; }
 
-      // Fetch kids
       const kidsSnap = await getDocs(fsCollection(doc(db,'party_submissions', submissionId), 'kids'));
-      const kids = kidsSnap.docs.map(k=>({ id:k.id, ...k.data() }));
+      const kids = kidsSnap.docs.map(k => ({ id:k.id, ...k.data() }));
+
       const tr = document.createElement('tr'); tr.className = 'kids-row';
       const td = document.createElement('td'); td.colSpan = 6;
+
       const details = document.createElement('details'); details.open = true;
       const summary = document.createElement('summary'); summary.textContent = `Kid(s) — ${kids.length}`;
       details.appendChild(summary);
+
       if (!kids.length){
         details.appendChild(document.createTextNode('No kids found.'));
       } else {
@@ -87,20 +114,24 @@
         tbl.innerHTML = `
           <thead><tr><th>Full Name</th><th>Age</th><th>Relationship</th></tr></thead>
           <tbody>
-            ${kids.map(k=>`<tr><td>${k.fullName||''}</td><td>${k.age??''}</td><td>${k.relationship||''}</td></tr>`).join('')}
+            ${kids.map(k => `<tr><td>${k.fullName || ''}</td><td>${k.age ?? ''}</td><td>${k.relationship || ''}</td></tr>`).join('')}
           </tbody>
         `;
         details.appendChild(tbl);
       }
-      td.appendChild(details); tr.appendChild(td);
+
+      td.appendChild(details);
+      tr.appendChild(td);
       hostTr.after(tr);
     }
 
+    // ---------- Export CSV (flattened: one kid per row) ----------
     async function exportCSV(){
-      // Flatten rows: one kid per line
+      status('Exporting CSV…');
       const qref = query(collection(db, 'party_submissions'), orderBy('createdAt','desc'));
       const snap = await getDocs(qref);
-      const subs = snap.docs.map(d=> ({ id:d.id, ...d.data() }));
+      const subs = snap.docs.map(d => ({ id:d.id, ...d.data() }));
+
       const header = [
         'SubmissionID','CreatedAt','AgentName','Branch','Email','KidFullName','KidAge','KidRelationship'
       ];
@@ -108,40 +139,35 @@
 
       for (const s of subs){
         const kidsSnap = await getDocs(fsCollection(doc(db,'party_submissions', s.id), 'kids'));
-        const kids = kidsSnap.docs.map(k=>({ id:k.id, ...k.data() }));
-        if (kids.length === 0){
-          // still include a line with empty kid fields
+        const kids = kidsSnap.docs.map(k => ({ id:k.id, ...k.data() }));
+
+        if (!kids.length){
           lines.push([
-            csv(s.id), csv(formatDate(s.createdAt)), csv(s.agentName), csv(s.branch), csv(s.email), '', '', ''
+            csvCell(s.id), csvCell(fmtDate(s.createdAt)), csvCell(s.agentName), csvCell(s.branch), csvCell(s.email),
+            '', '', ''
           ].join(','));
         } else {
           for (const k of kids){
             lines.push([
-              csv(s.id), csv(formatDate(s.createdAt)), csv(s.agentName), csv(s.branch), csv(s.email), csv(k.fullName), csv(k.age), csv(k.relationship)
+              csvCell(s.id), csvCell(fmtDate(s.createdAt)), csvCell(s.agentName), csvCell(s.branch), csvCell(s.email),
+              csvCell(k.fullName), csvCell(k.age), csvCell(k.relationship)
             ].join(','));
           }
         }
       }
 
-      const blob = new Blob([lines.join('')], { type:'text/csv;charset=utf-8;' });
+      const blob = new Blob([lines.join('\n')], { type:'text/csv;charset=utf-8;' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
-      a.href = url;
       const ts = new Date().toISOString().slice(0,19).replace(/[:T]/g,'');
+      a.href = url;
       a.download = `kids_party_submissions_${ts}.csv`;
       document.body.appendChild(a); a.click(); a.remove();
       URL.revokeObjectURL(url);
+      status(''); // clear
     }
 
-    function csv(value){
-      // Basic CSV escaping
-      const s = (value?.toString?.() ?? '').replaceAll('"', '""');
-      return '"' + s + '"';
-    }
-    function formatDate(ts){
-      return ts?.toDate ? ts.toDate().toLocaleString() : '';
-    }
-
+    // ---------- Init ----------
     document.addEventListener('DOMContentLoaded', () => {
       document.getElementById('refresh').addEventListener('click', loadSubmissions);
       document.getElementById('export').addEventListener('click', exportCSV);
@@ -153,10 +179,14 @@
   <div class="wrap">
     <header style="margin:0 0 16px;">
       <h1>Kids Party — Operations</h1>
-      <div class="muted">kpoperations.html · View submissions · Export CSV</div>
+      <div class="muted">View submissions and export a CSV for reporting.</div>
     </header>
 
     <div class="card">
+      <div class="descbox">
+        View all registrations submitted via the staff form. Click “View” to see each submission’s kids list. Use “Export CSV” to download a flattened spreadsheet (one child per row).
+      </div>
+
       <div class="toolbar">
         <div class="muted" id="status"></div>
         <div>
@@ -164,6 +194,7 @@
           <button id="export" class="btn">⬇︎ Export CSV</button>
         </div>
       </div>
+
       <div style="overflow:auto;">
         <table>
           <thead>
@@ -180,8 +211,10 @@
         </table>
       </div>
     </div>
-    <div style="margin-top:12px;" class="muted">© <span id="yr2"></span> Kids Party</div>
+
+    <div class="footer">© <span id="yr"></span> KW Living Realty</div>
   </div>
-  <script>document.getElementById('yr2').textContent = new Date().getFullYear();</script>
+
+  <script>document.getElementById('yr').textContent = new Date().getFullYear();</script>
 </body>
 </html>

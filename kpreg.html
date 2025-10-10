@@ -1,12 +1,17 @@
 <!-- =========================
   kpreg.html — Kids Party Registration Form (Netlify + Firebase)
+  - Single static page, no build step required
+  - Firestore structure:
+      party_submissions/{submissionId}
+        • agentName, branch, email, createdAt
+        • kids subcollection: kids/{kidId} -> { fullName, age, relationship }
 ========================= -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Kids Party — Registration</title>
+  <title>Kids Party — Registration (kpreg.html)</title>
   <style>
     :root { --bg:#f6f7fb; --fg:#0f172a; --card:#fff; --muted:#64748b; --border:#e5e7eb; }
     body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto; background:var(--bg); color:var(--fg); }
@@ -14,7 +19,7 @@
     .card { background:var(--card); border:1px solid var(--border); border-radius: 16px; box-shadow: 0 10px 24px rgba(2,6,23,.04); padding: 20px; }
     h1 { font-size: 22px; margin: 0 0 8px; }
     .muted { color: var(--muted); font-size: 14px; }
-    .descbox { background:#f1f5f9; border:1px solid var(--border); border-radius:12px; padding:12px 14px; font-size:13px; margin:10px 0 20px; line-height:1.4; }
+    .descbox { background:#f1f5f9; border:1px solid var(--border); border-radius:12px; padding:12px 14px; font-size:13px; margin:12px 0 16px; line-height:1.4; }
     .grid { display:grid; gap:16px; }
     @media (min-width: 768px){ .grid-2 { grid-template-columns: 1fr 1fr; } }
     label { display:block; font-size:13px; font-weight:600; margin:0 0 6px; }
@@ -28,7 +33,7 @@
     .footer { margin-top: 24px; font-size: 12px; color: var(--muted); }
 
     /* Banner (collapsible) */
-    .banner { position:relative; overflow:hidden; border-radius:14px; border:1px solid var(--border); background:#000; transition:max-height .45s ease; margin-bottom:20px; }
+    .banner { position:relative; overflow:hidden; border-radius:14px; border:1px solid var(--border); background:#000; transition:max-height .45s ease; }
     .banner img { width:100%; height:auto; display:block; }
     .banner.collapsed { max-height: var(--collapsedH, 400px); }
     .banner-gradient { position:absolute; left:0; right:0; bottom:0; height:56px; background: linear-gradient(to bottom, rgba(255,255,255,0), rgba(255,255,255,0.9)); pointer-events:none; transition: opacity .25s ease; }
@@ -39,10 +44,15 @@
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
     import {
-      getFirestore, collection, addDoc, serverTimestamp, doc, collection as fsCollection
+      getFirestore,
+      collection,
+      addDoc,
+      serverTimestamp,
+      doc,
+      collection as fsCollection
     } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
-    // === Firebase config ===
+    // === Firebase config (provided) ===
     const firebaseConfig = {
       apiKey: "AIzaSyCGr7f6BxxsOO1BJMxfdOF7wMjintKYwiY",
       authDomain: "kwlrintranet.firebaseapp.com",
@@ -56,7 +66,7 @@
     const app = initializeApp(firebaseConfig);
     const db = getFirestore(app);
 
-    // --- Helpers ---
+    // Helper: create element
     const el = (tag, attrs={}, children=[]) => {
       const n = document.createElement(tag);
       Object.entries(attrs).forEach(([k,v]) => {
@@ -133,7 +143,12 @@
           relationship: k.relationship.trim()
         })));
         document.getElementById('saveTag').textContent = `Saved ✓ Ref: ${subRef.id}`;
-        resetForm();
+        // Hide form and show thank you
+        document.getElementById('regForm').style.display = 'none';
+        const thanks = document.createElement('div');
+        thanks.style.marginTop = '20px';
+        thanks.innerHTML = '<h2>Thank you for your registration!</h2>';
+        document.querySelector('.card').appendChild(thanks);
       } catch(err){
         alert('Submit failed: ' + err.message);
       }
@@ -147,30 +162,6 @@
       });
       document.getElementById('regForm').addEventListener('submit', submitForm);
       document.getElementById('resetBtn').addEventListener('click', resetForm);
-
-      // Banner logic
-      const bannerBox = document.getElementById('bannerBox');
-      const bannerImg = document.getElementById('bannerImg');
-      const bannerTog = document.getElementById('bannerToggle');
-      const bannerGrad = document.getElementById('bannerGrad');
-
-      function setCollapsedHeight(){
-        const h = bannerImg.clientHeight || 0;
-        const half = Math.max(200, Math.round(h/2));
-        bannerBox.style.setProperty('--collapsedH', half + 'px');
-      }
-      function setExpandedUI(expanded){
-        bannerTog.setAttribute('aria-expanded', expanded ? 'true' : 'false');
-        bannerTog.textContent = expanded ? 'Show less ▴' : 'Show more ▾';
-        bannerGrad.style.opacity = expanded ? '0' : '1';
-      }
-      bannerImg.addEventListener('load', () => { setCollapsedHeight(); setExpandedUI(false); });
-      window.addEventListener('resize', () => { if (bannerBox.classList.contains('collapsed')) setCollapsedHeight(); });
-      bannerTog.addEventListener('click', () => {
-        const isCollapsed = bannerBox.classList.contains('collapsed');
-        if (isCollapsed){ bannerBox.classList.remove('collapsed'); setExpandedUI(true); }
-        else { bannerBox.classList.add('collapsed'); setCollapsedHeight(); setExpandedUI(false); }
-      });
     });
   </script>
 </head>
@@ -178,22 +169,23 @@
   <div class="wrap">
     <header style="margin: 0 0 16px;">
       <h1>Kids Party — Staff Registration</h1>
-      <div class="muted">kpreg.html · Netlify + Firebase (Firestore subcollection)</div>
+      <div class="muted">Please enter your full name, branch, email and kids information.</div>
     </header>
 
     <div class="card">
-      <!-- Collapsible Banner -->
-      <div id="bannerBox" class="banner collapsed">
-        <img id="bannerImg" src="images/KidsPartyPoster.png" alt="Kids Party Poster"/>
-        <div class="banner-gradient" id="bannerGrad"></div>
-        <button id="bannerToggle" class="banner-toggle" aria-expanded="false">Show more ▾</button>
-      </div>
-
-      <div class="descbox">
-        Kids Party — Open only to KW Living Realty agents’ and staff’s children/grandchildren ages 12 &amp; under. Gift for every registered child. Registration through Google Forms. Each participating child must bring a non-perishable food donation of 10 lbs or more. All food donations will be donated to the Haven on the Queensway Food Bank, a Daily Bread Food Bank network.
-      </div>
-
       <form id="regForm" class="grid">
+        <!-- Collapsible Banner (inside the form, at top) -->
+        <div id="bannerBox" class="banner collapsed">
+          <img id="bannerImg" src="images/KidsPartyPoster.png" alt="Kids Party Poster"/>
+          <div class="banner-gradient" id="bannerGrad"></div>
+          <button id="bannerToggle" class="banner-toggle" aria-expanded="false" title="Show more">Show more ▾</button>
+        </div>
+
+        <!-- One-line description box -->
+        <div class="descbox">
+          Kids Party — Open only to KW Living Realty agents’ and staff’s children/grandchildren ages 12 &amp; under. Gift for every registered child. Registration through Google Forms. Each participating child must bring a non-perishable food donation of 10 lbs or more. All food donations will be donated to the Haven on the Queensway Food Bank, a Daily Bread Food Bank network.
+        </div>
+
         <div class="grid grid-2">
           <div>
             <label>Agent / Staff Full Name</label>
@@ -220,6 +212,7 @@
           <strong>Kid(s)</strong>
           <button id="addKid" type="button" class="btn">＋ Add Kid</button>
         </div>
+
         <div id="kidsBox" class="grid" style="gap:12px;"></div>
 
         <div class="row" style="gap:12px;">
@@ -230,8 +223,45 @@
       </form>
     </div>
 
-    <div class="footer">© <span id="yr"></span> Kids Party</div>
+    <div class="footer">© <span id="yr"></span> KW Living Realty</div>
   </div>
+
   <script>document.getElementById('yr').textContent = new Date().getFullYear();</script>
+  <script>
+    // Lightweight banner toggle (no Firebase dependency)
+    (function(){
+      function ready(fn){ if (document.readyState!=='loading'){ fn(); } else { document.addEventListener('DOMContentLoaded', fn); } }
+      ready(function(){
+        var bannerBox = document.getElementById('bannerBox');
+        var bannerImg = document.getElementById('bannerImg');
+        var bannerTog = document.getElementById('bannerToggle');
+        var bannerGrad = document.getElementById('bannerGrad');
+        if(!bannerBox||!bannerImg||!bannerTog) return;
+        function setCollapsedHeight(){
+          var h = bannerImg.clientHeight || 0;
+          var half = Math.max(200, Math.round(h/2));
+          bannerBox.style.setProperty('--collapsedH', half + 'px');
+        }
+        function setExpandedUI(expanded){
+          bannerTog.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+          bannerTog.textContent = expanded ? 'Show less ▴' : 'Show more ▾';
+          if (bannerGrad) bannerGrad.style.opacity = expanded ? '0' : '1';
+        }
+        bannerImg.addEventListener('load', function(){ setCollapsedHeight(); setExpandedUI(false); });
+        window.addEventListener('resize', function(){ if (bannerBox.classList.contains('collapsed')) setCollapsedHeight(); });
+        bannerTog.addEventListener('click', function(){
+          var isCollapsed = bannerBox.classList.contains('collapsed');
+          if (isCollapsed){
+            bannerBox.classList.remove('collapsed');
+            setExpandedUI(true);
+          } else {
+            bannerBox.classList.add('collapsed');
+            setCollapsedHeight();
+            setExpandedUI(false);
+          }
+        });
+      });
+    })();
+  </script>
 </body>
 </html>
