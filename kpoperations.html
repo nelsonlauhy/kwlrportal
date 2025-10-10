@@ -1,0 +1,187 @@
+<!-- =========================
+  kpoperations.html — Submissions Viewer + Export CSV (no Auth)
+========================= -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Kids Party — Operations (kpoperations.html)</title>
+  <style>
+    :root { --bg:#f6f7fb; --fg:#0f172a; --card:#fff; --muted:#64748b; --border:#e5e7eb; }
+    body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto; background:var(--bg); color:var(--fg); }
+    .wrap { max-width: 1200px; margin: 0 auto; padding: 24px; }
+    .card { background:var(--card); border:1px solid var(--border); border-radius: 16px; box-shadow: 0 10px 24px rgba(2,6,23,.04); padding: 20px; }
+    h1 { font-size: 22px; margin: 0 0 8px; }
+    .muted { color: var(--muted); font-size: 14px; }
+    table { width:100%; border-collapse: collapse; font-size:14px; }
+    th, td { text-align:left; border-bottom:1px solid var(--border); padding:10px; vertical-align: top; }
+    .btn { display:inline-flex; align-items:center; gap:8px; padding:8px 12px; border-radius:10px; border:1px solid var(--border); background:#fff; cursor:pointer; }
+    .btn:hover { background:#f8fafc; }
+    details { background:#fcfdff; border:1px solid var(--border); border-radius:12px; padding:10px 12px; }
+    .toolbar { display:flex; gap:10px; align-items:center; justify-content: space-between; margin: 0 0 12px; }
+  </style>
+  <!-- Firebase CDN v10 (modular) -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
+    import { getFirestore, collection, getDocs, orderBy, query, doc, collection as fsCollection } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyCGr7f6BxxsOO1BJMxfdOF7wMjintKYwiY",
+      authDomain: "kwlrintranet.firebaseapp.com",
+      projectId: "kwlrintranet",
+      storageBucket: "kwlrintranet.firebasestorage.app",
+      messagingSenderId: "601132046075",
+      appId: "1:601132046075:web:b840ed4a2187ab60e8825e",
+      measurementId: "G-PK4MVBSJPB"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+
+    const tbody = () => document.querySelector('#subsBody');
+    const status = (msg) => document.querySelector('#status').textContent = msg || '';
+
+    async function loadSubmissions(){
+      status('Loading…');
+      const qref = query(collection(db, 'party_submissions'), orderBy('createdAt','desc'));
+      const snap = await getDocs(qref);
+      const rows = snap.docs.map(d=> ({ id:d.id, ...d.data() }));
+      const body = tbody();
+      body.innerHTML = '';
+      for (let i=0;i<rows.length;i++){
+        const it = rows[i];
+        const tr = document.createElement('tr');
+        const created = it.createdAt?.toDate ? it.createdAt.toDate().toLocaleString() : '—';
+        tr.innerHTML = `
+          <td>${i+1}</td>
+          <td>${it.agentName || ''}</td>
+          <td>${it.branch || ''}</td>
+          <td>${it.email || ''}</td>
+          <td>${created}</td>
+          <td><button class="btn" data-id="${it.id}">View</button></td>
+        `;
+        body.appendChild(tr);
+        tr.querySelector('button').addEventListener('click', () => toggleKids(it.id, tr));
+      }
+      status(rows.length ? '' : 'No submissions yet.');
+    }
+
+    async function toggleKids(submissionId, hostTr){
+      // If already open, close
+      const next = hostTr.nextElementSibling;
+      if (next && next.classList.contains('kids-row')) { next.remove(); return; }
+
+      // Fetch kids
+      const kidsSnap = await getDocs(fsCollection(doc(db,'party_submissions', submissionId), 'kids'));
+      const kids = kidsSnap.docs.map(k=>({ id:k.id, ...k.data() }));
+      const tr = document.createElement('tr'); tr.className = 'kids-row';
+      const td = document.createElement('td'); td.colSpan = 6;
+      const details = document.createElement('details'); details.open = true;
+      const summary = document.createElement('summary'); summary.textContent = `Kid(s) — ${kids.length}`;
+      details.appendChild(summary);
+      if (!kids.length){
+        details.appendChild(document.createTextNode('No kids found.'));
+      } else {
+        const tbl = document.createElement('table');
+        tbl.innerHTML = `
+          <thead><tr><th>Full Name</th><th>Age</th><th>Relationship</th></tr></thead>
+          <tbody>
+            ${kids.map(k=>`<tr><td>${k.fullName||''}</td><td>${k.age??''}</td><td>${k.relationship||''}</td></tr>`).join('')}
+          </tbody>
+        `;
+        details.appendChild(tbl);
+      }
+      td.appendChild(details); tr.appendChild(td);
+      hostTr.after(tr);
+    }
+
+    async function exportCSV(){
+      // Flatten rows: one kid per line
+      const qref = query(collection(db, 'party_submissions'), orderBy('createdAt','desc'));
+      const snap = await getDocs(qref);
+      const subs = snap.docs.map(d=> ({ id:d.id, ...d.data() }));
+      const header = [
+        'SubmissionID','CreatedAt','AgentName','Branch','Email','KidFullName','KidAge','KidRelationship'
+      ];
+      const lines = [header.join(',')];
+
+      for (const s of subs){
+        const kidsSnap = await getDocs(fsCollection(doc(db,'party_submissions', s.id), 'kids'));
+        const kids = kidsSnap.docs.map(k=>({ id:k.id, ...k.data() }));
+        if (kids.length === 0){
+          // still include a line with empty kid fields
+          lines.push([
+            csv(s.id), csv(formatDate(s.createdAt)), csv(s.agentName), csv(s.branch), csv(s.email), '', '', ''
+          ].join(','));
+        } else {
+          for (const k of kids){
+            lines.push([
+              csv(s.id), csv(formatDate(s.createdAt)), csv(s.agentName), csv(s.branch), csv(s.email), csv(k.fullName), csv(k.age), csv(k.relationship)
+            ].join(','));
+          }
+        }
+      }
+
+      const blob = new Blob([lines.join('')], { type:'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const ts = new Date().toISOString().slice(0,19).replace(/[:T]/g,'');
+      a.download = `kids_party_submissions_${ts}.csv`;
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    function csv(value){
+      // Basic CSV escaping
+      const s = (value?.toString?.() ?? '').replaceAll('"', '""');
+      return '"' + s + '"';
+    }
+    function formatDate(ts){
+      return ts?.toDate ? ts.toDate().toLocaleString() : '';
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      document.getElementById('refresh').addEventListener('click', loadSubmissions);
+      document.getElementById('export').addEventListener('click', exportCSV);
+      loadSubmissions();
+    });
+  </script>
+</head>
+<body>
+  <div class="wrap">
+    <header style="margin:0 0 16px;">
+      <h1>Kids Party — Operations</h1>
+      <div class="muted">kpoperations.html · View submissions · Export CSV</div>
+    </header>
+
+    <div class="card">
+      <div class="toolbar">
+        <div class="muted" id="status"></div>
+        <div>
+          <button id="refresh" class="btn">⟳ Refresh</button>
+          <button id="export" class="btn">⬇︎ Export CSV</button>
+        </div>
+      </div>
+      <div style="overflow:auto;">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Agent / Staff</th>
+              <th>Branch</th>
+              <th>Email</th>
+              <th>Created</th>
+              <th>Kids</th>
+            </tr>
+          </thead>
+          <tbody id="subsBody"></tbody>
+        </table>
+      </div>
+    </div>
+    <div style="margin-top:12px;" class="muted">© <span id="yr2"></span> Kids Party</div>
+  </div>
+  <script>document.getElementById('yr2').textContent = new Date().getFullYear();</script>
+</body>
+</html>

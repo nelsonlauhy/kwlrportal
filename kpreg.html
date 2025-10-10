@@ -1,0 +1,196 @@
+<!-- =========================
+  kpreg.html — Kids Party Registration Form (Netlify + Firebase)
+  - Single static page, no build step required
+  - Uses Firestore subcollection: party_submissions/{id}/kids
+  - Branch options: ICI, Woodbine, North Markham, Mississauga, Younge & Eglinton
+========================= -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Kids Party — Registration (kpreg.html)</title>
+  <style>
+    :root { --bg:#f6f7fb; --fg:#0f172a; --card:#fff; --muted:#64748b; --border:#e5e7eb; }
+    body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto; background:var(--bg); color:var(--fg); }
+    .wrap { max-width: 1000px; margin: 0 auto; padding: 24px; }
+    .card { background:var(--card); border:1px solid var(--border); border-radius: 16px; box-shadow: 0 10px 24px rgba(2,6,23,.04); padding: 20px; }
+    h1 { font-size: 22px; margin: 0 0 8px; }
+    .muted { color: var(--muted); font-size: 14px; }
+    .grid { display:grid; gap:16px; }
+    @media (min-width: 768px){ .grid-2 { grid-template-columns: 1fr 1fr; } }
+    label { display:block; font-size:13px; font-weight:600; margin:0 0 6px; }
+    input, select { width:100%; box-sizing:border-box; padding:10px 12px; border:1px solid var(--border); border-radius:12px; font-size:14px; }
+    .row { display:flex; gap:10px; align-items:center; }
+    .btn { display:inline-flex; align-items:center; gap:8px; padding:10px 14px; border-radius:12px; border:1px solid var(--border); background:#fff; cursor:pointer; }
+    .btn:hover { background:#f8fafc; }
+    .btn.primary { background:#0f172a; border-color:#0f172a; color:#fff; }
+    .tag { display:inline-flex; align-items:center; gap:8px; padding:6px 10px; border:1px solid var(--border); border-radius:999px; background:#f8fafc; font-size:12px; }
+    .kid { border:1px solid var(--border); border-radius:12px; padding:12px; background:#fcfdff; }
+    .footer { margin-top: 24px; font-size: 12px; color: var(--muted); }
+  </style>
+  <!-- Firebase CDN v10 (modular) -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
+    import { getFirestore, collection, addDoc, serverTimestamp, doc, collection as fsCollection } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
+
+    // === Firebase config (provided) ===
+    const firebaseConfig = {
+      apiKey: "AIzaSyCGr7f6BxxsOO1BJMxfdOF7wMjintKYwiY",
+      authDomain: "kwlrintranet.firebaseapp.com",
+      projectId: "kwlrintranet",
+      storageBucket: "kwlrintranet.firebasestorage.app",
+      messagingSenderId: "601132046075",
+      appId: "1:601132046075:web:b840ed4a2187ab60e8825e",
+      measurementId: "G-PK4MVBSJPB"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+
+    // --- UI state ---
+    const form = {
+      agentName: document.addEventListener('DOMContentLoaded', () => {})
+    }
+
+    // Helper: create element
+    const el = (tag, attrs={}, children=[]) => {
+      const n = document.createElement(tag);
+      Object.entries(attrs).forEach(([k,v]) => {
+        if (k === 'class') n.className = v; else if (k === 'text') n.textContent = v; else n.setAttribute(k, v);
+      });
+      children.forEach(c => n.appendChild(c));
+      return n;
+    };
+
+    let kids = [ { fullName:'', age:'', relationship:'' } ];
+
+    function renderKids(){
+      const box = document.getElementById('kidsBox');
+      box.innerHTML = '';
+      kids.forEach((k, idx) => {
+        const row = el('div', { class:'kid' }, [
+          el('div', { class:'row', }, [ el('span', { class:'tag', text:`Kid #${idx+1}` }) ]),
+          el('div', { class:'grid grid-2', }, [
+            // Full name
+            (()=>{ const w=el('div'); w.appendChild(el('label',{text:"Kid's Full Name"})); const i=el('input',{placeholder:'e.g. Emma Chan', value:k.fullName}); i.addEventListener('input', e=>{ k.fullName=e.target.value; }); return w.appendChild(i), w; })(),
+            // Age
+            (()=>{ const w=el('div'); w.appendChild(el('label',{text:'Age'})); const i=el('input',{type:'number', min:'0', max:'18', placeholder:'e.g. 8', value:k.age}); i.addEventListener('input', e=>{ k.age=e.target.value; }); return w.appendChild(i), w; })(),
+            // Relationship (full width on md via CSS grid-2 handling)
+            (()=>{ const w=el('div'); w.style.gridColumn='1 / span 2'; w.appendChild(el('label',{text:'Relationship'})); const i=el('input',{placeholder:'Son / Daughter / Nephew ...', value:k.relationship}); i.addEventListener('input', e=>{ k.relationship=e.target.value; }); return w.appendChild(i), w; })(),
+          ]),
+          el('div', { class:'row', }, [
+            el('button', { class:'btn', type:'button' }, [document.createTextNode('Remove')])
+          ])
+        ]);
+        // Remove handler
+        row.querySelector('button').addEventListener('click', () => {
+          if (kids.length === 1) return; // keep at least one
+          kids = kids.filter((_, i) => i !== idx);
+          renderKids();
+        });
+        box.appendChild(row);
+      });
+    }
+
+    function resetForm(){
+      document.getElementById('agentName').value = '';
+      document.getElementById('branch').value = '';
+      document.getElementById('email').value = '';
+      kids = [ { fullName:'', age:'', relationship:'' } ];
+      renderKids();
+    }
+
+    async function submitForm(e){
+      e.preventDefault();
+      const agentName = document.getElementById('agentName').value.trim();
+      const branch = document.getElementById('branch').value;
+      const email = document.getElementById('email').value.trim();
+      if (!agentName || !branch || !email) { alert('Please fill Agent/Branch/Email.'); return; }
+      const cleanKids = kids.filter(k => k.fullName && k.age !== '' && k.relationship);
+      if (cleanKids.length === 0){ alert('Please add at least one kid with all fields.'); return; }
+
+      try {
+        const subRef = await addDoc(collection(db, 'party_submissions'), {
+          agentName, branch, email, createdAt: serverTimestamp()
+        });
+        const kidsCol = fsCollection(doc(db, 'party_submissions', subRef.id), 'kids');
+        await Promise.all(cleanKids.map(k => addDoc(kidsCol, {
+          fullName: k.fullName.trim(),
+          age: Number(k.age),
+          relationship: k.relationship.trim()
+        })));
+        document.getElementById('saveTag').textContent = `Saved ✓ Ref: ${subRef.id}`;
+        resetForm();
+      } catch(err){
+        alert('Submit failed: ' + err.message);
+      }
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      // Render initial kid block
+      renderKids();
+
+      // Add kid
+      document.getElementById('addKid').addEventListener('click', () => {
+        kids.push({ fullName:'', age:'', relationship:'' });
+        renderKids();
+      });
+
+      // Submit + Reset
+      document.getElementById('regForm').addEventListener('submit', submitForm);
+      document.getElementById('resetBtn').addEventListener('click', resetForm);
+    });
+  </script>
+</head>
+<body>
+  <div class="wrap">
+    <header style="margin: 0 0 16px;">
+      <h1>Kids Party — Staff Registration</h1>
+      <div class="muted">kpreg.html · Netlify + Firebase（Firestore 子集合）</div>
+    </header>
+
+    <div class="card">
+      <form id="regForm" class="grid">
+        <div class="grid grid-2">
+          <div>
+            <label>Agent / Staff Full Name</label>
+            <input id="agentName" placeholder="e.g. Nelson Lau" required />
+          </div>
+          <div>
+            <label>Branch</label>
+            <select id="branch" required>
+              <option value="" disabled selected>Select a branch</option>
+              <option>ICI</option>
+              <option>Woodbine</option>
+              <option>North Markham</option>
+              <option>Mississauga</option>
+              <option>Younge & Eglinton</option>
+            </select>
+          </div>
+          <div style="grid-column: 1 / span 2;">
+            <label>Email</label>
+            <input id="email" type="email" placeholder="name@company.com" required />
+          </div>
+        </div>
+
+        <div class="row" style="justify-content: space-between; margin-top: 4px;">
+          <strong>Kid(s)</strong>
+          <button id="addKid" type="button" class="btn">＋ Add Kid</button>
+        </div>
+        <div id="kidsBox" class="grid" style="gap:12px;"></div>
+
+        <div class="row" style="gap:12px;">
+          <button type="submit" class="btn primary">Submit Registration</button>
+          <button type="button" id="resetBtn" class="btn">Reset</button>
+          <span id="saveTag" class="tag"></span>
+        </div>
+      </form>
+    </div>
+    <div class="footer">© <span id="yr"></span> Kids Party</div>
+  </div>
+  <script>document.getElementById('yr').textContent = new Date().getFullYear();</script>
+</body>
+</html>
+
+
