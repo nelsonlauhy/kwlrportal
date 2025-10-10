@@ -1,9 +1,12 @@
+<!-- =========================
+  kpreg.html — Kids Party Registration Form (Netlify + Firebase)
+========================= -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Kids Party — Registration (kpreg.html)</title>
+  <title>Kids Party — Registration</title>
   <style>
     :root { --bg:#f6f7fb; --fg:#0f172a; --card:#fff; --muted:#64748b; --border:#e5e7eb; }
     body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto; background:var(--bg); color:var(--fg); }
@@ -23,26 +26,28 @@
     .tag { display:inline-flex; align-items:center; gap:8px; padding:6px 10px; border:1px solid var(--border); border-radius:999px; background:#f8fafc; font-size:12px; }
     .kid { border:1px solid var(--border); border-radius:12px; padding:12px; background:#fcfdff; }
     .footer { margin-top: 24px; font-size: 12px; color: var(--muted); }
+
+    /* Banner (collapsible) */
+    .banner { position:relative; overflow:hidden; border-radius:14px; border:1px solid var(--border); background:#000; transition:max-height .45s ease; margin-bottom:20px; }
+    .banner img { width:100%; height:auto; display:block; }
+    .banner.collapsed { max-height: var(--collapsedH, 400px); }
+    .banner-gradient { position:absolute; left:0; right:0; bottom:0; height:56px; background: linear-gradient(to bottom, rgba(255,255,255,0), rgba(255,255,255,0.9)); pointer-events:none; transition: opacity .25s ease; }
+    .banner-toggle { position:absolute; bottom:10px; right:10px; border:1px solid var(--border); background:#fff; border-radius:999px; padding:6px 10px; font-size:13px; cursor:pointer; box-shadow:0 4px 10px rgba(0,0,0,.06); }
   </style>
 
   <!-- Firebase CDN v10 (modular) -->
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
     import {
-      getFirestore,
-      collection,
-      addDoc,
-      serverTimestamp,
-      doc,
-      collection as fsCollection
+      getFirestore, collection, addDoc, serverTimestamp, doc, collection as fsCollection
     } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
-    // === Your Firebase config ===
+    // === Firebase config ===
     const firebaseConfig = {
       apiKey: "AIzaSyCGr7f6BxxsOO1BJMxfdOF7wMjintKYwiY",
       authDomain: "kwlrintranet.firebaseapp.com",
       projectId: "kwlrintranet",
-      storageBucket: "kwlrintranet.firebasestorage.app", // <-- IMPORTANT: use the real bucket
+      storageBucket: "kwlrintranet.firebasestorage.app",
       messagingSenderId: "601132046075",
       appId: "1:601132046075:web:b840ed4a2187ab60e8825e",
       measurementId: "G-PK4MVBSJPB"
@@ -51,7 +56,7 @@
     const app = initializeApp(firebaseConfig);
     const db = getFirestore(app);
 
-    // ---------- DOM helpers ----------
+    // --- Helpers ---
     const el = (tag, attrs={}, children=[]) => {
       const n = document.createElement(tag);
       Object.entries(attrs).forEach(([k,v]) => {
@@ -72,17 +77,14 @@
         const row = el('div', { class:'kid' }, [
           el('div', { class:'row' }, [ el('span', { class:'tag', text:`Kid #${idx+1}` }) ]),
           el('div', { class:'grid grid-2' }, [
-            // Full name
             (()=>{ const w=el('div'); w.appendChild(el('label',{text:"Kid's Full Name"}));
               const i=el('input',{placeholder:'e.g. Emma Chan', value:k.fullName});
               i.addEventListener('input', e=>{ k.fullName=e.target.value; });
               w.appendChild(i); return w; })(),
-            // Age
             (()=>{ const w=el('div'); w.appendChild(el('label',{text:'Age'}));
               const i=el('input',{type:'number', min:'0', max:'18', placeholder:'e.g. 8', value:k.age});
               i.addEventListener('input', e=>{ k.age=e.target.value; });
               w.appendChild(i); return w; })(),
-            // Relationship
             (()=>{ const w=el('div'); w.style.gridColumn='1 / span 2';
               w.appendChild(el('label',{text:'Relationship'}));
               const i=el('input',{placeholder:'Son / Daughter / Nephew ...', value:k.relationship});
@@ -93,9 +95,8 @@
             el('button', { class:'btn', type:'button' }, [document.createTextNode('Remove')])
           ])
         ]);
-        // Remove handler
         row.querySelector('button').addEventListener('click', () => {
-          if (kids.length === 1) return; // keep at least one
+          if (kids.length === 1) return;
           kids = kids.filter((_, i) => i !== idx);
           renderKids();
         });
@@ -139,18 +140,37 @@
     }
 
     document.addEventListener('DOMContentLoaded', () => {
-      // Render initial kid block
       renderKids();
-
-      // Add kid
       document.getElementById('addKid').addEventListener('click', () => {
         kids.push({ fullName:'', age:'', relationship:'' });
         renderKids();
       });
-
-      // Submit + Reset
       document.getElementById('regForm').addEventListener('submit', submitForm);
       document.getElementById('resetBtn').addEventListener('click', resetForm);
+
+      // Banner logic
+      const bannerBox = document.getElementById('bannerBox');
+      const bannerImg = document.getElementById('bannerImg');
+      const bannerTog = document.getElementById('bannerToggle');
+      const bannerGrad = document.getElementById('bannerGrad');
+
+      function setCollapsedHeight(){
+        const h = bannerImg.clientHeight || 0;
+        const half = Math.max(200, Math.round(h/2));
+        bannerBox.style.setProperty('--collapsedH', half + 'px');
+      }
+      function setExpandedUI(expanded){
+        bannerTog.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+        bannerTog.textContent = expanded ? 'Show less ▴' : 'Show more ▾';
+        bannerGrad.style.opacity = expanded ? '0' : '1';
+      }
+      bannerImg.addEventListener('load', () => { setCollapsedHeight(); setExpandedUI(false); });
+      window.addEventListener('resize', () => { if (bannerBox.classList.contains('collapsed')) setCollapsedHeight(); });
+      bannerTog.addEventListener('click', () => {
+        const isCollapsed = bannerBox.classList.contains('collapsed');
+        if (isCollapsed){ bannerBox.classList.remove('collapsed'); setExpandedUI(true); }
+        else { bannerBox.classList.add('collapsed'); setCollapsedHeight(); setExpandedUI(false); }
+      });
     });
   </script>
 </head>
@@ -158,10 +178,17 @@
   <div class="wrap">
     <header style="margin: 0 0 16px;">
       <h1>Kids Party — Staff Registration</h1>
-      <div class="muted">kpreg.html · Netlify + Firebase（Firestore subcollection）</div>
+      <div class="muted">kpreg.html · Netlify + Firebase (Firestore subcollection)</div>
     </header>
 
     <div class="card">
+      <!-- Collapsible Banner -->
+      <div id="bannerBox" class="banner collapsed">
+        <img id="bannerImg" src="images/KidsPartyPoster.png" alt="Kids Party Poster"/>
+        <div class="banner-gradient" id="bannerGrad"></div>
+        <button id="bannerToggle" class="banner-toggle" aria-expanded="false">Show more ▾</button>
+      </div>
+
       <div class="descbox">
         Kids Party — Open only to KW Living Realty agents’ and staff’s children/grandchildren ages 12 &amp; under. Gift for every registered child. Registration through Google Forms. Each participating child must bring a non-perishable food donation of 10 lbs or more. All food donations will be donated to the Haven on the Queensway Food Bank, a Daily Bread Food Bank network.
       </div>
@@ -193,7 +220,6 @@
           <strong>Kid(s)</strong>
           <button id="addKid" type="button" class="btn">＋ Add Kid</button>
         </div>
-
         <div id="kidsBox" class="grid" style="gap:12px;"></div>
 
         <div class="row" style="gap:12px;">
