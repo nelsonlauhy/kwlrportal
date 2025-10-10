@@ -97,7 +97,7 @@
               w.appendChild(i); return w; })(),
             (()=>{ const w=el('div'); w.style.gridColumn='1 / span 2';
               w.appendChild(el('label',{text:'Relationship'}));
-              const i=el('input',{placeholder:'Son / Daughter / Nephew ...', value:k.relationship});
+              const i=el('input',{placeholder:'Son / Daughter / Grandson ...', value:k.relationship});
               i.addEventListener('input', e=>{ k.relationship=e.target.value; });
               w.appendChild(i); return w; })(),
           ]),
