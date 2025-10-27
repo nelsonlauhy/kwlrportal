@@ -9,25 +9,37 @@
     const capBox  = document.getElementById('f_capacity');
     if (!select) return;
 
+    // temporary option
     select.innerHTML = '<option value="">-- Select Resource --</option>';
-    try {
-      const snap = await col()
-        .where('isActive','==', true)
-        .orderBy('displayOrder','asc')
-        .orderBy('name','asc')
-        .get();
 
-      snap.forEach(doc => {
-        const d = doc.data();
+    try {
+      // Fetch all, then client-filter and client-sort to avoid composite indexes
+      const snap = await col().get();
+      const items = [];
+      snap.forEach(doc => items.push({ id: doc.id, ...doc.data() }));
+
+      // filter active only
+      const active = items.filter(x => !!x.isActive);
+
+      // sort by displayOrder asc, then name asc
+      active.sort((a, b) => {
+        const ao = a.displayOrder ?? 0, bo = b.displayOrder ?? 0;
+        if (ao !== bo) return ao - bo;
+        const an = (a.name || '').toLowerCase(), bn = (b.name || '').toLowerCase();
+        return an.localeCompare(bn);
+      });
+
+      // populate
+      active.forEach(d => {
         const opt = document.createElement('option');
-        opt.value = doc.id;
-        opt.textContent = `${d.name} — ${d.branch}`;
+        opt.value = d.id;
+        opt.textContent = `${d.name || ''} — ${d.branch || ''}`;
         opt.dataset.capacity = d.capacity ?? 0;
         opt.dataset.name = d.name || '';
         select.appendChild(opt);
       });
 
-      // Autofill when user changes selection
+      // Auto-fill when user changes selection
       select.addEventListener('change', () => {
         const opt = select.selectedOptions[0];
         if (!opt) return;
@@ -41,6 +53,5 @@
     }
   }
 
-  // Populate once DOM is ready
   document.addEventListener('DOMContentLoaded', populateEventResourceSelect);
 })();

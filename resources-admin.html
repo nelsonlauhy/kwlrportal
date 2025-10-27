@@ -1,4 +1,4 @@
-<!-- resources-admin.html -->
+<!-- /resources-admin.html -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -144,7 +144,7 @@
               <label class="form-label">Google Maps URL</label>
               <input type="url" id="r_mapsUrl" class="form-control" placeholder="Paste a Google Maps link (Share ▶ Copy link)">
               <div class="form-hint">
-                Paste a link like <code>https://maps.app.goo.gl/... </code> or a Google Maps place URL. We’ll auto-convert it for embedding.
+                Paste a link like <code>https://maps.app.goo.gl/…</code> or a Google Maps place URL. We’ll auto-convert it for embedding.
               </div>
             </div>
 
@@ -166,9 +166,12 @@
 
   <!-- Libs -->
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+
+  <!-- Firebase v8 (include Storage!) -->
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-storage.js"></script>
 
   <!-- Firebase config + MSAL Auth -->
   <script src="/js/firebaseConfig.js"></script>

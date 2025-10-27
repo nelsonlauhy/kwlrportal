@@ -133,37 +133,45 @@ function refreshPreviewFromInputs() {
 r_mapsUrl.addEventListener('input', refreshPreviewFromInputs);
 r_address.addEventListener('input', refreshPreviewFromInputs);
 
-// ====== List ======
+// ====== List (NO composite index needed) ======
 async function loadResourcesList() {
   resTBody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-4">Loading…</td></tr>';
   try {
-    const snap = await resColRef().orderBy('displayOrder','asc').orderBy('name','asc').get();
-    if (snap.empty) {
+    const snap = await resColRef().get(); // simple get
+    const items = [];
+    snap.forEach(doc => items.push({ id: doc.id, ...doc.data() }));
+
+    // client-side sort: displayOrder ASC, then name ASC
+    items.sort((a, b) => {
+      const ao = a.displayOrder ?? 0, bo = b.displayOrder ?? 0;
+      if (ao !== bo) return ao - bo;
+      const an = (a.name || '').toLowerCase(), bn = (b.name || '').toLowerCase();
+      return an.localeCompare(bn);
+    });
+
+    if (!items.length) {
       resTBody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-4">No resources yet</td></tr>';
       return;
     }
-    let i = 0; const rows = [];
-    snap.forEach(doc => {
-      const d = doc.data();
-      rows.push(`
-        <tr data-id="${doc.id}">
-          <td>${++i}</td>
-          <td>${(d.name||'')}</td>
-          <td>${(d.branch||'')}</td>
-          <td>${(d.address||'')}</td>
-          <td class="text-end">${(d.capacity ?? 0)}</td>
-          <td class="text-center">${d.isActive ? '<span class="badge text-bg-success">Yes</span>' : '<span class="badge text-bg-secondary">No</span>'}</td>
-          <td class="text-end">${(d.displayOrder ?? 0)}</td>
-          <td>
-            <div class="btn-group btn-group-sm">
-              <button class="btn btn-outline-primary" data-act="edit"><i class="bi bi-pencil-square"></i></button>
-              <button class="btn btn-outline-danger" data-act="del"><i class="bi bi-trash"></i></button>
-            </div>
-          </td>
-        </tr>
-      `);
-    });
-    resTBody.innerHTML = rows.join('');
+
+    let i = 0;
+    resTBody.innerHTML = items.map(d => `
+      <tr data-id="${d.id}">
+        <td>${++i}</td>
+        <td>${d.name || ''}</td>
+        <td>${d.branch || ''}</td>
+        <td>${d.address || ''}</td>
+        <td class="text-end">${d.capacity ?? 0}</td>
+        <td class="text-center">${d.isActive ? '<span class="badge text-bg-success">Yes</span>' : '<span class="badge text-bg-secondary">No</span>'}</td>
+        <td class="text-end">${d.displayOrder ?? 0}</td>
+        <td>
+          <div class="btn-group btn-group-sm">
+            <button class="btn btn-outline-primary" data-act="edit"><i class="bi bi-pencil-square"></i></button>
+            <button class="btn btn-outline-danger" data-act="del"><i class="bi bi-trash"></i></button>
+          </div>
+        </td>
+      </tr>
+    `).join('');
   } catch (e) {
     console.error(e);
     resTBody.innerHTML = '<tr><td colspan="8" class="text-danger py-4">Failed to load resources.</td></tr>';
@@ -213,8 +221,8 @@ function resetForm() {
   r_isActive.checked = true;
   updateMapPreview('', '');
 }
-btnResetForm.addEventListener('click', resetForm);
-btnNewRes.addEventListener('click', () => { resetForm(); r_name.focus(); });
+btnResetForm?.addEventListener('click', resetForm);
+btnNewRes?.addEventListener('click', () => { resetForm(); r_name.focus(); });
 
 async function fillForm(id) {
   try {
@@ -236,7 +244,7 @@ async function fillForm(id) {
 }
 
 // ====== Save ======
-btnSaveRes.addEventListener('click', async () => {
+btnSaveRes?.addEventListener('click', async () => {
   saveMsg.classList.add('d-none');
   saveBusy.classList.remove('d-none');
 
