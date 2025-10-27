@@ -1,4 +1,3 @@
-<!-- /resources-admin.html -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -35,18 +34,8 @@
     </div>
   </nav>
 
-  <!-- AUTH GATE -->
-  <div id="authGate" class="container py-5">
-    <div class="d-flex align-items-center justify-content-center">
-      <div class="text-center">
-        <div class="spinner-border mb-3"></div>
-        <div class="text-muted">Checking your Microsoft 365 sign-in…</div>
-      </div>
-    </div>
-  </div>
-
-  <!-- APP -->
-  <div id="appWrap" class="d-none">
+  <!-- APP (always visible; no sign-in gate) -->
+  <div id="appWrap">
     <main class="container py-4">
       <div class="d-flex align-items-center justify-content-between flex-wrap mb-3" style="row-gap:.5rem;">
         <h3 class="page-title mb-0">
@@ -167,37 +156,15 @@
   <!-- Libs -->
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 
-  <!-- Firebase v8 (include Storage!) -->
+  <!-- Firebase v8 (include Storage since firebaseConfig uses it) -->
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-storage.js"></script>
 
-  <!-- Firebase config + MSAL Auth -->
+  <!-- Firebase config (defines window.db & storage) -->
   <script src="/js/firebaseConfig.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@2.39.0/lib/msal-browser.min.js"></script>
-  <script src="/js/auth.js"></script>
 
-  <!-- Page logic -->
-  <script>
-    // Ignore the common extension error: “A listener indicated an asynchronous response…”
-    window.addEventListener('error', (e) => {
-        if (typeof e.message === 'string' && e.message.includes('A listener indicated an asynchronous response')) {
-        e.preventDefault();
-        }
-    });
-
-    // Catch unhandled promise rejections so extensions don’t crash our init
-    window.addEventListener('unhandledrejection', (e) => {
-        const msg = (e && e.reason && (e.reason.message || String(e.reason))) || '';
-        if (msg.includes('A listener indicated an asynchronous response')) {
-        e.preventDefault();
-        return;
-        }
-        // Log other rejections for debugging but don’t hard-crash UI
-        console.warn('[unhandledrejection]', e.reason);
-    });
-  </script>
+  <!-- Page logic (no MSAL/auth.js on this page) -->
   <script src="/js/resources_admin.js"></script>
 </body>
 </html>

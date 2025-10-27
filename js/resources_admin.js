@@ -1,106 +1,25 @@
 // /js/resources_admin.js
+// SIGN-IN CHECK REMOVED: page loads immediately and attempts Firestore ops.
+// If your Firestore rules require auth, operations may throw "permission-denied".
 
-/*************************************************
- *  MSAL SESSION-FIRST AUTH GUARD
- *  - Reuse existing sign-in (from event-admin.html)
- *  - Never hang the spinner: shows UI once account is present
- *************************************************/
-(async function () {
-  const authGate = document.getElementById('authGate');
-  const appWrap  = document.getElementById('appWrap');
-
-  const INTERNAL_DOMAINS = [
-    'livingrealtykw.com',
-    'livinggroupinc.com',
-    'livingrealty.com',
-    'kwliving.com'
-  ];
-
-  const show403 = (msg) => {
-    authGate.innerHTML = `
-      <div class="container py-5">
-        <div class="alert alert-danger">
-          <strong>Access denied.</strong> ${msg || 'This page is restricted to internal staff.'}
-        </div>
-        <a class="btn btn-outline-secondary" href="/index.html">Back to Portal</a>
-      </div>`;
-  };
-
-  // Wait up to maxMs for window._auth to exist (auth.js init), polling every stepMs
-  const waitForMsal = async (maxMs = 10000, stepMs = 120) => {
-    const start = Date.now();
-    while (!(window._auth && typeof window._auth.getAllAccounts === 'function')) {
-      if (Date.now() - start > maxMs) return false;
-      await new Promise(r => setTimeout(r, stepMs));
-    }
-    return true;
-  };
-
-  try {
-    // 1) Ensure MSAL instance exists (from /js/auth.js)
-    const hasMsal = await waitForMsal();
-    if (!hasMsal) {
-      console.warn('[Resources] MSAL instance not found after wait. Cannot confirm sign-in.');
-      show403('Authentication not initialized. Please open Events Admin first or contact IT.');
-      return;
-    }
-
-    // 2) Reuse existing account if present
-    let account = window._auth.getActiveAccount() || window._auth.getAllAccounts()?.[0] || null;
-
-    // Try silent acquire first to refresh cache (no popup)
-    if (!account) {
-      try {
-        const silent = await window._auth.acquireTokenSilent?.({ scopes: ['User.Read'] });
-        account = silent?.account || window._auth.getAllAccounts()?.[0] || null;
-      } catch (_) { /* ignore and try interactive below */ }
-    }
-
-    // 3) If still nothing, do an interactive sign-in
-    if (!account) {
-      try {
-        const loginResp = await window._auth.signIn(['User.Read']);
-        account = loginResp?.account || null;
-        if (account) window._auth.setActiveAccount(account);
-      } catch (e) {
-        console.warn('[Resources] Login popup aborted or blocked:', e);
-        show403('Sign-in is required to access Resources Admin.');
-        return;
-      }
-    }
-
-    // 4) Enforce internal domains
-    const email = (account && (account.username ||
-      (account.idTokenClaims && (account.idTokenClaims.email || account.idTokenClaims.preferred_username)))) || '';
-    if (!email) { show403('Could not determine your email.'); return; }
-    const domain = (email.split('@')[1] || '').toLowerCase();
-    if (!INTERNAL_DOMAINS.includes(domain)) {
-      show403(`Your account (${email}) is not an internal staff mailbox.`);
-      return;
-    }
-
-    // 5) Unlock the UI
-    authGate.classList.add('d-none');
-    appWrap.classList.remove('d-none');
-  } catch (err) {
-    const msg = (err && (err.message || String(err))) || '';
-    // Swallow extension noise if present
-    if (msg.includes('A listener indicated an asynchronous response')) {
-      console.warn('[Resources] Extension message issue suppressed.');
-      authGate.classList.add('d-none');
-      appWrap.classList.remove('d-none');
-      return;
-    }
-    console.error('[Resources] Fatal init error:', err);
-    show403('Initialization failed. Please refresh or contact IT.');
+/* -------- Global error guards (mute noisy extension errors) -------- */
+window.addEventListener('error', (e) => {
+  if (typeof e.message === 'string' && e.message.includes('A listener indicated an asynchronous response')) {
+    e.preventDefault();
   }
-})();
+});
+window.addEventListener('unhandledrejection', (e) => {
+  const msg = (e?.reason && (e.reason.message || String(e.reason))) || '';
+  if (msg.includes('A listener indicated an asynchronous response')) {
+    e.preventDefault();
+  } else {
+    console.warn('[unhandledrejection]', e.reason);
+  }
+});
 
-/*************************************************
- *  FIRESTORE: Auto-detect collection name
- *************************************************/
+/* -------- Firestore collection (auto-detect) -------- */
 let RES_COL = 'event_resources'; // default
-const CANDIDATE_COLLECTIONS = ['event_resources', 'resources']; // try in this order
+const CANDIDATE_COLLECTIONS = ['event_resources', 'resources']; // try both
 const db = () => firebase.firestore();
 
 async function resolveResourcesCollection() {
@@ -108,7 +27,7 @@ async function resolveResourcesCollection() {
     try {
       const snap = await db().collection(name).limit(1).get();
       if (!snap.empty) {
-        console.info(`[resources_admin] Using collection "${name}" (found ${snap.size} doc in probe).`);
+        console.info(`[resources_admin] Using collection "${name}" (probe found ${snap.size}).`);
         RES_COL = name;
         return;
       }
@@ -116,13 +35,11 @@ async function resolveResourcesCollection() {
       console.warn(`[resources_admin] Probe failed for "${name}":`, e?.message || e);
     }
   }
-  console.info(`[resources_admin] No docs found in ${CANDIDATE_COLLECTIONS.join(' / ')}. Defaulting to "${RES_COL}".`);
+  console.info(`[resources_admin] No docs found in candidates. Defaulting to "${RES_COL}".`);
 }
 function resColRef() { return db().collection(RES_COL); }
 
-/*************************************************
- *  UI Elements
- *************************************************/
+/* -------- UI Elements -------- */
 const resTBody         = document.getElementById('resTBody');
 const btnNewRes        = document.getElementById('btnNewRes');
 const btnResetForm     = document.getElementById('btnResetForm');
@@ -142,9 +59,7 @@ const r_mapPreview     = document.getElementById('r_mapPreview');
 const r_mapHint        = document.getElementById('r_mapHint');
 const r_isActive       = document.getElementById('r_isActive');
 
-/*************************************************
- *  Google Maps helpers
- *************************************************/
+/* -------- Google Maps helpers -------- */
 function buildEmbedFromAddress(address) {
   const q = encodeURIComponent(address || '');
   return `https://www.google.com/maps?q=${q}&output=embed`;
@@ -185,13 +100,11 @@ function refreshPreviewFromInputs() {
 r_mapsUrl.addEventListener('input', refreshPreviewFromInputs);
 r_address.addEventListener('input', refreshPreviewFromInputs);
 
-/*************************************************
- *  List (client-side sort; no index required)
- *************************************************/
+/* -------- List (client-side sort; no index required) -------- */
 async function loadResourcesList() {
   resTBody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-4">Loading…</td></tr>';
   try {
-    await resolveResourcesCollection(); // decide which collection to use
+    await resolveResourcesCollection();
 
     const snap = await resColRef().get(); // simple get
     const items = [];
@@ -237,14 +150,18 @@ async function loadResourcesList() {
     `).join('');
   } catch (e) {
     console.error(e);
-    resTBody.innerHTML = '<tr><td colspan="8" class="text-danger py-4">Failed to load resources.</td></tr>';
+    const msg = (e && (e.message || String(e))) || '';
+    const perm = /permission|PERMISSION|Missing or insufficient permissions/.test(msg);
+    resTBody.innerHTML = `<tr><td colspan="8" class="py-4 ${perm ? 'text-warning' : 'text-danger'}">
+      ${perm
+        ? 'Cannot read resources (permission denied). If your Firestore rules require sign-in, open Events Admin first or sign in, then reload.'
+        : 'Failed to load resources.'}
+    </td></tr>`;
   }
 }
 document.addEventListener('DOMContentLoaded', loadResourcesList);
 
-/*************************************************
- *  Row actions
- *************************************************/
+/* -------- Row actions -------- */
 resTBody.addEventListener('click', async (ev) => {
   const btn = ev.target.closest('button'); if (!btn) return;
   const tr = btn.closest('tr'); const id = tr?.dataset?.id; if (!id) return;
@@ -262,19 +179,19 @@ resTBody.addEventListener('click', async (ev) => {
       showSaveMsg('Resource deleted.', 'success');
       resetForm();
     } catch (e) {
-      showSaveMsg('Delete failed: ' + (e.message || e), 'danger');
+      const perm = /permission|PERMISSION|Missing or insufficient permissions/.test(e?.message || '');
+      showSaveMsg(perm ? 'Delete failed: permission denied.' : ('Delete failed: ' + (e.message || e)), 'danger');
     }
   }
 });
 
-/*************************************************
- *  Form helpers
- *************************************************/
+/* -------- Form helpers -------- */
 function showSaveMsg(text, type='success') {
   saveMsg.className = `small mt-2 alert alert-${type}`;
   saveMsg.textContent = text;
   saveMsg.classList.remove('d-none');
-  setTimeout(() => saveMsg.classList.add('d-none'), 2500);
+  clearTimeout(showSaveMsg._t);
+  showSaveMsg._t = setTimeout(() => saveMsg.classList.add('d-none'), 2500);
 }
 function resetForm() {
   r_id.value = '';
@@ -307,13 +224,12 @@ async function fillForm(id) {
     r_mapsUrl.value = d.mapsUrl || '';
     updateMapPreview(d.mapsEmbedUrl || '', d.mapsUrl || '');
   } catch (e) {
-    showSaveMsg('Load failed: ' + (e.message || e), 'danger');
+    const perm = /permission|PERMISSION|Missing or insufficient permissions/.test(e?.message || '');
+    showSaveMsg(perm ? 'Load failed: permission denied.' : ('Load failed: ' + (e.message || e)), 'danger');
   }
 }
 
-/*************************************************
- *  Save
- *************************************************/
+/* -------- Save -------- */
 btnSaveRes?.addEventListener('click', async () => {
   saveMsg.classList.add('d-none');
   saveBusy.classList.remove('d-none');
@@ -357,7 +273,8 @@ btnSaveRes?.addEventListener('click', async () => {
 
     await loadResourcesList();
   } catch (e) {
-    showSaveMsg(e.message || 'Save failed.', 'danger');
+    const perm = /permission|PERMISSION|Missing or insufficient permissions/.test(e?.message || '');
+    showSaveMsg(perm ? 'Save failed: permission denied.' : ('Save failed: ' + (e.message || e)), 'danger');
   } finally {
     saveBusy.classList.add('d-none');
   }
