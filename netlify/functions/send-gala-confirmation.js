@@ -52,7 +52,7 @@ export const handler = async (event) => {
     // 2. Send internal notice
     await transporter.sendMail({
       from: `KW Living Realty <${process.env.O365_USER}>`,
-      to: "itoperations@livinggroupinc.com",
+      to: "operations@livinggroupinc.com",
       subject: `New Xmas Gala Registration — ${agentName} (${branch})`,
       text:
         `Submission: ${submissionId}\n` +
