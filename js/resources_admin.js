@@ -1,6 +1,10 @@
 // /js/resources_admin.js
 
-// ====== SIMPLE AUTH GUARD (reuses window._auth from /js/auth.js) ======
+/*************************************************
+ *  MSAL SESSION-FIRST AUTH GUARD
+ *  - Reuse existing sign-in (from event-admin.html)
+ *  - Never hang the spinner: shows UI once account is present
+ *************************************************/
 (async function () {
   const authGate = document.getElementById('authGate');
   const appWrap  = document.getElementById('appWrap');
@@ -22,40 +26,37 @@
       </div>`;
   };
 
-  const waitForAuth = async (maxMs = 6000, stepMs = 150) => {
-    try {
-      if (window._authReady && typeof window._authReady.then === 'function') {
-        await Promise.race([
-          window._authReady,
-          new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), maxMs))
-        ]);
-      }
-    } catch (_) {}
+  // Wait up to maxMs for window._auth to exist (auth.js init), polling every stepMs
+  const waitForMsal = async (maxMs = 10000, stepMs = 120) => {
     const start = Date.now();
     while (!(window._auth && typeof window._auth.getAllAccounts === 'function')) {
-      if (Date.now() - start > maxMs) break;
+      if (Date.now() - start > maxMs) return false;
       await new Promise(r => setTimeout(r, stepMs));
     }
-    return (window._auth && typeof window._auth.getAllAccounts === 'function');
+    return true;
   };
 
   try {
-    const hasAuth = await waitForAuth();
-    if (!hasAuth) {
-      console.error('[Resources] _auth missing.');
-      show403('Authentication not initialized. Please contact IT.');
+    // 1) Ensure MSAL instance exists (from /js/auth.js)
+    const hasMsal = await waitForMsal();
+    if (!hasMsal) {
+      console.warn('[Resources] MSAL instance not found after wait. Cannot confirm sign-in.');
+      show403('Authentication not initialized. Please open Events Admin first or contact IT.');
       return;
     }
 
-    let account = window._auth.getActiveAccount() || window._auth.getAllAccounts()?.[0];
+    // 2) Reuse existing account if present
+    let account = window._auth.getActiveAccount() || window._auth.getAllAccounts()?.[0] || null;
 
+    // Try silent acquire first to refresh cache (no popup)
     if (!account) {
       try {
         const silent = await window._auth.acquireTokenSilent?.({ scopes: ['User.Read'] });
         account = silent?.account || window._auth.getAllAccounts()?.[0] || null;
-      } catch (_) { /* fall back to interactive */ }
+      } catch (_) { /* ignore and try interactive below */ }
     }
 
+    // 3) If still nothing, do an interactive sign-in
     if (!account) {
       try {
         const loginResp = await window._auth.signIn(['User.Read']);
@@ -68,6 +69,7 @@
       }
     }
 
+    // 4) Enforce internal domains
     const email = (account && (account.username ||
       (account.idTokenClaims && (account.idTokenClaims.email || account.idTokenClaims.preferred_username)))) || '';
     if (!email) { show403('Could not determine your email.'); return; }
@@ -77,11 +79,12 @@
       return;
     }
 
-    // Unlock UI
+    // 5) Unlock the UI
     authGate.classList.add('d-none');
     appWrap.classList.remove('d-none');
   } catch (err) {
     const msg = (err && (err.message || String(err))) || '';
+    // Swallow extension noise if present
     if (msg.includes('A listener indicated an asynchronous response')) {
       console.warn('[Resources] Extension message issue suppressed.');
       authGate.classList.add('d-none');
@@ -93,7 +96,9 @@
   }
 })();
 
-// ====== Firestore collection (auto-detect name) ======
+/*************************************************
+ *  FIRESTORE: Auto-detect collection name
+ *************************************************/
 let RES_COL = 'event_resources'; // default
 const CANDIDATE_COLLECTIONS = ['event_resources', 'resources']; // try in this order
 const db = () => firebase.firestore();
@@ -111,12 +116,13 @@ async function resolveResourcesCollection() {
       console.warn(`[resources_admin] Probe failed for "${name}":`, e?.message || e);
     }
   }
-  // If all probes empty/failed, still default to first but log it
   console.info(`[resources_admin] No docs found in ${CANDIDATE_COLLECTIONS.join(' / ')}. Defaulting to "${RES_COL}".`);
 }
 function resColRef() { return db().collection(RES_COL); }
 
-// ====== Elements ======
+/*************************************************
+ *  UI Elements
+ *************************************************/
 const resTBody         = document.getElementById('resTBody');
 const btnNewRes        = document.getElementById('btnNewRes');
 const btnResetForm     = document.getElementById('btnResetForm');
@@ -136,7 +142,9 @@ const r_mapPreview     = document.getElementById('r_mapPreview');
 const r_mapHint        = document.getElementById('r_mapHint');
 const r_isActive       = document.getElementById('r_isActive');
 
-// ====== Maps helpers ======
+/*************************************************
+ *  Google Maps helpers
+ *************************************************/
 function buildEmbedFromAddress(address) {
   const q = encodeURIComponent(address || '');
   return `https://www.google.com/maps?q=${q}&output=embed`;
@@ -177,7 +185,9 @@ function refreshPreviewFromInputs() {
 r_mapsUrl.addEventListener('input', refreshPreviewFromInputs);
 r_address.addEventListener('input', refreshPreviewFromInputs);
 
-// ====== List (client-side sort; no index required) ======
+/*************************************************
+ *  List (client-side sort; no index required)
+ *************************************************/
 async function loadResourcesList() {
   resTBody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-4">Loading…</td></tr>';
   try {
@@ -188,7 +198,7 @@ async function loadResourcesList() {
     snap.forEach(doc => items.push({ id: doc.id, ...doc.data() }));
     console.info(`[resources_admin] Loaded ${items.length} resources from "${RES_COL}".`);
 
-    // client-side sort: displayOrder ASC, then name ASC
+    // sort: displayOrder ASC, then name ASC
     items.sort((a, b) => {
       const ao = a.displayOrder ?? 0, bo = b.displayOrder ?? 0;
       if (ao !== bo) return ao - bo;
@@ -232,7 +242,9 @@ async function loadResourcesList() {
 }
 document.addEventListener('DOMContentLoaded', loadResourcesList);
 
-// Row actions
+/*************************************************
+ *  Row actions
+ *************************************************/
 resTBody.addEventListener('click', async (ev) => {
   const btn = ev.target.closest('button'); if (!btn) return;
   const tr = btn.closest('tr'); const id = tr?.dataset?.id; if (!id) return;
@@ -255,7 +267,9 @@ resTBody.addEventListener('click', async (ev) => {
   }
 });
 
-// ====== Form helpers ======
+/*************************************************
+ *  Form helpers
+ *************************************************/
 function showSaveMsg(text, type='success') {
   saveMsg.className = `small mt-2 alert alert-${type}`;
   saveMsg.textContent = text;
@@ -297,7 +311,9 @@ async function fillForm(id) {
   }
 }
 
-// ====== Save ======
+/*************************************************
+ *  Save
+ *************************************************/
 btnSaveRes?.addEventListener('click', async () => {
   saveMsg.classList.add('d-none');
   saveBusy.classList.remove('d-none');
