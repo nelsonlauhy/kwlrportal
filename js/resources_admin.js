@@ -1,4 +1,4 @@
-// /js/resources_admin.js — collection locking fix
+// /js/resources_admin.js — robust edit wiring & collection lock
 
 /* ---------- Firestore helpers ---------- */
 function getDB() {
@@ -11,10 +11,7 @@ let RES_COL = 'event_resources';
 let RES_COL_LOCKED = false;
 const CANDIDATE_COLLECTIONS = ['event_resources', 'resources'];
 
-/**
- * Resolve which collection to use. We do this ONCE, then lock it
- * so all subsequent operations use the same collection.
- */
+/** Resolve which collection to use ONCE, then lock */
 async function resolveAndLockCollection() {
   if (RES_COL_LOCKED) return RES_COL;
 
@@ -121,10 +118,12 @@ async function loadResourcesList() {
         <td class="text-end">${d.capacity ?? 0}</td>
         <td>
           <div class="btn-group btn-group-sm">
-            <button type="button" class="btn btn-outline-primary" data-act="edit" title="Edit">
+            <button type="button" class="btn btn-outline-primary"
+                    data-act="edit" data-id="${d.id}" title="Edit">
               <i class="bi bi-pencil-square"></i>
             </button>
-            <button type="button" class="btn btn-outline-danger" data-act="del" title="Delete">
+            <button type="button" class="btn btn-outline-danger"
+                    data-act="del" data-id="${d.id}" title="Delete">
               <i class="bi bi-trash"></i>
             </button>
           </div>
@@ -138,16 +137,24 @@ async function loadResourcesList() {
 }
 document.addEventListener('DOMContentLoaded', loadResourcesList);
 
-/* ---------- Row actions ---------- */
+/* ---------- Row actions (robust delegate + debug) ---------- */
 resTBody.addEventListener('click', async (ev) => {
   const btn = ev.target.closest('button[data-act]');
   if (!btn) return;
   ev.preventDefault();
 
   const tr = btn.closest('tr');
-  const id = tr?.dataset?.id;
+  // Try button first, then row
+  let id = (btn.dataset.id || tr?.dataset?.id || '').trim();
   const act = btn.dataset.act;
-  if (!id) return;
+
+  if (!id) {
+    console.warn('[resources_admin] No id on click', { act, btnDataset: btn.dataset, trDataset: tr?.dataset });
+    showSaveMsg('Internal error: missing id. Please reload.', 'danger');
+    return;
+  }
+
+  console.debug('[resources_admin] action click', { act, id, col: RES_COL });
 
   try {
     if (act === 'edit') {
@@ -189,14 +196,17 @@ btnNewRes?.addEventListener('click', () => { resetForm(); r_name.focus(); });
 
 /* ---------- Load one doc into form (EDIT) ---------- */
 async function fillForm(id) {
-  // DO NOT re-resolve here; collection is locked
-  const doc = await resColRef().doc(id).get();
+  // collection is locked; do not re-resolve here
+  console.debug('[resources_admin] fillForm', { id, col: RES_COL });
+  const docRef = resColRef().doc(id);
+  const doc = await docRef.get();
+
   if (!doc.exists) {
-    // show a helpful debug with current collection
     showSaveMsg(`Document not found in "${RES_COL}".`, 'danger');
-    console.warn('[resources_admin] doc not found:', id, 'in collection', RES_COL);
+    console.warn('[resources_admin] doc not found:', { id, col: RES_COL });
     return;
   }
+
   const d = doc.data();
   r_id.value = doc.id;
   resDocId.textContent = `# ${doc.id}`;
@@ -213,7 +223,6 @@ btnSaveRes?.addEventListener('click', async () => {
   saveMsg.classList.add('d-none');
   saveBusy?.classList.remove('d-none');
   try {
-    // Use locked collection
     if (!RES_COL_LOCKED) await resolveAndLockCollection();
 
     if (!r_name.value.trim()) throw new Error('Name is required.');
@@ -231,7 +240,7 @@ btnSaveRes?.addEventListener('click', async () => {
       updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
     };
 
-    const id = r_id.value;
+    const id = (r_id.value || '').trim();
     if (id) {
       await resColRef().doc(id).set(payload, { merge: true });
       showSaveMsg('Updated successfully.');
