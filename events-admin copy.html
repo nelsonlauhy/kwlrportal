@@ -142,12 +142,6 @@
         </h3>
         <div class="d-flex align-items-center gap-2">
           <span id="signedInBadge" class="badge text-bg-light border d-none"></span>
-
-          <!-- NEW: Manage Resources button (opens separate admin page) -->
-          <a class="btn btn-outline-secondary btn-sm" href="/resources-admin.html">
-            <i class="bi bi-geo-alt me-1"></i> Manage Resources
-          </a>
-
           <button class="btn btn-primary btn-sm" id="btnNew">
             <i class="bi bi-plus-lg me-1"></i> New Event
           </button>
@@ -206,7 +200,6 @@
                   <option value="Mississauga">Mississauga</option>
                 </select>
               </div>
-
               <div class="col-md-8">
                 <label class="form-label">Resource</label>
                 <select id="f_resourceId" class="form-select"></select>
@@ -613,8 +606,5 @@
   <!-- Page Logic -->
   <script src="./js/events_admin.js" defer></script>
   <script src="./js/events_admin_regs.js" defer></script>
-
-  <!-- NEW: Populate Resource dropdown from Firestore (read-only) -->
-  <script src="/js/events_admin_resources_hook.js" defer></script>
 </body>
 </html>
