@@ -179,6 +179,25 @@
   <script src="/js/auth.js"></script>
 
   <!-- Page logic -->
+  <script>
+    // Ignore the common extension error: “A listener indicated an asynchronous response…”
+    window.addEventListener('error', (e) => {
+        if (typeof e.message === 'string' && e.message.includes('A listener indicated an asynchronous response')) {
+        e.preventDefault();
+        }
+    });
+
+    // Catch unhandled promise rejections so extensions don’t crash our init
+    window.addEventListener('unhandledrejection', (e) => {
+        const msg = (e && e.reason && (e.reason.message || String(e.reason))) || '';
+        if (msg.includes('A listener indicated an asynchronous response')) {
+        e.preventDefault();
+        return;
+        }
+        // Log other rejections for debugging but don’t hard-crash UI
+        console.warn('[unhandledrejection]', e.reason);
+    });
+  </script>
   <script src="/js/resources_admin.js"></script>
 </body>
 </html>

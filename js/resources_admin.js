@@ -1,6 +1,7 @@
 // /js/resources_admin.js
 
 // ====== SIMPLE AUTH GUARD (reuses window._auth from /js/auth.js) ======
+// ====== SIMPLE AUTH GUARD (reuses window._auth from /js/auth.js) ======
 (async function () {
   const authGate = document.getElementById('authGate');
   const appWrap  = document.getElementById('appWrap');
@@ -12,7 +13,7 @@
     'kwliving.com'
   ];
 
-  function show403(msg) {
+  const show403 = (msg) => {
     authGate.innerHTML = `
       <div class="container py-5">
         <div class="alert alert-danger">
@@ -20,52 +21,80 @@
         </div>
         <a class="btn btn-outline-secondary" href="/index.html">Back to Portal</a>
       </div>`;
-  }
+  };
 
-  async function waitForAuth(maxMs = 6000, stepMs = 150) {
-    if (window._authReady && typeof window._authReady.then === 'function') {
-      try { await Promise.race([window._authReady, new Promise((_,rej)=>setTimeout(()=>rej(new Error('timeout')), maxMs))]); }
-      catch(_) {}
-    }
+  const waitForAuth = async (maxMs = 6000, stepMs = 150) => {
+    try {
+      if (window._authReady && typeof window._authReady.then === 'function') {
+        await Promise.race([
+          window._authReady,
+          new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), maxMs))
+        ]);
+      }
+    } catch (_) {}
     const start = Date.now();
     while (!(window._auth && typeof window._auth.getAllAccounts === 'function')) {
       if (Date.now() - start > maxMs) break;
       await new Promise(r => setTimeout(r, stepMs));
     }
     return (window._auth && typeof window._auth.getAllAccounts === 'function');
-  }
+  };
 
-  if (!await waitForAuth()) {
-    console.error('[Resources] _auth missing.');
-    show403('Authentication not initialized. Please contact IT.');
-    return;
-  }
-
-  let account = window._auth.getActiveAccount() || window._auth.getAllAccounts()[0];
-  if (!account) {
-    try {
-      const loginResp = await window._auth.signIn(['User.Read']);
-      account = loginResp && loginResp.account;
-      if (account) window._auth.setActiveAccount(account);
-    } catch (e) {
-      console.error('Login failed:', e);
-      show403('Sign-in is required to access Resources Admin.');
+  try {
+    const hasAuth = await waitForAuth();
+    if (!hasAuth) {
+      console.error('[Resources] _auth missing.');
+      show403('Authentication not initialized. Please contact IT.');
       return;
     }
-  }
 
-  const email = (account && (account.username ||
-    (account.idTokenClaims && (account.idTokenClaims.email || account.idTokenClaims.preferred_username)))) || '';
-  if (!email) { show403('Could not determine your email.'); return; }
-  const domain = (email.split('@')[1] || '').toLowerCase();
-  if (!INTERNAL_DOMAINS.includes(domain)) {
-    show403(`Your account (${email}) is not an internal staff mailbox.`);
-    return;
-  }
+    let account = window._auth.getActiveAccount() || window._auth.getAllAccounts()?.[0];
 
-  // Unlock UI
-  authGate.classList.add('d-none');
-  appWrap.classList.remove('d-none');
+    // Try a silent get first to avoid extra popups
+    if (!account) {
+      try {
+        const silent = await window._auth.acquireTokenSilent?.({ scopes: ['User.Read'] });
+        account = silent?.account || window._auth.getAllAccounts()?.[0] || null;
+      } catch (_) { /* fall through to interactive */ }
+    }
+
+    if (!account) {
+      // Interactive only if silent failed
+      try {
+        const loginResp = await window._auth.signIn(['User.Read']);
+        account = loginResp?.account || null;
+        if (account) window._auth.setActiveAccount(account);
+      } catch (e) {
+        console.warn('[Resources] Login popup aborted or blocked:', e);
+        show403('Sign-in is required to access Resources Admin.');
+        return;
+      }
+    }
+
+    const email = (account && (account.username ||
+      (account.idTokenClaims && (account.idTokenClaims.email || account.idTokenClaims.preferred_username)))) || '';
+    if (!email) { show403('Could not determine your email.'); return; }
+    const domain = (email.split('@')[1] || '').toLowerCase();
+    if (!INTERNAL_DOMAINS.includes(domain)) {
+      show403(`Your account (${email}) is not an internal staff mailbox.`);
+      return;
+    }
+
+    // Unlock UI
+    authGate.classList.add('d-none');
+    appWrap.classList.remove('d-none');
+  } catch (err) {
+    // If an extension closed the message channel, don’t crash the page
+    const msg = (err && (err.message || String(err))) || '';
+    if (msg.includes('A listener indicated an asynchronous response')) {
+      console.warn('[Resources] Extension message issue suppressed.');
+      authGate.classList.add('d-none');
+      appWrap.classList.remove('d-none');
+      return;
+    }
+    console.error('[Resources] Fatal init error:', err);
+    show403('Initialization failed. Please refresh or contact IT.');
+  }
 })();
 
 // ====== Firestore collection ======
