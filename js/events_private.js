@@ -1,10 +1,10 @@
 // Internal Events (Firestore v8)
 // Shows BOTH visibility: "private" and "public" (published, upcoming)
 // Adds robust map handling with new `hmapsUrl` field:
-//   - Always show a Google Maps LINK (priority: hmapsUrl > mapsUrl > placeId > lat/lng > address)
+//   - Always show a Google Maps LINK (priority: hmapsUrl > mapsUrl > mapsEmbedUrl > placeId > lat/lng > address)
 //   - Only show inline EMBED when we have precise data (placeId or lat/lng) or an Embed API key
 // Optional fields supported on event or resource (event takes precedence):
-//   hmapsUrl, mapsUrl, mapsPlaceId, lat, lng, address
+//   hmapsUrl, mapsUrl, mapsEmbedUrl, mapsPlaceId, lat, lng, address
 (function() {
   // ---------- DOM ----------
   const containerList = document.getElementById("eventsContainer");
@@ -134,45 +134,71 @@
 
   // --- Banner helpers ---
   function pickBannerUrl(ev) {
-    // Try several common fields; prefer a smaller/thumb first if provided.
     const candidates = [
       ev.bannerThumbUrl,
       ev.bannerThumb,
       ev.bannerUrl,
-      ev.banner,               // may already be a URL string
+      ev.banner,
       ev.bannerImage,
       ev.images?.banner,
-      ev.imageUrl              // just in case it was stored this way
+      ev.imageUrl
     ].filter(Boolean);
 
     for (const raw of candidates) {
       const s = String(raw).trim();
       if (!s) continue;
-      // Accept only http(s) URLs here; storage paths would need getDownloadURL (not in this page).
       if (/^https?:\/\//i.test(s) || s.startsWith("ttps://")) {
         return ensureHttps(s);
       }
     }
-    return ""; // no usable URL
+    return "";
   }
 
   // ---------- Map helpers ----------
+  function embedToLinkUrl(embedUrl, fallbackAddress) {
+    const safe = ensureHttps(embedUrl);
+    if (!safe) return "";
+    try {
+      const u = new URL(safe);
+      // Maps Embed API v1: .../maps/embed/v1/(place|view|search)?key=...&q=... or &center=lat,lng
+      if (u.pathname.includes('/maps/embed')) {
+        const q = u.searchParams.get('q'); // may be free text or "place_id:..."
+        const center = u.searchParams.get('center'); // "lat,lng"
+        if (q) return `https://www.google.com/maps?q=${encodeURIComponent(q)}`;
+        if (center) return `https://www.google.com/maps?q=${encodeURIComponent(center)}`;
+      }
+      // Generic embed with q=...&output=embed
+      const q2 = u.searchParams.get('q');
+      if (q2) return `https://www.google.com/maps?q=${encodeURIComponent(q2)}`;
+
+      // Fallback: strip '/embed' and params if possible
+      const plain = safe.replace('/maps/embed', '/maps').replace('output=embed','');
+      if (plain) return plain;
+    } catch {}
+    // final fallback: address
+    if (fallbackAddress) {
+      return `https://www.google.com/maps?q=${encodeURIComponent(fallbackAddress)}`;
+    }
+    return "";
+  }
+
   function pickAddrMeta(ev, res) {
     // Event fields take priority; then resource; then null
     const meta = {
-      address     : ev.address ?? res?.address ?? null,
-      // NEW: high-accuracy deep link (short link). Event overrides resource if present.
-      hmapsUrl    : ensureHttps(ev.hmapsUrl ?? res?.hmapsUrl ?? ""),
-      mapsUrl     : ensureHttps(ev.mapsUrl  ?? res?.mapsUrl  ?? ""),
-      mapsPlaceId : ev.mapsPlaceId ?? res?.mapsPlaceId ?? null,
-      lat         : (ev.lat ?? res?.lat ?? null),
-      lng         : (ev.lng ?? res?.lng ?? null),
-      label       : (ev.resourceName || ev.title || res?.name || "Location")
+      address      : ev.address ?? res?.address ?? null,
+      hmapsUrl     : ensureHttps(ev.hmapsUrl ?? res?.hmapsUrl ?? ""),
+      mapsUrl      : ensureHttps(ev.mapsUrl  ?? res?.mapsUrl  ?? ""),
+      mapsEmbedUrl : ensureHttps(ev.mapsEmbedUrl ?? res?.mapsEmbedUrl ?? ""),
+      mapsPlaceId  : ev.mapsPlaceId ?? res?.mapsPlaceId ?? null,
+      lat          : (ev.lat ?? res?.lat ?? null),
+      lng          : (ev.lng ?? res?.lng ?? null),
+      label        : (ev.resourceName || ev.title || res?.name || "Location")
     };
     if (meta.lat != null) meta.lat = Number(meta.lat);
     if (meta.lng != null) meta.lng = Number(meta.lng);
     if (!meta.hmapsUrl) delete meta.hmapsUrl;
     if (!meta.mapsUrl)  delete meta.mapsUrl;
+    if (!meta.mapsEmbedUrl) delete meta.mapsEmbedUrl;
     return meta;
   }
 
@@ -181,12 +207,14 @@
     const labelPart = meta.label ? encodeURIComponent(meta.label) : "";
     const addrPart  = meta.address ? encodeURIComponent(meta.address) : "";
 
-    // Link priority: hmapsUrl > mapsUrl > placeId > lat/lng > address
+    // Link priority: hmapsUrl > mapsUrl > mapsEmbedUrl > placeId > lat/lng > address
     let linkUrl = "";
     if (meta.hmapsUrl) {
       linkUrl = meta.hmapsUrl;
     } else if (meta.mapsUrl) {
       linkUrl = meta.mapsUrl;
+    } else if (meta.mapsEmbedUrl) {
+      linkUrl = embedToLinkUrl(meta.mapsEmbedUrl, meta.address || meta.label || "");
     } else if (meta.mapsPlaceId) {
       linkUrl = `https://www.google.com/maps/place/?q=place_id:${encodeURIComponent(meta.mapsPlaceId)}`;
     } else if (isFinite(meta.lat) && isFinite(meta.lng)) {
@@ -215,7 +243,7 @@
     if (!evAddressRow) return;
 
     const nothing =
-      !meta.address && !meta.hmapsUrl && !meta.mapsUrl &&
+      !meta.address && !meta.hmapsUrl && !meta.mapsUrl && !meta.mapsEmbedUrl &&
       !(isFinite(meta.lat) && isFinite(meta.lng)) && !meta.mapsPlaceId;
 
     if (nothing) {
@@ -273,8 +301,6 @@
   function applyFilter() {
     const q = (searchInput.value || "").toLowerCase().trim();
     const brSel = (branchFilter.value || "ALL").toUpperCase();
-    theVis:
-    0
     const visSel = (visibilityFilter?.value || "ALL").toLowerCase(); // "all" | "private" | "public"
 
     filtered = allEvents.filter(ev => {
@@ -354,7 +380,6 @@
       : (remaining != null ? `${remaining} seats left` : "");
     const color = normalizeHex(e.color || "#3b82f6");
 
-    // --- Banner thumbnail area (always present) ---
     const bannerUrl = pickBannerUrl(e);
     const thumbHtml = bannerUrl
       ? `<img src="${esc(bannerUrl)}" alt="Banner for ${esc(e.title || "event")}" loading="lazy">`
@@ -660,9 +685,8 @@
     if (evBannerWrap && evBannerImg) {
       const url = pickBannerUrl(ev);
       if (url) {
-        evBannerImg.onload = null; // reset previous handlers
+        evBannerImg.onload = null;
         evBannerImg.onerror = () => {
-          // hide the banner slot if the image fails to load
           evBannerImg.removeAttribute("src");
           evBannerWrap.classList.add("d-none");
         };
@@ -698,7 +722,7 @@
       setMapUI(meta);
     };
 
-    if (ev.address || ev.hmapsUrl || ev.mapsUrl || ev.mapsPlaceId || (isFinite(ev.lat) && isFinite(ev.lng))) {
+    if (ev.address || ev.hmapsUrl || ev.mapsUrl || ev.mapsEmbedUrl || ev.mapsPlaceId || (isFinite(ev.lat) && isFinite(ev.lng))) {
       applyMeta(null);
     } else {
       fetchResourceDataByAny(ev).then(applyMeta).catch(() => setMapUI({}));
@@ -780,7 +804,6 @@
     const col = window.db.collection("events");
 
     try {
-      // Preferred: visibility in ["public","private"], status == "published", start >= now, orderBy start
       unsubscribeEvents = col
         .where("visibility", "in", ["public","private"])
         .where("status","==","published")
