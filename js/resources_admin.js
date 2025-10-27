@@ -1,5 +1,6 @@
-// /js/resources_admin.js
+// /js/resources_admin.js  — EDIT FIXED
 
+/* ---------- Firestore helpers ---------- */
 function getDB() {
   return (window.db && typeof window.db.collection === 'function')
     ? window.db
@@ -15,11 +16,14 @@ async function resolveResourcesCollection() {
     try {
       const snap = await db.collection(name).limit(1).get();
       if (!snap.empty) { RES_COL = name; return; }
-    } catch {}
+    } catch (e) {
+      console.warn('[resources_admin] probe failed', name, e?.message || e);
+    }
   }
 }
 function resColRef() { return getDB().collection(RES_COL); }
 
+/* ---------- UI refs ---------- */
 const resTBody = document.getElementById('resTBody');
 const btnNewRes = document.getElementById('btnNewRes');
 const btnResetForm = document.getElementById('btnResetForm');
@@ -37,7 +41,7 @@ const r_mapsUrl = document.getElementById('r_mapsUrl');
 const r_mapPreview = document.getElementById('r_mapPreview');
 const r_mapHint = document.getElementById('r_mapHint');
 
-// -------- Maps preview ----------
+/* ---------- Maps helpers ---------- */
 function buildEmbedFromAddress(address) {
   const q = encodeURIComponent(address || '');
   return `https://www.google.com/maps?q=${q}&output=embed`;
@@ -78,7 +82,7 @@ function refreshPreviewFromInputs() {
 r_mapsUrl.addEventListener('input', refreshPreviewFromInputs);
 r_address.addEventListener('input', refreshPreviewFromInputs);
 
-// -------- Load list ----------
+/* ---------- List ---------- */
 async function loadResourcesList() {
   resTBody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-4">Loading…</td></tr>';
   try {
@@ -102,44 +106,58 @@ async function loadResourcesList() {
         <td class="text-end">${d.capacity ?? 0}</td>
         <td>
           <div class="btn-group btn-group-sm">
-            <button class="btn btn-outline-primary" data-act="edit"><i class="bi bi-pencil-square"></i></button>
-            <button class="btn btn-outline-danger" data-act="del"><i class="bi bi-trash"></i></button>
+            <button type="button" class="btn btn-outline-primary" data-act="edit" title="Edit">
+              <i class="bi bi-pencil-square"></i>
+            </button>
+            <button type="button" class="btn btn-outline-danger" data-act="del" title="Delete">
+              <i class="bi bi-trash"></i>
+            </button>
           </div>
         </td>
-      </tr>`).join('');
+      </tr>
+    `).join('');
   } catch (e) {
-    console.error(e);
+    console.error('[resources_admin] load error:', e);
     resTBody.innerHTML = `<tr><td colspan="6" class="text-danger py-4">${e.message || e}</td></tr>`;
   }
 }
 document.addEventListener('DOMContentLoaded', loadResourcesList);
 
-// -------- Row actions ----------
+/* ---------- Row actions (robust delegate) ---------- */
 resTBody.addEventListener('click', async (ev) => {
-  const btn = ev.target.closest('button');
+  const btn = ev.target.closest('button[data-act]');
   if (!btn) return;
-  const id = btn.closest('tr')?.dataset?.id;
-  if (!id) return;
+  ev.preventDefault();
 
-  if (btn.dataset.act === 'edit') {
-    await fillForm(id);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  }
-  if (btn.dataset.act === 'del') {
-    if (!confirm('Delete this resource?')) return;
-    await resColRef().doc(id).delete();
-    await loadResourcesList();
-    showSaveMsg('Resource deleted.', 'success');
-    resetForm();
+  const tr = btn.closest('tr');
+  const id = tr?.dataset?.id;
+  const act = btn.dataset.act;
+  if (!id || !act) return;
+
+  try {
+    if (act === 'edit') {
+      await fillForm(id);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } else if (act === 'del') {
+      if (!confirm('Delete this resource? This cannot be undone.')) return;
+      await resColRef().doc(id).delete();
+      await loadResourcesList();
+      showSaveMsg('Resource deleted.', 'success');
+      resetForm();
+    }
+  } catch (e) {
+    console.error(`[resources_admin] ${act} failed:`, e);
+    showSaveMsg((e && e.message) ? e.message : String(e), 'danger');
   }
 });
 
-// -------- Form helpers ----------
+/* ---------- Form helpers ---------- */
 function showSaveMsg(text, type='success') {
   saveMsg.className = `small alert alert-${type}`;
   saveMsg.textContent = text;
   saveMsg.classList.remove('d-none');
-  setTimeout(() => saveMsg.classList.add('d-none'), 2500);
+  clearTimeout(showSaveMsg._t);
+  showSaveMsg._t = setTimeout(() => saveMsg.classList.add('d-none'), 2500);
 }
 function resetForm() {
   r_id.value = '';
@@ -154,9 +172,14 @@ function resetForm() {
 btnResetForm?.addEventListener('click', resetForm);
 btnNewRes?.addEventListener('click', () => { resetForm(); r_name.focus(); });
 
+/* ---------- Load one doc into form (EDIT) ---------- */
 async function fillForm(id) {
+  await resolveResourcesCollection(); // ensure RES_COL is set (defensive)
   const doc = await resColRef().doc(id).get();
-  if (!doc.exists) return;
+  if (!doc.exists) {
+    showSaveMsg('Document not found.', 'danger');
+    return;
+  }
   const d = doc.data();
   r_id.value = doc.id;
   resDocId.textContent = `# ${doc.id}`;
@@ -168,11 +191,17 @@ async function fillForm(id) {
   updateMapPreview(d.mapsEmbedUrl || '', d.mapsUrl || '');
 }
 
-// -------- Save ----------
+/* ---------- Save ---------- */
 btnSaveRes?.addEventListener('click', async () => {
   saveMsg.classList.add('d-none');
-  saveBusy.classList.remove('d-none');
+  saveBusy?.classList.remove('d-none');
   try {
+    await resolveResourcesCollection();
+
+    if (!r_name.value.trim()) throw new Error('Name is required.');
+    if (!r_branch.value) throw new Error('Branch is required.');
+    if (!r_address.value.trim()) throw new Error('Address is required.');
+
     const { mapsUrl, mapsEmbedUrl } = normalizeMapsUrl(r_mapsUrl.value, r_address.value);
     const payload = {
       name: r_name.value.trim(),
@@ -183,6 +212,7 @@ btnSaveRes?.addEventListener('click', async () => {
       mapsEmbedUrl: mapsEmbedUrl || '',
       updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
     };
+
     const id = r_id.value;
     if (id) {
       await resColRef().doc(id).set(payload, { merge: true });
@@ -196,10 +226,11 @@ btnSaveRes?.addEventListener('click', async () => {
       resDocId.textContent = `# ${docRef.id}`;
       showSaveMsg('Created successfully.');
     }
+
     await loadResourcesList();
   } catch (e) {
     showSaveMsg('Error: ' + (e.message || e), 'danger');
   } finally {
-    saveBusy.classList.add('d-none');
+    saveBusy?.classList.add('d-none');
   }
 });
