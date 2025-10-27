@@ -1,7 +1,6 @@
 // /js/resources_admin.js
 
 // ====== SIMPLE AUTH GUARD (reuses window._auth from /js/auth.js) ======
-// ====== SIMPLE AUTH GUARD (reuses window._auth from /js/auth.js) ======
 (async function () {
   const authGate = document.getElementById('authGate');
   const appWrap  = document.getElementById('appWrap');
@@ -50,16 +49,14 @@
 
     let account = window._auth.getActiveAccount() || window._auth.getAllAccounts()?.[0];
 
-    // Try a silent get first to avoid extra popups
     if (!account) {
       try {
         const silent = await window._auth.acquireTokenSilent?.({ scopes: ['User.Read'] });
         account = silent?.account || window._auth.getAllAccounts()?.[0] || null;
-      } catch (_) { /* fall through to interactive */ }
+      } catch (_) { /* fall back to interactive */ }
     }
 
     if (!account) {
-      // Interactive only if silent failed
       try {
         const loginResp = await window._auth.signIn(['User.Read']);
         account = loginResp?.account || null;
@@ -84,7 +81,6 @@
     authGate.classList.add('d-none');
     appWrap.classList.remove('d-none');
   } catch (err) {
-    // If an extension closed the message channel, don’t crash the page
     const msg = (err && (err.message || String(err))) || '';
     if (msg.includes('A listener indicated an asynchronous response')) {
       console.warn('[Resources] Extension message issue suppressed.');
@@ -97,9 +93,28 @@
   }
 })();
 
-// ====== Firestore collection ======
-const RES_COL = 'event_resources';
-const resColRef = () => firebase.firestore().collection(RES_COL);
+// ====== Firestore collection (auto-detect name) ======
+let RES_COL = 'event_resources'; // default
+const CANDIDATE_COLLECTIONS = ['event_resources', 'resources']; // try in this order
+const db = () => firebase.firestore();
+
+async function resolveResourcesCollection() {
+  for (const name of CANDIDATE_COLLECTIONS) {
+    try {
+      const snap = await db().collection(name).limit(1).get();
+      if (!snap.empty) {
+        console.info(`[resources_admin] Using collection "${name}" (found ${snap.size} doc in probe).`);
+        RES_COL = name;
+        return;
+      }
+    } catch (e) {
+      console.warn(`[resources_admin] Probe failed for "${name}":`, e?.message || e);
+    }
+  }
+  // If all probes empty/failed, still default to first but log it
+  console.info(`[resources_admin] No docs found in ${CANDIDATE_COLLECTIONS.join(' / ')}. Defaulting to "${RES_COL}".`);
+}
+function resColRef() { return db().collection(RES_COL); }
 
 // ====== Elements ======
 const resTBody         = document.getElementById('resTBody');
@@ -162,13 +177,16 @@ function refreshPreviewFromInputs() {
 r_mapsUrl.addEventListener('input', refreshPreviewFromInputs);
 r_address.addEventListener('input', refreshPreviewFromInputs);
 
-// ====== List (NO composite index needed) ======
+// ====== List (client-side sort; no index required) ======
 async function loadResourcesList() {
   resTBody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-4">Loading…</td></tr>';
   try {
+    await resolveResourcesCollection(); // decide which collection to use
+
     const snap = await resColRef().get(); // simple get
     const items = [];
     snap.forEach(doc => items.push({ id: doc.id, ...doc.data() }));
+    console.info(`[resources_admin] Loaded ${items.length} resources from "${RES_COL}".`);
 
     // client-side sort: displayOrder ASC, then name ASC
     items.sort((a, b) => {
@@ -179,7 +197,13 @@ async function loadResourcesList() {
     });
 
     if (!items.length) {
-      resTBody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-4">No resources yet</td></tr>';
+      resTBody.innerHTML = `
+        <tr>
+          <td colspan="8" class="text-center text-muted py-4">
+            No resources found in <code>${RES_COL}</code>.<br>
+            Click <strong>New Resource</strong> to add your first one.
+          </td>
+        </tr>`;
       return;
     }
 
@@ -255,6 +279,7 @@ btnNewRes?.addEventListener('click', () => { resetForm(); r_name.focus(); });
 
 async function fillForm(id) {
   try {
+    await resolveResourcesCollection();
     const doc = await resColRef().doc(id).get();
     if (!doc.exists) throw new Error('Not found');
     const d = doc.data();
@@ -278,6 +303,8 @@ btnSaveRes?.addEventListener('click', async () => {
   saveBusy.classList.remove('d-none');
 
   try {
+    await resolveResourcesCollection();
+
     if (!r_name.value.trim()) throw new Error('Name is required.');
     if (!r_branch.value) throw new Error('Branch is required.');
     if (!r_address.value.trim()) throw new Error('Address is required.');
