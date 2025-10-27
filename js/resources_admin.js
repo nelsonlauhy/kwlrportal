@@ -1,6 +1,7 @@
-// /js/resources_admin.js — robust edit wiring & collection lock
+// /js/resources_admin.js
+// Uses the "id" field (4-char) as the business key for EDIT/DELETE/LOAD.
 
-/* ---------- Firestore helpers ---------- */
+// ---------- Firestore ----------
 function getDB() {
   return (window.db && typeof window.db.collection === 'function')
     ? window.db
@@ -11,30 +12,31 @@ let RES_COL = 'event_resources';
 let RES_COL_LOCKED = false;
 const CANDIDATE_COLLECTIONS = ['event_resources', 'resources'];
 
-/** Resolve which collection to use ONCE, then lock */
 async function resolveAndLockCollection() {
   if (RES_COL_LOCKED) return RES_COL;
-
   const db = getDB();
   for (const name of CANDIDATE_COLLECTIONS) {
     try {
       const snap = await db.collection(name).limit(1).get();
-      if (!snap.empty) {
-        RES_COL = name;
-        break;
-      }
-    } catch (e) {
-      console.warn('[resources_admin] probe failed', name, e?.message || e);
-    }
+      if (!snap.empty) { RES_COL = name; break; }
+    } catch {}
   }
-
   RES_COL_LOCKED = true;
   console.info(`[resources_admin] Using collection "${RES_COL}" (locked)`);
   return RES_COL;
 }
 function resColRef() { return getDB().collection(RES_COL); }
 
-/* ---------- UI refs ---------- */
+// Helper: fetch the Firestore docRef by our 4-char "id" field
+async function docRefByBusinessId(resourceId) {
+  await resolveAndLockCollection();
+  const q = await resColRef().where('id', '==', resourceId).limit(1).get();
+  if (q.empty) return null;
+  const doc = q.docs[0];
+  return resColRef().doc(doc.id);
+}
+
+// ---------- UI refs ----------
 const resTBody = document.getElementById('resTBody');
 const btnNewRes = document.getElementById('btnNewRes');
 const btnResetForm = document.getElementById('btnResetForm');
@@ -48,11 +50,14 @@ const r_name = document.getElementById('r_name');
 const r_branch = document.getElementById('r_branch');
 const r_address = document.getElementById('r_address');
 const r_capacity = document.getElementById('r_capacity');
+const r_owners = document.getElementById('r_owners');
+const r_requiresApproval = document.getElementById('r_requiresApproval');
+const r_type = document.getElementById('r_type');
 const r_mapsUrl = document.getElementById('r_mapsUrl');
 const r_mapPreview = document.getElementById('r_mapPreview');
 const r_mapHint = document.getElementById('r_mapHint');
 
-/* ---------- Maps helpers ---------- */
+// ---------- Maps helpers ----------
 function buildEmbedFromAddress(address) {
   const q = encodeURIComponent(address || '');
   return `https://www.google.com/maps?q=${q}&output=embed`;
@@ -93,20 +98,38 @@ function refreshPreviewFromInputs() {
 r_mapsUrl.addEventListener('input', refreshPreviewFromInputs);
 r_address.addEventListener('input', refreshPreviewFromInputs);
 
-/* ---------- List ---------- */
+// ---------- ID generation (unique 4 chars) ----------
+const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // skip confusing chars
+function randomId4() {
+  let s = '';
+  for (let i = 0; i < 4; i++) s += ALPHABET[Math.floor(Math.random() * ALPHABET.length)];
+  return s;
+}
+async function generateUniqueId(maxTries = 12) {
+  for (let i = 0; i < maxTries; i++) {
+    const candidate = randomId4();
+    const exists = await resColRef().where('id', '==', candidate).limit(1).get();
+    if (exists.empty) return candidate;
+  }
+  throw new Error('Could not generate a unique ID. Try again.');
+}
+
+// ---------- List ----------
 async function loadResourcesList() {
   resTBody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-4">Loading…</td></tr>';
   try {
     await resolveAndLockCollection();
-
     const snap = await resColRef().get();
     const items = [];
-    snap.forEach(doc => items.push({ id: doc.id, ...doc.data() }));
+    snap.forEach(doc => items.push({ id: (doc.data().id || ''), ...doc.data(), __docId: doc.id }));
 
     if (!items.length) {
       resTBody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-4">No data found.</td></tr>';
       return;
     }
+
+    // Sort by name asc
+    items.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
     let i = 0;
     resTBody.innerHTML = items.map(d => `
@@ -137,24 +160,15 @@ async function loadResourcesList() {
 }
 document.addEventListener('DOMContentLoaded', loadResourcesList);
 
-/* ---------- Row actions (robust delegate + debug) ---------- */
+// ---------- Row actions ----------
 resTBody.addEventListener('click', async (ev) => {
   const btn = ev.target.closest('button[data-act]');
   if (!btn) return;
   ev.preventDefault();
 
-  const tr = btn.closest('tr');
-  // Try button first, then row
-  let id = (btn.dataset.id || tr?.dataset?.id || '').trim();
+  const id = (btn.dataset.id || btn.closest('tr')?.dataset?.id || '').trim();
   const act = btn.dataset.act;
-
-  if (!id) {
-    console.warn('[resources_admin] No id on click', { act, btnDataset: btn.dataset, trDataset: tr?.dataset });
-    showSaveMsg('Internal error: missing id. Please reload.', 'danger');
-    return;
-  }
-
-  console.debug('[resources_admin] action click', { act, id, col: RES_COL });
+  if (!id) { showSaveMsg('Internal error: missing id', 'danger'); return; }
 
   try {
     if (act === 'edit') {
@@ -162,7 +176,9 @@ resTBody.addEventListener('click', async (ev) => {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } else if (act === 'del') {
       if (!confirm('Delete this resource? This cannot be undone.')) return;
-      await resColRef().doc(id).delete();
+      const ref = await docRefByBusinessId(id);
+      if (!ref) { showSaveMsg('Document not found.', 'danger'); return; }
+      await ref.delete();
       await loadResourcesList();
       showSaveMsg('Resource deleted.', 'success');
       resetForm();
@@ -173,7 +189,7 @@ resTBody.addEventListener('click', async (ev) => {
   }
 });
 
-/* ---------- Form helpers ---------- */
+// ---------- Form helpers ----------
 function showSaveMsg(text, type='success') {
   saveMsg.className = `small alert alert-${type}`;
   saveMsg.textContent = text;
@@ -188,37 +204,42 @@ function resetForm() {
   r_branch.value = '';
   r_address.value = '';
   r_capacity.value = '0';
+  r_owners.value = 'training@livingrealtykw.com';
+  r_requiresApproval.checked = false;
+  r_type.value = 'room';
   r_mapsUrl.value = '';
   updateMapPreview('', '');
 }
 btnResetForm?.addEventListener('click', resetForm);
 btnNewRes?.addEventListener('click', () => { resetForm(); r_name.focus(); });
 
-/* ---------- Load one doc into form (EDIT) ---------- */
-async function fillForm(id) {
-  // collection is locked; do not re-resolve here
-  console.debug('[resources_admin] fillForm', { id, col: RES_COL });
-  const docRef = resColRef().doc(id);
-  const doc = await docRef.get();
-
-  if (!doc.exists) {
+// ---------- Load one doc into form (EDIT by id) ----------
+async function fillForm(resourceId) {
+  const ref = await docRefByBusinessId(resourceId);
+  if (!ref) {
     showSaveMsg(`Document not found in "${RES_COL}".`, 'danger');
-    console.warn('[resources_admin] doc not found:', { id, col: RES_COL });
     return;
   }
-
+  const doc = await ref.get();
+  if (!doc.exists) {
+    showSaveMsg(`Document not found in "${RES_COL}".`, 'danger');
+    return;
+  }
   const d = doc.data();
-  r_id.value = doc.id;
-  resDocId.textContent = `# ${doc.id}`;
+  r_id.value = d.id || '';
+  resDocId.textContent = `# ${doc.id}`; // Firestore docId (for debug)
   r_name.value = d.name || '';
   r_branch.value = d.branch || '';
   r_address.value = d.address || '';
   r_capacity.value = d.capacity ?? 0;
+  r_owners.value = d.owners || 'training@livingrealtykw.com';
+  r_requiresApproval.checked = !!d.requiresApproval;
+  r_type.value = d.type || 'room';
   r_mapsUrl.value = d.mapsUrl || '';
   updateMapPreview(d.mapsEmbedUrl || '', d.mapsUrl || '');
 }
 
-/* ---------- Save ---------- */
+// ---------- Save ----------
 btnSaveRes?.addEventListener('click', async () => {
   saveMsg.classList.add('d-none');
   saveBusy?.classList.remove('d-none');
@@ -229,28 +250,43 @@ btnSaveRes?.addEventListener('click', async () => {
     if (!r_branch.value) throw new Error('Branch is required.');
     if (!r_address.value.trim()) throw new Error('Address is required.');
 
+    // Build/normalize Maps URLs
     const { mapsUrl, mapsEmbedUrl } = normalizeMapsUrl(r_mapsUrl.value, r_address.value);
+
+    // Owners: store as string (comma-separated) as requested
+    const owners = (r_owners.value || 'training@livingrealtykw.com').trim();
+
+    // Prepare payload
     const payload = {
+      id: (r_id.value || '').trim(),                 // 4-char key
       name: r_name.value.trim(),
+      type: (r_type.value || 'room'),
       branch: r_branch.value,
       address: r_address.value.trim(),
       capacity: parseInt(r_capacity.value || '0', 10) || 0,
+      requiresApproval: !!r_requiresApproval.checked,
+      owners,
       mapsUrl: mapsUrl || '',
       mapsEmbedUrl: mapsEmbedUrl || '',
       updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
     };
 
-    const id = (r_id.value || '').trim();
-    if (id) {
-      await resColRef().doc(id).set(payload, { merge: true });
+    if (payload.id) {
+      // UPDATE existing: look up by id
+      const ref = await docRefByBusinessId(payload.id);
+      if (!ref) { throw new Error('Document not found for update.'); }
+      await ref.set(payload, { merge: true });
       showSaveMsg('Updated successfully.');
     } else {
-      const docRef = await resColRef().add({
+      // CREATE new: generate unique 4-char id
+      const newId = await generateUniqueId();
+      payload.id = newId;
+      const ref = await resColRef().add({
         ...payload,
         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
       });
-      r_id.value = docRef.id;
-      resDocId.textContent = `# ${docRef.id}`;
+      r_id.value = newId;
+      resDocId.textContent = `# ${ref.id}`;
       showSaveMsg('Created successfully.');
     }
 
