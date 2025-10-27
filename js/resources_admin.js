@@ -1,7 +1,8 @@
 // /js/resources_admin.js
 // Uses the "id" field (4-char) as the business key for EDIT/DELETE/LOAD.
+// Shows map preview even if old docs only have mapsUrl (auto-derives + backfills mapsEmbedUrl).
 
-// ---------- Firestore ----------
+/* ---------- Firestore ---------- */
 function getDB() {
   return (window.db && typeof window.db.collection === 'function')
     ? window.db
@@ -27,7 +28,7 @@ async function resolveAndLockCollection() {
 }
 function resColRef() { return getDB().collection(RES_COL); }
 
-// Helper: fetch the Firestore docRef by our 4-char "id" field
+// Fetch Firestore docRef by our 4-char "id" field
 async function docRefByBusinessId(resourceId) {
   await resolveAndLockCollection();
   const q = await resColRef().where('id', '==', resourceId).limit(1).get();
@@ -36,7 +37,7 @@ async function docRefByBusinessId(resourceId) {
   return resColRef().doc(doc.id);
 }
 
-// ---------- UI refs ----------
+/* ---------- UI refs ---------- */
 const resTBody = document.getElementById('resTBody');
 const btnNewRes = document.getElementById('btnNewRes');
 const btnResetForm = document.getElementById('btnResetForm');
@@ -57,7 +58,7 @@ const r_mapsUrl = document.getElementById('r_mapsUrl');
 const r_mapPreview = document.getElementById('r_mapPreview');
 const r_mapHint = document.getElementById('r_mapHint');
 
-// ---------- Maps helpers ----------
+/* ---------- Maps helpers ---------- */
 function buildEmbedFromAddress(address) {
   const q = encodeURIComponent(address || '');
   return `https://www.google.com/maps?q=${q}&output=embed`;
@@ -98,7 +99,7 @@ function refreshPreviewFromInputs() {
 r_mapsUrl.addEventListener('input', refreshPreviewFromInputs);
 r_address.addEventListener('input', refreshPreviewFromInputs);
 
-// ---------- ID generation (unique 4 chars) ----------
+/* ---------- ID generation (unique 4 chars) ---------- */
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // skip confusing chars
 function randomId4() {
   let s = '';
@@ -114,7 +115,7 @@ async function generateUniqueId(maxTries = 12) {
   throw new Error('Could not generate a unique ID. Try again.');
 }
 
-// ---------- List ----------
+/* ---------- List ---------- */
 async function loadResourcesList() {
   resTBody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-4">Loading…</td></tr>';
   try {
@@ -160,7 +161,7 @@ async function loadResourcesList() {
 }
 document.addEventListener('DOMContentLoaded', loadResourcesList);
 
-// ---------- Row actions ----------
+/* ---------- Row actions ---------- */
 resTBody.addEventListener('click', async (ev) => {
   const btn = ev.target.closest('button[data-act]');
   if (!btn) return;
@@ -189,7 +190,7 @@ resTBody.addEventListener('click', async (ev) => {
   }
 });
 
-// ---------- Form helpers ----------
+/* ---------- Form helpers ---------- */
 function showSaveMsg(text, type='success') {
   saveMsg.className = `small alert alert-${type}`;
   saveMsg.textContent = text;
@@ -213,7 +214,7 @@ function resetForm() {
 btnResetForm?.addEventListener('click', resetForm);
 btnNewRes?.addEventListener('click', () => { resetForm(); r_name.focus(); });
 
-// ---------- Load one doc into form (EDIT by id) ----------
+/* ---------- Load one doc into form (EDIT by id) ---------- */
 async function fillForm(resourceId) {
   const ref = await docRefByBusinessId(resourceId);
   if (!ref) {
@@ -226,8 +227,20 @@ async function fillForm(resourceId) {
     return;
   }
   const d = doc.data();
+
+  // Derive embed if missing (for legacy docs with only mapsUrl)
+  let embed = d.mapsEmbedUrl || '';
+  if (!embed) {
+    const derived = normalizeMapsUrl(d.mapsUrl || '', d.address || '');
+    embed = derived.mapsEmbedUrl || '';
+    // Backfill mapsEmbedUrl so it works next time
+    if (embed) {
+      try { await ref.set({ mapsEmbedUrl: embed }, { merge: true }); } catch (_) {}
+    }
+  }
+
   r_id.value = d.id || '';
-  resDocId.textContent = `# ${doc.id}`; // Firestore docId (for debug)
+  resDocId.textContent = `# ${doc.id}`; // Firestore docId (debug only)
   r_name.value = d.name || '';
   r_branch.value = d.branch || '';
   r_address.value = d.address || '';
@@ -236,10 +249,10 @@ async function fillForm(resourceId) {
   r_requiresApproval.checked = !!d.requiresApproval;
   r_type.value = d.type || 'room';
   r_mapsUrl.value = d.mapsUrl || '';
-  updateMapPreview(d.mapsEmbedUrl || '', d.mapsUrl || '');
+  updateMapPreview(embed, d.mapsUrl || '');
 }
 
-// ---------- Save ----------
+/* ---------- Save ---------- */
 btnSaveRes?.addEventListener('click', async () => {
   saveMsg.classList.add('d-none');
   saveBusy?.classList.remove('d-none');
@@ -250,13 +263,9 @@ btnSaveRes?.addEventListener('click', async () => {
     if (!r_branch.value) throw new Error('Branch is required.');
     if (!r_address.value.trim()) throw new Error('Address is required.');
 
-    // Build/normalize Maps URLs
     const { mapsUrl, mapsEmbedUrl } = normalizeMapsUrl(r_mapsUrl.value, r_address.value);
-
-    // Owners: store as string (comma-separated) as requested
     const owners = (r_owners.value || 'training@livingrealtykw.com').trim();
 
-    // Prepare payload
     const payload = {
       id: (r_id.value || '').trim(),                 // 4-char key
       name: r_name.value.trim(),
@@ -272,13 +281,11 @@ btnSaveRes?.addEventListener('click', async () => {
     };
 
     if (payload.id) {
-      // UPDATE existing: look up by id
       const ref = await docRefByBusinessId(payload.id);
       if (!ref) { throw new Error('Document not found for update.'); }
       await ref.set(payload, { merge: true });
       showSaveMsg('Updated successfully.');
     } else {
-      // CREATE new: generate unique 4-char id
       const newId = await generateUniqueId();
       payload.id = newId;
       const ref = await resColRef().add({
