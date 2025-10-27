@@ -1,8 +1,7 @@
 // /js/resources_admin.js
-// SIGN-IN CHECK REMOVED: page loads immediately and attempts Firestore ops.
-// If your Firestore rules require auth, operations may throw "permission-denied".
+// Sign-in is skipped on this page. If Firestore rules require auth, you’ll see permission errors.
 
-/* -------- Global error guards (mute noisy extension errors) -------- */
+// ---------- Global guards for noisy extension errors ----------
 window.addEventListener('error', (e) => {
   if (typeof e.message === 'string' && e.message.includes('A listener indicated an asynchronous response')) {
     e.preventDefault();
@@ -17,17 +16,24 @@ window.addEventListener('unhandledrejection', (e) => {
   }
 });
 
-/* -------- Firestore collection (auto-detect) -------- */
-let RES_COL = 'event_resources'; // default
-const CANDIDATE_COLLECTIONS = ['event_resources', 'resources']; // try both
-const db = () => firebase.firestore();
+// ---------- Firestore helpers (no global "db" shadowing) ----------
+function getDB() {
+  // prefer firebaseConfig.js export if present
+  return (window.db && typeof window.db.collection === 'function')
+    ? window.db
+    : firebase.firestore();
+}
+
+let RES_COL = 'event_resources';
+const CANDIDATE_COLLECTIONS = ['event_resources', 'resources'];
 
 async function resolveResourcesCollection() {
+  const db = getDB();
   for (const name of CANDIDATE_COLLECTIONS) {
     try {
-      const snap = await db().collection(name).limit(1).get();
+      const snap = await db.collection(name).limit(1).get();
       if (!snap.empty) {
-        console.info(`[resources_admin] Using collection "${name}" (probe found ${snap.size}).`);
+        console.info(`[resources_admin] Using collection "${name}"`);
         RES_COL = name;
         return;
       }
@@ -37,29 +43,31 @@ async function resolveResourcesCollection() {
   }
   console.info(`[resources_admin] No docs found in candidates. Defaulting to "${RES_COL}".`);
 }
-function resColRef() { return db().collection(RES_COL); }
+function resColRef() {
+  return getDB().collection(RES_COL);
+}
 
-/* -------- UI Elements -------- */
-const resTBody         = document.getElementById('resTBody');
-const btnNewRes        = document.getElementById('btnNewRes');
-const btnResetForm     = document.getElementById('btnResetForm');
-const btnSaveRes       = document.getElementById('btnSaveRes');
-const saveBusy         = document.getElementById('saveBusy');
-const saveMsg          = document.getElementById('saveMsg');
-const resDocId         = document.getElementById('resDocId');
+// ---------- UI Elements ----------
+const resTBody       = document.getElementById('resTBody');
+const btnNewRes      = document.getElementById('btnNewRes');
+const btnResetForm   = document.getElementById('btnResetForm');
+const btnSaveRes     = document.getElementById('btnSaveRes');
+const saveBusy       = document.getElementById('saveBusy');
+const saveMsg        = document.getElementById('saveMsg');
+const resDocId       = document.getElementById('resDocId');
 
-const r_id             = document.getElementById('r_id');
-const r_name           = document.getElementById('r_name');
-const r_branch         = document.getElementById('r_branch');
-const r_address        = document.getElementById('r_address');
-const r_capacity       = document.getElementById('r_capacity');
-const r_displayOrder   = document.getElementById('r_displayOrder');
-const r_mapsUrl        = document.getElementById('r_mapsUrl');
-const r_mapPreview     = document.getElementById('r_mapPreview');
-const r_mapHint        = document.getElementById('r_mapHint');
-const r_isActive       = document.getElementById('r_isActive');
+const r_id           = document.getElementById('r_id');
+const r_name         = document.getElementById('r_name');
+const r_branch       = document.getElementById('r_branch');
+const r_address      = document.getElementById('r_address');
+const r_capacity     = document.getElementById('r_capacity');
+const r_displayOrder = document.getElementById('r_displayOrder');
+const r_mapsUrl      = document.getElementById('r_mapsUrl');
+const r_mapPreview   = document.getElementById('r_mapPreview');
+const r_mapHint      = document.getElementById('r_mapHint');
+const r_isActive     = document.getElementById('r_isActive');
 
-/* -------- Google Maps helpers -------- */
+// ---------- Google Maps helpers ----------
 function buildEmbedFromAddress(address) {
   const q = encodeURIComponent(address || '');
   return `https://www.google.com/maps?q=${q}&output=embed`;
@@ -73,7 +81,7 @@ function normalizeMapsUrl(input, address) {
     }
     if (u.hostname.includes('google.com') && u.pathname.startsWith('/maps')) {
       const q = u.searchParams.get('q') || '';
-      const text = q || address || u.pathname.replace('/maps','').replace(/\/*$/,'').replaceAll('/',' ').trim();
+      const text = q || address || u.pathname.replace('/maps', '').replace(/\/*$/, '').replaceAll('/', ' ').trim();
       return { mapsUrl: input.trim(), mapsEmbedUrl: buildEmbedFromAddress(text) };
     }
     if (u.hostname === 'maps.app.goo.gl' || u.hostname === 'goo.gl') {
@@ -100,13 +108,13 @@ function refreshPreviewFromInputs() {
 r_mapsUrl.addEventListener('input', refreshPreviewFromInputs);
 r_address.addEventListener('input', refreshPreviewFromInputs);
 
-/* -------- List (client-side sort; no index required) -------- */
+// ---------- List (client-side sort; no index required) ----------
 async function loadResourcesList() {
   resTBody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-4">Loading…</td></tr>';
   try {
     await resolveResourcesCollection();
 
-    const snap = await resColRef().get(); // simple get
+    const snap = await resColRef().get();
     const items = [];
     snap.forEach(doc => items.push({ id: doc.id, ...doc.data() }));
     console.info(`[resources_admin] Loaded ${items.length} resources from "${RES_COL}".`);
@@ -142,8 +150,8 @@ async function loadResourcesList() {
         <td class="text-end">${d.displayOrder ?? 0}</td>
         <td>
           <div class="btn-group btn-group-sm">
-            <button class="btn btn-outline-primary" data-act="edit"><i class="bi bi-pencil-square"></i></button>
-            <button class="btn btn-outline-danger" data-act="del"><i class="bi bi-trash"></i></button>
+            <button class="btn btn-outline-primary" data-act="edit" title="Edit"><i class="bi bi-pencil-square"></i></button>
+            <button class="btn btn-outline-danger" data-act="del" title="Delete"><i class="bi bi-trash"></i></button>
           </div>
         </td>
       </tr>
@@ -151,17 +159,17 @@ async function loadResourcesList() {
   } catch (e) {
     console.error(e);
     const msg = (e && (e.message || String(e))) || '';
-    const perm = /permission|PERMISSION|Missing or insufficient permissions/.test(msg);
+    const perm = /permission|PERMISSION|Missing or insufficient permissions/i.test(msg);
     resTBody.innerHTML = `<tr><td colspan="8" class="py-4 ${perm ? 'text-warning' : 'text-danger'}">
       ${perm
-        ? 'Cannot read resources (permission denied). If your Firestore rules require sign-in, open Events Admin first or sign in, then reload.'
+        ? 'Cannot read resources (permission denied). If rules require sign-in, open Events Admin to sign in, then reload this page.'
         : 'Failed to load resources.'}
     </td></tr>`;
   }
 }
 document.addEventListener('DOMContentLoaded', loadResourcesList);
 
-/* -------- Row actions -------- */
+// ---------- Row actions ----------
 resTBody.addEventListener('click', async (ev) => {
   const btn = ev.target.closest('button'); if (!btn) return;
   const tr = btn.closest('tr'); const id = tr?.dataset?.id; if (!id) return;
@@ -179,13 +187,13 @@ resTBody.addEventListener('click', async (ev) => {
       showSaveMsg('Resource deleted.', 'success');
       resetForm();
     } catch (e) {
-      const perm = /permission|PERMISSION|Missing or insufficient permissions/.test(e?.message || '');
+      const perm = /permission|PERMISSION|Missing or insufficient permissions/i.test(e?.message || '');
       showSaveMsg(perm ? 'Delete failed: permission denied.' : ('Delete failed: ' + (e.message || e)), 'danger');
     }
   }
 });
 
-/* -------- Form helpers -------- */
+// ---------- Form helpers ----------
 function showSaveMsg(text, type='success') {
   saveMsg.className = `small mt-2 alert alert-${type}`;
   saveMsg.textContent = text;
@@ -224,12 +232,12 @@ async function fillForm(id) {
     r_mapsUrl.value = d.mapsUrl || '';
     updateMapPreview(d.mapsEmbedUrl || '', d.mapsUrl || '');
   } catch (e) {
-    const perm = /permission|PERMISSION|Missing or insufficient permissions/.test(e?.message || '');
+    const perm = /permission|PERMISSION|Missing or insufficient permissions/i.test(e?.message || '');
     showSaveMsg(perm ? 'Load failed: permission denied.' : ('Load failed: ' + (e.message || e)), 'danger');
   }
 }
 
-/* -------- Save -------- */
+// ---------- Save ----------
 btnSaveRes?.addEventListener('click', async () => {
   saveMsg.classList.add('d-none');
   saveBusy.classList.remove('d-none');
@@ -273,7 +281,7 @@ btnSaveRes?.addEventListener('click', async () => {
 
     await loadResourcesList();
   } catch (e) {
-    const perm = /permission|PERMISSION|Missing or insufficient permissions/.test(e?.message || '');
+    const perm = /permission|PERMISSION|Missing or insufficient permissions/i.test(e?.message || '');
     showSaveMsg(perm ? 'Save failed: permission denied.' : ('Save failed: ' + (e.message || e)), 'danger');
   } finally {
     saveBusy.classList.add('d-none');
