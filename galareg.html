@@ -1,0 +1,264 @@
+<!-- ========================= 
+  galareg.html — 2025 Xmas Gala Registration (Netlify + Firebase)
+  - Same theme as kpreg.html
+  - Firestore structure:
+      gala_submissions/{submissionId}
+        • agentName, branch, email, createdAt
+        • guests subcollection: guests/{guestId} -> { firstName, lastName }
+========================= -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>2025 Xmas Gala — Registration (galareg.html)</title>
+  <style>
+    :root { --bg:#f6f7fb; --fg:#0f172a; --card:#fff; --muted:#64748b; --border:#e5e7eb; }
+    body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto; background:var(--bg); color:var(--fg); }
+    .wrap { max-width: 1000px; margin: 0 auto; padding: 24px; }
+    .card { background:var(--card); border:1px solid var(--border); border-radius: 16px; box-shadow: 0 10px 24px rgba(2,6,23,.04); padding: 20px; }
+    h1 { font-size: 22px; margin: 0 0 8px; }
+    .muted { color: var(--muted); font-size: 14px; }
+    .descbox { background:#f1f5f9; border:1px solid var(--border); border-radius:12px; padding:12px 14px; font-size:13px; margin:12px 0 16px; line-height:1.4; }
+    .grid { display:grid; gap:16px; }
+    @media (min-width: 768px){ .grid-2 { grid-template-columns: 1fr 1fr; } }
+    label { display:block; font-size:13px; font-weight:600; margin:0 0 6px; }
+    input, select { width:100%; box-sizing:border-box; padding:10px 12px; border:1px solid var(--border); border-radius:12px; font-size:14px; }
+    .row { display:flex; gap:10px; align-items:center; }
+    .btn { display:inline-flex; align-items:center; gap:8px; padding:10px 14px; border-radius:12px; border:1px solid var(--border); background:#fff; cursor:pointer; }
+    .btn:hover { background:#f8fafc; }
+    .btn.primary { background:#0f172a; border-color:#0f172a; color:#fff; }
+    .tag { display:inline-flex; align-items:center; gap:8px; padding:6px 10px; border:1px solid var(--border); border-radius:999px; background:#f8fafc; font-size:12px; }
+    .guest { border:1px solid var(--border); border-radius:12px; padding:12px; background:#fcfdff; }
+    .footer { margin-top: 24px; font-size: 12px; color: var(--muted); }
+
+    /* Banner (collapsible) */
+    .banner { position:relative; overflow:hidden; border-radius:14px; border:1px solid var(--border); background:#000; transition:max-height .45s ease; }
+    .banner img { width:100%; height:auto; display:block; }
+    .banner.collapsed { max-height: var(--collapsedH, 400px); }
+    .banner-gradient { position:absolute; left:0; right:0; bottom:0; height:56px; background: linear-gradient(to bottom, rgba(255,255,255,0), rgba(255,255,255,0.9)); pointer-events:none; transition: opacity .25s ease; }
+    .banner-toggle { position:absolute; bottom:10px; right:10px; border:1px solid var(--border); background:#fff; border-radius:999px; padding:6px 10px; font-size:13px; cursor:pointer; box-shadow:0 4px 10px rgba(0,0,0,.06); }
+  </style>
+
+  <!-- Firebase CDN v10 (modular) -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
+    import {
+      getFirestore,
+      collection,
+      addDoc,
+      serverTimestamp,
+      doc,
+      collection as fsCollection
+    } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
+
+    // === Firebase config (same project) ===
+    const firebaseConfig = {
+      apiKey: "AIzaSyCGr7f6BxxsOO1BJMxfdOF7wMjintKYwiY",
+      authDomain: "kwlrintranet.firebaseapp.com",
+      projectId: "kwlrintranet",
+      storageBucket: "kwlrintranet.firebasestorage.app",
+      messagingSenderId: "601132046075",
+      appId: "1:601132046075:web:b840ed4a2187ab60e8825e",
+      measurementId: "G-PK4MVBSJPB"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+
+    // Helper: create element
+    const el = (tag, attrs={}, children=[]) => {
+      const n = document.createElement(tag);
+      Object.entries(attrs).forEach(([k,v]) => {
+        if (k === 'class') n.className = v;
+        else if (k === 'text') n.textContent = v;
+        else if (k === 'value') n.value = v;
+        else n.setAttribute(k, v);
+      });
+      children.forEach(c => n.appendChild(c));
+      return n;
+    };
+
+    let guests = [ { firstName:'', lastName:'' } ];
+
+    function renderGuests(){
+      const box = document.getElementById('guestsBox');
+      box.innerHTML = '';
+      guests.forEach((g, idx) => {
+        const row = el('div', { class:'guest' }, [
+          el('div', { class:'row' }, [ el('span', { class:'tag', text:`Guest #${idx+1}` }) ]),
+          el('div', { class:'grid grid-2' }, [
+            (()=>{ const w=el('div'); w.appendChild(el('label',{text:'First Name'}));
+              const i=el('input',{placeholder:'e.g. Emma', value:g.firstName});
+              i.addEventListener('input', e=>{ g.firstName=e.target.value; });
+              w.appendChild(i); return w; })(),
+            (()=>{ const w=el('div'); w.appendChild(el('label',{text:'Last Name'}));
+              const i=el('input',{placeholder:'e.g. Chan', value:g.lastName});
+              i.addEventListener('input', e=>{ g.lastName=e.target.value; });
+              w.appendChild(i); return w; })(),
+          ]),
+          el('div', { class:'row' }, [
+            el('button', { class:'btn', type:'button' }, [document.createTextNode('Remove')])
+          ])
+        ]);
+        row.querySelector('button').addEventListener('click', () => {
+          if (guests.length === 1) return;
+          guests = guests.filter((_, i) => i !== idx);
+          renderGuests();
+        });
+        box.appendChild(row);
+      });
+    }
+
+    function resetForm(){
+      document.getElementById('agentName').value = '';
+      document.getElementById('branch').value = '';
+      document.getElementById('email').value = '';
+      guests = [ { firstName:'', lastName:'' } ];
+      renderGuests();
+      document.getElementById('saveTag').textContent = '';
+    }
+
+    async function submitForm(e){
+      e.preventDefault();
+      const agentName = document.getElementById('agentName').value.trim();
+      const branch = document.getElementById('branch').value;
+      const email = document.getElementById('email').value.trim();
+      if (!agentName || !branch || !email) { alert('Please fill Agent/Branch/Email.'); return; }
+      const cleanGuests = guests.filter(g => g.firstName.trim() && g.lastName.trim());
+      if (cleanGuests.length === 0){ alert('Please add at least one guest with First & Last Name.'); return; }
+
+      try {
+        const subRef = await addDoc(collection(db, 'gala_submissions'), {
+          agentName, branch, email, createdAt: serverTimestamp()
+        });
+        const guestsCol = fsCollection(doc(db, 'gala_submissions', subRef.id), 'guests');
+        await Promise.all(cleanGuests.map(g => addDoc(guestsCol, {
+          firstName: g.firstName.trim(),
+          lastName: g.lastName.trim()
+        })));
+        document.getElementById('saveTag').textContent = `Saved ✓ Ref: ${subRef.id}`;
+        // Hide form and show thank you
+        document.getElementById('regForm').style.display = 'none';
+        const thanks = document.createElement('div');
+        thanks.style.marginTop = '20px';
+        thanks.innerHTML = '<h2>Thank you for registering for the 2025 Xmas Gala!</h2>';
+        document.querySelector('.card').appendChild(thanks);
+      } catch(err){
+        alert('Submit failed: ' + err.message);
+      }
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      renderGuests();
+      document.getElementById('addGuest').addEventListener('click', () => {
+        guests.push({ firstName:'', lastName:'' });
+        renderGuests();
+      });
+      document.getElementById('regForm').addEventListener('submit', submitForm);
+      document.getElementById('resetBtn').addEventListener('click', resetForm);
+    });
+  </script>
+</head>
+<body>
+  <div class="wrap">
+    <header style="margin: 0 0 16px;">
+      <h1>2025 Xmas Gala — Staff Registration</h1>
+    </header>
+
+    <div class="card">
+      <form id="regForm" class="grid">
+        <!-- Collapsible Banner -->
+        <div id="bannerBox" class="banner collapsed">
+          <!-- Replace with your Xmas Gala poster -->
+          <img id="bannerImg" src="images/XmasGala2025Poster.png" alt="2025 Xmas Gala Poster"/>
+          <div class="banner-gradient" id="bannerGrad"></div>
+          <button id="bannerToggle" class="banner-toggle" aria-expanded="false" title="Show more">Show more ▾</button>
+        </div>
+
+        <div class="descbox">
+          2025 Xmas Gala — Internal registration for KW Living Realty agents and staff with their invited guests. 
+          Please register each guest with First &amp; Last Name for name-listing and seating arrangement.
+        </div>
+
+        <div class="grid grid-2">
+          <div>
+            <label>Agent / Staff Full Name</label>
+            <input id="agentName" placeholder="e.g. Peter Pan" required />
+          </div>
+          <div>
+            <label>Branch</label>
+            <select id="branch" required>
+              <option value="" disabled selected>Select a branch</option>
+              <option>ICI</option>
+              <option>Woodbine</option>
+              <option>North Markham</option>
+              <option>Mississauga</option>
+              <option>Younge & Eglinton</option>
+              <option>Head Office</option>
+            </select>
+          </div>
+          <div style="grid-column: 1 / span 2;">
+            <label>Email</label>
+            <input id="email" type="email" placeholder="name@company.com" required />
+          </div>
+        </div>
+
+        <div class="row" style="justify-content: space-between; margin-top: 4px;">
+          <strong>Guest(s)</strong>
+          <button id="addGuest" type="button" class="btn">＋ Add Guest</button>
+        </div>
+
+        <div id="guestsBox" class="grid" style="gap:12px;"></div>
+
+        <div class="row" style="gap:12px;">
+          <button type="submit" class="btn primary">Submit Registration</button>
+          <button type="button" id="resetBtn" class="btn">Reset</button>
+          <span id="saveTag" class="tag"></span>
+        </div>
+      </form>
+    </div>
+
+    <div class="footer">© <span id="yr"></span> KW Living Realty</div>
+  </div>
+
+  <script>document.getElementById('yr').textContent = new Date().getFullYear();</script>
+  <script>
+    // Banner toggle (same as kids party)
+    (function(){
+      function ready(fn){ if (document.readyState!=='loading'){ fn(); } else { document.addEventListener('DOMContentLoaded', fn); } }
+      ready(function(){
+        var bannerBox = document.getElementById('bannerBox');
+        var bannerImg = document.getElementById('bannerImg');
+        var bannerTog = document.getElementById('bannerToggle');
+        var bannerGrad = document.getElementById('bannerGrad');
+        if(!bannerBox||!bannerImg||!bannerTog) return;
+        function setCollapsedHeight(){
+          var h = bannerImg.clientHeight || 0;
+          var half = Math.max(200, Math.round(h/2));
+          bannerBox.style.setProperty('--collapsedH', half + 'px');
+        }
+        function setExpandedUI(expanded){
+          bannerTog.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+          bannerTog.textContent = expanded ? 'Show less ▴' : 'Show more ▾';
+          if (bannerGrad) bannerGrad.style.opacity = expanded ? '0' : '1';
+        }
+        bannerImg.addEventListener('load', function(){ setCollapsedHeight(); setExpandedUI(false); });
+        window.addEventListener('resize', function(){ if (bannerBox.classList.contains('collapsed')) setCollapsedHeight(); });
+        bannerTog.addEventListener('click', function(e){
+          e.preventDefault();
+          var isCollapsed = bannerBox.classList.contains('collapsed');
+          if (isCollapsed){
+            bannerBox.classList.remove('collapsed');
+            setExpandedUI(true);
+          } else {
+            bannerBox.classList.add('collapsed');
+            setCollapsedHeight();
+            setExpandedUI(false);
+          }
+        });
+      });
+    })();
+  </script>
+</body>
+</html>
