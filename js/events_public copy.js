@@ -313,11 +313,10 @@
   function renderEventCard(e) {
     const start = toDate(e.start), end = toDate(e.end);
     const dateLine = `${fmtDateTime(start)} – ${fmtDateTime(end)}`;
-    // HIDE SEATS LEFT IN LIST: compute but do not render
-    // const remaining = (typeof e.remaining === "number") ? e.remaining : null;
-    // const capacity  = (typeof e.capacity === "number") ? e.capacity : null;
-    // const remainTxt = (remaining != null && capacity != null) ? `${remaining}/${capacity} seats left`
-    //                   : (remaining != null ? `${remaining} seats left` : "");
+    const remaining = (typeof e.remaining === "number") ? e.remaining : null;
+    const capacity  = (typeof e.capacity === "number") ? e.capacity : null;
+    const remainTxt = (remaining != null && capacity != null) ? `${remaining}/${capacity} seats left`
+                      : (remaining != null ? `${remaining} seats left` : "");
     const color = normalizeHex(e.color || "#3b82f6");
 
     // Determine banner thumbnail (or fallback)
@@ -351,7 +350,7 @@
 
         <!-- Right: Aside -->
         <div class="event-aside ms-auto">
-          <!-- HIDE SEATS LEFT HERE -->
+          ${remainTxt ? `<div class="small text-muted mb-2">${esc(remainTxt)}</div>` : ""}
           <div class="small text-primary">Details &raquo;</div>
         </div>
       </div>
@@ -545,7 +544,8 @@
   function openEventDetails(ev) {
     const s = toDate(ev.start), e = toDate(ev.end);
     const dateLine = `${fmtDateTime(s)} – ${fmtDateTime(e)}`;
-    // HIDE SEATS LEFT IN MODAL: do not compute or render remain text
+    const remainTxt = (typeof ev.remaining === "number" && typeof ev.capacity === "number") ? `${ev.remaining}/${ev.capacity} seats left`
+                    : (typeof ev.remaining === "number" ? `${ev.remaining} seats left` : "");
     const canReg = canRegister(ev);
     const color = normalizeHex(ev.color || "#3b82f6");
 
@@ -608,12 +608,7 @@
       if (ev.detailDescription) { evDetailDescEl.innerHTML = ev.detailDescription; evDetailDescEl.style.display = ""; }
       else { evDetailDescEl.style.display = "none"; }
     }
-
-    // HIDE SEATS LEFT AREA IN MODAL
-    if (evCapacityEl) {
-      evCapacityEl.textContent = "";
-      evCapacityEl.style.display = "none";
-    }
+    if (evCapacityEl) evCapacityEl.textContent = remainTxt || "";
 
     if (btnOpenRegister) {
       btnOpenRegister.disabled = !canReg;
