@@ -1,4 +1,4 @@
-// /js/resources_admin.js  — EDIT FIXED
+// /js/resources_admin.js — collection locking fix
 
 /* ---------- Firestore helpers ---------- */
 function getDB() {
@@ -8,18 +8,32 @@ function getDB() {
 }
 
 let RES_COL = 'event_resources';
+let RES_COL_LOCKED = false;
 const CANDIDATE_COLLECTIONS = ['event_resources', 'resources'];
 
-async function resolveResourcesCollection() {
+/**
+ * Resolve which collection to use. We do this ONCE, then lock it
+ * so all subsequent operations use the same collection.
+ */
+async function resolveAndLockCollection() {
+  if (RES_COL_LOCKED) return RES_COL;
+
   const db = getDB();
   for (const name of CANDIDATE_COLLECTIONS) {
     try {
       const snap = await db.collection(name).limit(1).get();
-      if (!snap.empty) { RES_COL = name; return; }
+      if (!snap.empty) {
+        RES_COL = name;
+        break;
+      }
     } catch (e) {
       console.warn('[resources_admin] probe failed', name, e?.message || e);
     }
   }
+
+  RES_COL_LOCKED = true;
+  console.info(`[resources_admin] Using collection "${RES_COL}" (locked)`);
+  return RES_COL;
 }
 function resColRef() { return getDB().collection(RES_COL); }
 
@@ -86,7 +100,8 @@ r_address.addEventListener('input', refreshPreviewFromInputs);
 async function loadResourcesList() {
   resTBody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-4">Loading…</td></tr>';
   try {
-    await resolveResourcesCollection();
+    await resolveAndLockCollection();
+
     const snap = await resColRef().get();
     const items = [];
     snap.forEach(doc => items.push({ id: doc.id, ...doc.data() }));
@@ -98,7 +113,7 @@ async function loadResourcesList() {
 
     let i = 0;
     resTBody.innerHTML = items.map(d => `
-      <tr data-id="${d.id}">
+      <tr data-id="${d.id}" data-col="${RES_COL}">
         <td>${++i}</td>
         <td>${d.name || ''}</td>
         <td>${d.branch || ''}</td>
@@ -123,7 +138,7 @@ async function loadResourcesList() {
 }
 document.addEventListener('DOMContentLoaded', loadResourcesList);
 
-/* ---------- Row actions (robust delegate) ---------- */
+/* ---------- Row actions ---------- */
 resTBody.addEventListener('click', async (ev) => {
   const btn = ev.target.closest('button[data-act]');
   if (!btn) return;
@@ -132,7 +147,7 @@ resTBody.addEventListener('click', async (ev) => {
   const tr = btn.closest('tr');
   const id = tr?.dataset?.id;
   const act = btn.dataset.act;
-  if (!id || !act) return;
+  if (!id) return;
 
   try {
     if (act === 'edit') {
@@ -174,10 +189,12 @@ btnNewRes?.addEventListener('click', () => { resetForm(); r_name.focus(); });
 
 /* ---------- Load one doc into form (EDIT) ---------- */
 async function fillForm(id) {
-  await resolveResourcesCollection(); // ensure RES_COL is set (defensive)
+  // DO NOT re-resolve here; collection is locked
   const doc = await resColRef().doc(id).get();
   if (!doc.exists) {
-    showSaveMsg('Document not found.', 'danger');
+    // show a helpful debug with current collection
+    showSaveMsg(`Document not found in "${RES_COL}".`, 'danger');
+    console.warn('[resources_admin] doc not found:', id, 'in collection', RES_COL);
     return;
   }
   const d = doc.data();
@@ -196,7 +213,8 @@ btnSaveRes?.addEventListener('click', async () => {
   saveMsg.classList.add('d-none');
   saveBusy?.classList.remove('d-none');
   try {
-    await resolveResourcesCollection();
+    // Use locked collection
+    if (!RES_COL_LOCKED) await resolveAndLockCollection();
 
     if (!r_name.value.trim()) throw new Error('Name is required.');
     if (!r_branch.value) throw new Error('Branch is required.');
