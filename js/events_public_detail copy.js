@@ -3,6 +3,7 @@
 // Works for BOTH public and private events (no visibility/status gating).
 // Includes: dynamic "Back to Events" link, banner, badges, time, address/map, descriptions,
 // and registration (honors allowRegistration, reg windows, capacity, not-started).
+
 (function(){
   // ---------- DOM ----------
   const evBannerBox   = document.getElementById("evBannerBox");
@@ -12,7 +13,7 @@
   const evDateLineEl  = document.getElementById("evDateLine");
   const evShortDescEl = document.getElementById("evShortDesc");
   const evDetailDescEl= document.getElementById("evDetailDesc");
-  const evCapacityEl  = document.getElementById("evCapacity"); // will be hidden
+  const evCapacityEl  = document.getElementById("evCapacity");
   const btnOpenReg    = document.getElementById("btnOpenRegister");
 
   // Address + map
@@ -95,10 +96,16 @@
       catch(_){ return undefined; }
     };
     const candidates = [
-      ev.bannerThumbUrl, ev.bannerUrl,
-      nested(ev,"banner.thumbUrl"), nested(ev,"banner.url"),
-      ev.imageThumbUrl, ev.imageUrl, ev.coverThumbUrl, ev.coverUrl,
-      ev.thumbnail, ev.thumbnailUrl
+      ev.bannerThumbUrl,
+      ev.bannerUrl,
+      nested(ev,"banner.thumbUrl"),
+      nested(ev,"banner.url"),
+      ev.imageThumbUrl,
+      ev.imageUrl,
+      ev.coverThumbUrl,
+      ev.coverUrl,
+      ev.thumbnail,
+      ev.thumbnailUrl
     ].filter(Boolean);
     for (const raw of candidates){ const u=ensureHttps(raw); if (u) return u; }
     return "";
@@ -109,10 +116,16 @@
       catch(_){ return undefined; }
     };
     const candidates = [
-      ev.bannerUrl, nested(ev,"banner.url"),
-      ev.imageUrl, ev.coverUrl, ev.thumbnailUrl,
-      ev.bannerThumbUrl, nested(ev,"banner.thumbUrl"),
-      ev.imageThumbUrl, ev.coverThumbUrl, ev.thumbnail
+      ev.bannerUrl,
+      nested(ev,"banner.url"),
+      ev.imageUrl,
+      ev.coverUrl,
+      ev.thumbnailUrl,
+      ev.bannerThumbUrl,
+      nested(ev,"banner.thumbUrl"),
+      ev.imageThumbUrl,
+      ev.coverThumbUrl,
+      ev.thumbnail
     ].filter(Boolean);
     for (const raw of candidates){ const u=ensureHttps(raw); if (u) return u; }
     return "";
@@ -144,13 +157,19 @@
     if (rid) {
       try {
         const snap = await col.doc(rid).get();
-        if (snap.exists) { const data = snap.data(); resourceCache[`id:${rid}`]=data; return data; }
+        if (snap.exists) {
+          const data = snap.data();
+          resourceCache[`id:${rid}`]=data; return data;
+        }
       } catch(_){}
     }
     if (rid) {
       try {
         const q = await col.where("id","==",rid).limit(1).get();
-        if (!q.empty){ const data=q.docs[0].data(); resourceCache[`id:${rid}`]=data; return data; }
+        if (!q.empty){
+          const data=q.docs[0].data();
+          resourceCache[`id:${rid}`]=data; return data;
+        }
       } catch(_){}
     }
     if (rname) {
@@ -282,11 +301,12 @@
     if (ev.detailDescription) { evDetailDescEl.innerHTML = ev.detailDescription; evDetailDescEl.style.display = ""; }
     else evDetailDescEl.style.display = "none";
 
-    // HIDE SEATS LEFT IN DETAIL PAGE
-    if (evCapacityEl) {
-      evCapacityEl.textContent = "";
-      evCapacityEl.style.display = "none";
-    }
+    // Capacity
+    const remaining = (typeof ev.remaining === "number") ? ev.remaining : null;
+    const capacity  = (typeof ev.capacity === "number") ? ev.capacity : null;
+    const remainTxt = (remaining != null && capacity != null) ? `${remaining}/${capacity} seats left`
+                    : (remaining != null ? `${remaining} seats left` : "");
+    evCapacityEl.textContent = remainTxt || "";
 
     // Address / map
     const applyMeta = (res) => {
@@ -415,9 +435,6 @@
       const id = getParam("id");
       if (!id) throw new Error("Missing event id.");
       await loadEventById(id);
-
-      // Ensure capacity area is hidden even if template includes it
-      if (evCapacityEl) { evCapacityEl.textContent = ""; evCapacityEl.style.display = "none"; }
     } catch (err) {
       console.error(err);
       if (evTitleEl) evTitleEl.textContent = err.message || "Failed to load event.";
@@ -428,8 +445,6 @@
       if (evDetailDescEl) evDetailDescEl.style.display = "none";
       evAddressRow?.classList.add("d-none");
       if (backLink) backLink.href = "/events-public.html";
-      // Hide capacity block on error as well
-      if (evCapacityEl) { evCapacityEl.textContent = ""; evCapacityEl.style.display = "none"; }
     }
   });
 })();
