@@ -346,7 +346,7 @@
             ${e.resourceName ? `<span class="badge badge-room me-2"><i class="bi bi-building me-1"></i>${esc(e.resourceName)}</span>` : ""}
             ${e.branch ? `<span class="badge badge-branch me-2">${esc(e.branch)}</span>` : ""}
           </div>
-          ${e.description ? `<div class="mt-2 text-secondary text-truncate">${esc(e.description)}</div>` : ""}
+          ${e.description ? `<div class="mt-2 text-secondary desc-wrap">${esc(e.description)}</div>` : ""}
         </div>
 
         <!-- Right: Aside -->

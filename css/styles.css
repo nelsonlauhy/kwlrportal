@@ -94,3 +94,38 @@ td.col-name {
   .control-row { flex-wrap: wrap !important; }
   #officeFilter, #searchInput { flex: 1 1 100%; max-width: 100%; }
 }
+
+/* ===== Public Events list wrap + alignment fixes ===== */
+.event-card{
+  display:flex;
+  align-items:flex-start;           /* keep top aligned */
+  gap:1rem;
+}
+
+.event-thumb{
+  flex:0 0 96px;                    /* keep your thumbnail fixed; adjust if needed */
+  max-width:96px;
+}
+.event-thumb .thumb-box img{ width:100%; height:auto; display:block; }
+.event-thumb .thumb-fallback{ width:100%; height:72px; display:flex; align-items:center; justify-content:center; background:#f3f4f6; font-size:.8rem; color:#6b7280; }
+
+.event-body{
+  flex:1 1 auto;                    /* let middle grow/shrink */
+  min-width:0;                      /* IMPORTANT: allow flex child to shrink so text can wrap */
+}
+
+/* Right column stays narrow and aligned */
+.event-aside{
+  flex:0 0 auto;
+  white-space:nowrap;
+}
+
+/* Allow long text to wrap instead of forcing one line */
+.event-title,
+.event-meta,
+.desc-wrap{
+  white-space:normal;
+  overflow-wrap:anywhere;           /* handles long words/URLs */
+  word-break:break-word;
+}
+
