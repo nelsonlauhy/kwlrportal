@@ -1,6 +1,6 @@
 <!-- ========================= 
   galareg.html — 2025 Xmas Gala Registration (Netlify + Firebase)
-  - Same theme as kpreg.html
+  - Reuses Kids Party theme
   - Guests are OPTIONAL (section hidden until “Add Guest”)
   - Firestore structure:
       gala_submissions/{submissionId}
@@ -81,7 +81,7 @@
       return n;
     };
 
-    // Guests OPTIONAL — start empty and keep the section hidden until user adds one
+    // Guests optional — start empty and keep the section hidden until user adds one
     let guests = [];
 
     function renderGuests(){
@@ -103,7 +103,7 @@
               i.addEventListener('input', e=>{ g.firstName=e.target.value; });
               w.appendChild(i); return w; })(),
             (()=>{ const w=el('div'); w.appendChild(el('label',{text:'Last Name'}));
-              const i=el('input',{placeholder:'e.g. Chan', value=g.lastName || ''});
+              const i=el('input',{placeholder:'e.g. Chan', value:g.lastName || ''});
               i.addEventListener('input', e=>{ g.lastName=e.target.value; });
               w.appendChild(i); return w; })(),
           ]),
@@ -170,7 +170,7 @@
           });
         } catch (mailErr) {
           console.warn('Email send failed:', mailErr);
-          // Optional: alert('Registered, but failed to send confirmation email. We will follow up.');
+          // Optional UX: alert('Registered, but failed to send confirmation email. We will follow up.');
         }
 
         document.getElementById('saveTag').textContent = `Saved ✓ Ref: ${subRef.id}`;
@@ -204,17 +204,17 @@
 
     <div class="card">
       <form id="regForm" class="grid">
-        <!-- Collapsible Banner -->
+        <!-- Collapsible Banner (inside the form, at top) -->
         <div id="bannerBox" class="banner collapsed">
-          <!-- Replace with your Xmas Gala poster -->
-          <img id="bannerImg" src="images/XmasGala2025Poster.png" alt="2025 Xmas Gala Poster"/>
+          <img id="bannerImg" src="images/XmasGala2025Poster.png" alt="Xmas Gala Poster"/>
           <div class="banner-gradient" id="bannerGrad"></div>
           <button id="bannerToggle" class="banner-toggle" aria-expanded="false" title="Show more">Show more ▾</button>
         </div>
 
+        <!-- One-line description box -->
         <div class="descbox">
-          2025 Xmas Gala — Internal registration for KW Living Realty agents and staff.
-          Guest(s) are optional. If you plan to bring guest(s), please add each guest’s First &amp; Last Name for name-listing and seating.
+          2025 Xmas Gala — Internal registration for KW Living Realty agents and staff. Guest(s) are optional.
+          If you plan to bring guest(s), please add each guest’s First &amp; Last Name for name-listing and seating arrangement.
         </div>
 
         <div class="grid grid-2">
@@ -260,7 +260,7 @@
 
   <script>document.getElementById('yr').textContent = new Date().getFullYear();</script>
   <script>
-    // Banner toggle (same behavior as Kids Party)
+    // Lightweight banner toggle (no Firebase dependency)
     (function(){
       function ready(fn){ if (document.readyState!=='loading'){ fn(); } else { document.addEventListener('DOMContentLoaded', fn); } }
       ready(function(){
