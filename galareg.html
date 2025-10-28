@@ -1,12 +1,19 @@
 <!-- ========================= 
   galareg.html — 2025 Xmas Gala Registration (Netlify + Firebase)
-  - Reuses Kids Party theme
-  - Guests are OPTIONAL (section hidden until “Add Guest”)
-  - Firestore structure:
+  - Guests OPTIONAL (hidden until “＋ Add Guest”)
+  - NEW (Mgmt request): Dietary fields for registrant + each guest
+      • Vegetarian (checkbox)
+      • Food Allergies (text)
+      • Dietary Notes / Comments (textarea)
+  - Firestore:
       gala_submissions/{submissionId}
-        • agentName, branch, email, createdAt
-        • guests subcollection: guests/{guestId} -> { firstName, lastName }
-  - After successful save, calls Netlify function to email confirmation + internal alert:
+        agentName, branch, email, createdAt,
+        vegetarian (bool), allergies (string), dietaryComment (string)
+        guests/{guestId} -> {
+          firstName, lastName,
+          vegetarian (bool), allergies (string), comment (string)
+        }
+  - Email notification via Netlify Function:
       /.netlify/functions/send-gala-confirmation
 ========================= -->
 <!DOCTYPE html>
@@ -26,7 +33,8 @@
     .grid { display:grid; gap:16px; }
     @media (min-width: 768px){ .grid-2 { grid-template-columns: 1fr 1fr; } }
     label { display:block; font-size:13px; font-weight:600; margin:0 0 6px; }
-    input, select { width:100%; box-sizing:border-box; padding:10px 12px; border:1px solid var(--border); border-radius:12px; font-size:14px; }
+    input, select, textarea { width:100%; box-sizing:border-box; padding:10px 12px; border:1px solid var(--border); border-radius:12px; font-size:14px; }
+    textarea { min-height: 80px; resize: vertical; }
     .row { display:flex; gap:10px; align-items:center; }
     .btn { display:inline-flex; align-items:center; gap:8px; padding:10px 14px; border-radius:12px; border:1px solid var(--border); background:#fff; cursor:pointer; }
     .btn:hover { background:#f8fafc; }
@@ -34,7 +42,14 @@
     .btn[disabled] { opacity:.7; cursor:not-allowed; }
     .tag { display:inline-flex; align-items:center; gap:8px; padding:6px 10px; border:1px solid var(--border); border-radius:999px; background:#f8fafc; font-size:12px; }
     .guest { border:1px solid var(--border); border-radius:12px; padding:12px; background:#fcfdff; }
-    .footer { margin-top: 24px; font-size: 12px; color: var(--muted); }
+
+    /* Inline checkbox pill */
+    .pill {
+      display:inline-flex; align-items:center; gap:8px;
+      border:1px solid var(--border); background:#fff; border-radius:999px;
+      padding:8px 12px; font-size:13px;
+    }
+    .pill input[type="checkbox"] { width:16px; height:16px; }
 
     /* Banner (collapsible) */
     .banner { position:relative; overflow:hidden; border-radius:14px; border:1px solid var(--border); background:#000; transition:max-height .45s ease; }
@@ -111,6 +126,7 @@
         const row = el('div', { class:'guest' }, [
           el('div', { class:'row' }, [ el('span', { class:'tag', text:`Guest #${idx+1}` }) ]),
           el('div', { class:'grid grid-2' }, [
+            /* First / Last name */
             (()=>{ const w=el('div'); w.appendChild(el('label',{text:'First Name'}));
               const i=el('input',{placeholder:'e.g. Emma', value:g.firstName || ''});
               i.addEventListener('input', e=>{ g.firstName=e.target.value; });
@@ -119,6 +135,27 @@
               const i=el('input',{placeholder:'e.g. Chan', value:g.lastName || ''});
               i.addEventListener('input', e=>{ g.lastName=e.target.value; });
               w.appendChild(i); return w; })(),
+            /* Dietary: Vegetarian */
+            (()=>{ const w=el('div'); 
+              const lbl = el('label',{text:'Meal Preference'});
+              const pill = el('label',{class:'pill', for:`gveg_${idx}`}, [
+                (()=>{ const c=document.createElement('input'); c.type='checkbox'; c.id=`gveg_${idx}`; c.checked=!!g.vegetarian; c.addEventListener('change', e=>{ g.vegetarian = e.target.checked; }); return c; })(),
+                el('span',{text:'Vegetarian'})
+              ]);
+              w.appendChild(lbl);
+              w.appendChild(pill);
+              return w; })(),
+            /* Allergies */
+            (()=>{ const w=el('div'); w.appendChild(el('label',{text:'Food Allergies (if any)'}));
+              const i=el('input',{placeholder:'e.g. nuts, shellfish', value:g.allergies || ''});
+              i.addEventListener('input', e=>{ g.allergies=e.target.value; });
+              w.appendChild(i); return w; })(),
+            /* Comment */
+            (()=>{ const w=el('div'); w.style.gridColumn='1 / span 2';
+              w.appendChild(el('label',{text:'Dietary Notes / Comments'}));
+              const t=document.createElement('textarea'); t.placeholder='Any additional dietary information or seating notes'; t.value=g.comment || '';
+              t.addEventListener('input', e=>{ g.comment=e.target.value; });
+              w.appendChild(t); return w; })(),
           ]),
           el('div', { class:'row' }, [
             el('button', { class:'btn', type:'button' }, [document.createTextNode('Remove')])
@@ -137,6 +174,9 @@
       document.getElementById('agentName').value = '';
       document.getElementById('branch').value = '';
       document.getElementById('email').value = '';
+      document.getElementById('veg').checked = false;
+      document.getElementById('allergy').value = '';
+      document.getElementById('dietNote').value = '';
       guests = [];
       renderGuests();
       document.getElementById('saveTag').textContent = '';
@@ -154,7 +194,6 @@
         submitText.textContent = 'Submitting… Please wait';
         spinner.style.display = 'inline-block';
         saveTag.textContent = 'Processing…';
-        // a11y
         submitBtn.setAttribute('aria-busy','true');
       } else {
         submitBtn.disabled = false;
@@ -170,29 +209,42 @@
       const agentName = document.getElementById('agentName').value.trim();
       const branch = document.getElementById('branch').value;
       const email = document.getElementById('email').value.trim();
+
+      /* Registrant dietary */
+      const vegetarian = document.getElementById('veg').checked || false;
+      const allergies = document.getElementById('allergy').value.trim();
+      const dietaryComment = document.getElementById('dietNote').value.trim();
+
       if (!agentName || !branch || !email) { alert('Please fill Agent/Branch/Email.'); return; }
 
-      // Guests optional — only keep rows with both names filled
-      const cleanGuests = guests.filter(g => (g.firstName||'').trim() && (g.lastName||'').trim());
+      /* Guests optional — only keep rows with both names; include dietary */
+      const cleanGuests = guests
+        .filter(g => (g.firstName||'').trim() && (g.lastName||'').trim())
+        .map(g => ({
+          firstName: g.firstName.trim(),
+          lastName: g.lastName.trim(),
+          vegetarian: !!g.vegetarian,
+          allergies: (g.allergies||'').trim(),
+          comment: (g.comment||'').trim()
+        }));
 
       setLoading(true);
 
       try {
         // 1) Save submission
         const subRef = await addDoc(collection(db, 'gala_submissions'), {
-          agentName, branch, email, createdAt: serverTimestamp()
+          agentName, branch, email,
+          vegetarian, allergies, dietaryComment,
+          createdAt: serverTimestamp()
         });
 
         // 2) Save guests if any
         if (cleanGuests.length) {
           const guestsCol = fsCollection(doc(db, 'gala_submissions', subRef.id), 'guests');
-          await Promise.all(cleanGuests.map(g => addDoc(guestsCol, {
-            firstName: g.firstName.trim(),
-            lastName: g.lastName.trim()
-          })));
+          await Promise.all(cleanGuests.map(g => addDoc(guestsCol, g)));
         }
 
-        // 3) Trigger emails via Netlify Function (confirmation + internal alert)
+        // 3) Send emails (confirmation + internal alert)
         try {
           await fetch('/.netlify/functions/send-gala-confirmation', {
             method: 'POST',
@@ -203,16 +255,15 @@
               branch,
               email,
               guests: cleanGuests,
+              registrantDiet: { vegetarian, allergies, dietaryComment },
               createdAt: new Date().toISOString()
             })
           });
         } catch (mailErr) {
           console.warn('Email send failed:', mailErr);
-          // Optional: show a non-blocking note, but don't fail the registration
         }
 
         document.getElementById('saveTag').textContent = `Saved ✓ Ref: ${subRef.id}`;
-        // Hide form and show thank you
         document.getElementById('regForm').style.display = 'none';
         const thanks = document.createElement('div');
         thanks.style.marginTop = '20px';
@@ -229,7 +280,7 @@
     document.addEventListener('DOMContentLoaded', () => {
       renderGuests();
       document.getElementById('addGuest').addEventListener('click', () => {
-        guests.push({ firstName:'', lastName:'' });
+        guests.push({ firstName:'', lastName:'', vegetarian:false, allergies:'', comment:'' });
         renderGuests();
       });
       document.getElementById('regForm').addEventListener('submit', submitForm);
@@ -245,18 +296,22 @@
 
     <div class="card">
       <form id="regForm" class="grid">
-        <!-- Collapsible Banner (inside the form, at top) -->
+        <!-- Collapsible Banner -->
         <div id="bannerBox" class="banner collapsed">
           <img id="bannerImg" src="images/XmasGala2025Poster.png" alt="Xmas Gala Poster"/>
           <div class="banner-gradient" id="bannerGrad"></div>
           <button id="bannerToggle" class="banner-toggle" aria-expanded="false" title="Show more">Show more ▾</button>
         </div>
 
-        <!-- One-line description box -->
+        <!-- Description -->
         <div class="descbox">
-          2025 Xmas Gala — Internal registration for KW Living Realty agents and staff. Guest(s) are optional. If you plan to bring guest(s), please add each guest’s First &amp; Last Name for name-listing and seating arrangement.
+          2025 Xmas Gala — Internal registration for KW Living Realty agents and staff.
+          Guest(s) are optional. Please indicate any <strong>vegetarian</strong> preference or
+          <strong>food allergies</strong> for yourself and your guest(s). You may include
+          <strong>dietary notes/comments</strong> to assist with meal planning and seating.
         </div>
 
+        <!-- Registrant details -->
         <div class="grid grid-2">
           <div>
             <label>Agent / Staff Full Name</label>
@@ -280,6 +335,26 @@
           </div>
         </div>
 
+        <!-- Registrant Dietary Preferences -->
+        <div class="grid grid-2" style="margin-top: 4px;">
+          <div>
+            <label>Meal Preference</label>
+            <label class="pill" for="veg">
+              <input id="veg" type="checkbox" />
+              <span>Vegetarian</span>
+            </label>
+          </div>
+          <div>
+            <label>Food Allergies (if any)</label>
+            <input id="allergy" placeholder="e.g. peanuts, shellfish" />
+          </div>
+          <div style="grid-column: 1 / span 2;">
+            <label>Dietary Notes / Comments</label>
+            <textarea id="dietNote" placeholder="Any additional dietary information or seating notes"></textarea>
+          </div>
+        </div>
+
+        <!-- Guests -->
         <div class="row" style="justify-content: space-between; margin-top: 4px;">
           <strong>Guest(s) <span class="muted">(Optional)</span></strong>
           <button id="addGuest" type="button" class="btn">＋ Add Guest</button>
@@ -287,6 +362,7 @@
 
         <div id="guestsBox" class="grid" style="gap:12px; display:none;"></div>
 
+        <!-- Actions -->
         <div class="row" style="gap:12px;">
           <button type="submit" id="submitBtn" class="btn primary" aria-live="polite">
             <span id="submitText">Submit Registration</span>
@@ -303,7 +379,7 @@
 
   <script>document.getElementById('yr').textContent = new Date().getFullYear();</script>
   <script>
-    // Lightweight banner toggle (no Firebase dependency)
+    // Banner toggle
     (function(){
       function ready(fn){ if (document.readyState!=='loading'){ fn(); } else { document.addEventListener('DOMContentLoaded', fn); } }
       ready(function(){
