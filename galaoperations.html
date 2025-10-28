@@ -20,6 +20,7 @@
     details { background:#fcfdff; border:1px solid var(--border); border-radius:12px; padding:10px 12px; }
     .footer { margin-top: 16px; font-size:12px; color:var(--muted); }
     .summaryBox { margin:12px 0; padding:10px; background:#f1f5f9; border:1px solid var(--border); border-radius:12px; font-size:14px; }
+    .tag { display:inline-block; padding:2px 8px; border:1px solid var(--border); border-radius:999px; font-size:12px; background:#fff; }
   </style>
 
   <!-- Firebase CDN v10 (modular) -->
@@ -56,6 +57,9 @@
     function fmtDate(ts){
       return ts?.toDate ? ts.toDate().toLocaleString() : '';
     }
+    function yesNo(b){
+      return b ? 'Yes' : 'No';
+    }
     function csvCell(v){
       const s = (v ?? '').toString().replaceAll('"','""');
       return `"${s}"`;
@@ -70,10 +74,14 @@
 
       let totalRegisters = rows.length;
       let totalGuests = 0;
+      let totalVegetarian = 0; // registrants + guests
 
       const body = tbody();
       body.innerHTML = '';
       for (const [idx, it] of rows.entries()){
+        // count registrant vegetarian
+        if (it.vegetarian) totalVegetarian++;
+
         const tr = document.createElement('tr');
         tr.innerHTML = `
           <td>${idx + 1}</td>
@@ -81,23 +89,33 @@
           <td>${it.branch || ''}</td>
           <td>${it.email || ''}</td>
           <td>${fmtDate(it.createdAt) || '—'}</td>
+          <td><span class="tag">${yesNo(!!it.vegetarian)}</span></td>
+          <td>${it.allergies ? it.allergies : ''}</td>
           <td><button class="btn" data-id="${it.id}">View</button></td>
         `;
         body.appendChild(tr);
-        tr.querySelector('button').addEventListener('click', () => toggleGuests(it.id, tr));
+        tr.querySelector('button').addEventListener('click', () => toggleGuests(it.id, tr, (vegCount) => {
+          // callback to add guest vegetarian count when loaded
+          totalVegetarian += vegCount;
+          // we don't rewrite summary here to avoid flicker; totals updated at end after first pass
+        }));
 
         // count guests per submission
         const guestsSnap = await getDocs(fsCollection(doc(db,'gala_submissions', it.id), 'guests'));
         totalGuests += guestsSnap.size;
+
+        // also accumulate vegetarian from guests in this fast pass
+        guestsSnap.forEach(g => { if (g.data()?.vegetarian) totalVegetarian++; });
       }
 
-      document.getElementById('summaryTotals').textContent = `Total Registrations: ${totalRegisters} | Total Guests: ${totalGuests} | Combined: ${totalRegisters + totalGuests}`;
+      document.getElementById('summaryTotals').textContent =
+        `Total Registrations: ${totalRegisters} | Total Guests: ${totalGuests} | Combined: ${totalRegisters + totalGuests} | Vegetarian meals (registrants + guests): ${totalVegetarian}`;
 
       status(rows.length ? '' : 'No submissions yet.');
     }
 
     // ---------- Expand/Collapse guests for a submission ----------
-    async function toggleGuests(submissionId, hostTr){
+    async function toggleGuests(submissionId, hostTr, onVegCount){
       const next = hostTr.nextElementSibling;
       if (next && next.classList.contains('guests-row')) { next.remove(); return; }
 
@@ -105,7 +123,7 @@
       const guests = guestsSnap.docs.map(k => ({ id:k.id, ...k.data() }));
 
       const tr = document.createElement('tr'); tr.className = 'guests-row';
-      const td = document.createElement('td'); td.colSpan = 6;
+      const td = document.createElement('td'); td.colSpan = 8;
 
       const details = document.createElement('details'); details.open = true;
       const summary = document.createElement('summary'); summary.textContent = `Guest(s) — ${guests.length}`;
@@ -116,9 +134,23 @@
       } else {
         const tbl = document.createElement('table');
         tbl.innerHTML = `
-          <thead><tr><th>First Name</th><th>Last Name</th></tr></thead>
+          <thead>
+            <tr>
+              <th>First Name</th>
+              <th>Last Name</th>
+              <th>Vegetarian</th>
+              <th>Allergies</th>
+            </tr>
+          </thead>
           <tbody>
-            ${guests.map(g => `<tr><td>${g.firstName || ''}</td><td>${g.lastName || ''}</td></tr>`).join('')}
+            ${guests.map(g => `
+              <tr>
+                <td>${g.firstName || ''}</td>
+                <td>${g.lastName || ''}</td>
+                <td>${yesNo(!!g.vegetarian)}</td>
+                <td>${g.allergies || ''}</td>
+              </tr>
+            `).join('')}
           </tbody>
         `;
         details.appendChild(tbl);
@@ -127,6 +159,11 @@
       td.appendChild(details);
       tr.appendChild(td);
       hostTr.after(tr);
+
+      if (typeof onVegCount === 'function') {
+        const vegCount = guests.reduce((n, g) => n + (g.vegetarian ? 1 : 0), 0);
+        onVegCount(vegCount);
+      }
     }
 
     // ---------- Export CSV (flattened: one guest per row) ----------
@@ -137,7 +174,9 @@
       const subs = snap.docs.map(d => ({ id:d.id, ...d.data() }));
 
       const header = [
-        'SubmissionID','CreatedAt','AgentName','Branch','Email','GuestFirstName','GuestLastName'
+        'SubmissionID','CreatedAt','AgentName','Branch','Email',
+        'RegistrantVegetarian','RegistrantAllergies',
+        'GuestFirstName','GuestLastName','GuestVegetarian','GuestAllergies'
       ];
       const lines = [header.join(',')];
 
@@ -148,13 +187,15 @@
         if (!guests.length){
           lines.push([
             csvCell(s.id), csvCell(fmtDate(s.createdAt)), csvCell(s.agentName), csvCell(s.branch), csvCell(s.email),
-            '', ''
+            csvCell(s.vegetarian ? 'Yes' : 'No'), csvCell(s.allergies || ''),
+            '', '', '', ''
           ].join(','));
         } else {
           for (const g of guests){
             lines.push([
               csvCell(s.id), csvCell(fmtDate(s.createdAt)), csvCell(s.agentName), csvCell(s.branch), csvCell(s.email),
-              csvCell(g.firstName), csvCell(g.lastName)
+              csvCell(s.vegetarian ? 'Yes' : 'No'), csvCell(s.allergies || ''),
+              csvCell(g.firstName || ''), csvCell(g.lastName || ''), csvCell(g.vegetarian ? 'Yes' : 'No'), csvCell(g.allergies || '')
             ].join(','));
           }
         }
@@ -188,7 +229,7 @@
 
     <div class="card">
       <div class="descbox">
-        View all registrations submitted via the staff form. Click “View” to see each submission’s guest list. Use “Export CSV” to download a flattened spreadsheet (one guest per row).
+        View all registrations submitted via the staff form. Click “View” to see each submission’s guest list (with dietary info). Use “Export CSV” to download a flattened spreadsheet (one guest per row).
       </div>
 
       <div id="summaryTotals" class="summaryBox">Loading totals…</div>
@@ -210,6 +251,8 @@
               <th>Branch</th>
               <th>Email</th>
               <th>Created</th>
+              <th>Registrant Veg</th>
+              <th>Registrant Allergies</th>
               <th>Guests</th>
             </tr>
           </thead>
