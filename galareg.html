@@ -2,7 +2,7 @@
   galareg.html — 2025 Xmas Gala Registration (Netlify + Firebase)
   - Reuses Kids Party theme
   - Guests are OPTIONAL (section hidden until “Add Guest”)
-  - New: Dietary preferences for registrant and each guest (Vegetarian + Allergies only)
+  - Dietary fields: Vegetarian + Food Allergies (for registrant and each guest)
   - Firestore structure:
       gala_submissions/{submissionId}
         • agentName, branch, email, createdAt
@@ -30,6 +30,7 @@
     @media (min-width: 768px){ .grid-2 { grid-template-columns: 1fr 1fr; } }
     label { display:block; font-size:13px; font-weight:600; margin:0 0 6px; }
     input, select { width:100%; box-sizing:border-box; padding:10px 12px; border:1px solid var(--border); border-radius:12px; font-size:14px; }
+    textarea { width:100%; box-sizing:border-box; padding:10px 12px; border:1px solid var(--border); border-radius:12px; font-size:14px; }
     .row { display:flex; gap:10px; align-items:center; }
     .btn { display:inline-flex; align-items:center; gap:8px; padding:10px 14px; border-radius:12px; border:1px solid var(--border); background:#fff; cursor:pointer; }
     .btn:hover { background:#f8fafc; }
@@ -39,6 +40,7 @@
     .guest { border:1px solid var(--border); border-radius:12px; padding:12px; background:#fcfdff; }
     .footer { margin-top: 24px; font-size: 12px; color: var(--muted); }
 
+    /* Inline checkbox pill for Vegetarian */
     .pill {
       display:inline-flex; align-items:center; gap:8px;
       border:1px solid var(--border); background:#fff; border-radius:999px;
@@ -46,12 +48,14 @@
     }
     .pill input[type="checkbox"] { width:16px; height:16px; }
 
+    /* Banner (collapsible) */
     .banner { position:relative; overflow:hidden; border-radius:14px; border:1px solid var(--border); background:#000; transition:max-height .45s ease; }
     .banner img { width:100%; height:auto; display:block; }
     .banner.collapsed { max-height: var(--collapsedH, 400px); }
     .banner-gradient { position:absolute; left:0; right:0; bottom:0; height:56px; background: linear-gradient(to bottom, rgba(255,255,255,0), rgba(255,255,255,0.9)); pointer-events:none; transition: opacity .25s ease; }
     .banner-toggle { position:absolute; bottom:10px; right:10px; border:1px solid var(--border); background:#fff; border-radius:999px; padding:6px 10px; font-size:13px; cursor:pointer; box-shadow:0 4px 10px rgba(0,0,0,.06); }
 
+    /* Loading spinner inside submit button */
     .spinner {
       width: 14px; height: 14px;
       border: 2px solid currentColor;
@@ -76,6 +80,7 @@
       collection as fsCollection
     } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
+    // === Firebase config (same project) ===
     const firebaseConfig = {
       apiKey: "AIzaSyCGr7f6BxxsOO1BJMxfdOF7wMjintKYwiY",
       authDomain: "kwlrintranet.firebaseapp.com",
@@ -89,6 +94,7 @@
     const app = initializeApp(firebaseConfig);
     const db = getFirestore(app);
 
+    // Helper: create element
     const el = (tag, attrs={}, children=[]) => {
       const n = document.createElement(tag);
       Object.entries(attrs).forEach(([k,v]) => {
@@ -100,18 +106,24 @@
       return n;
     };
 
+    // Guests optional — start empty and keep the section hidden until user adds one
     let guests = [];
 
     function renderGuests(){
       const box = document.getElementById('guestsBox');
       box.innerHTML = '';
-      if (!guests.length){ box.style.display='none'; return; }
+
+      if (!guests.length){
+        box.style.display = 'none';
+        return;
+      }
       box.style.display = 'grid';
 
       guests.forEach((g, idx) => {
         const row = el('div', { class:'guest' }, [
           el('div', { class:'row' }, [ el('span', { class:'tag', text:`Guest #${idx+1}` }) ]),
           el('div', { class:'grid grid-2' }, [
+            // First / Last name
             (()=>{ const w=el('div'); w.appendChild(el('label',{text:'First Name'}));
               const i=el('input',{placeholder:'e.g. Emma', value:g.firstName || ''});
               i.addEventListener('input', e=>{ g.firstName=e.target.value; });
@@ -120,13 +132,15 @@
               const i=el('input',{placeholder:'e.g. Chan', value:g.lastName || ''});
               i.addEventListener('input', e=>{ g.lastName=e.target.value; });
               w.appendChild(i); return w; })(),
+            // Guest dietary: Vegetarian
             (()=>{ const w=el('div'); 
               w.appendChild(el('label',{text:'Meal Preference'}));
               const pill = el('label',{class:'pill'}, [
-                (()=>{ const c=document.createElement('input'); c.type='checkbox'; c.checked=!!g.vegetarian; c.addEventListener('change', e=>{ g.vegetarian=e.target.checked; }); return c; })(),
+                (()=>{ const c=document.createElement('input'); c.type='checkbox'; c.checked=!!g.vegetarian; c.addEventListener('change', e=>{ g.vegetarian = e.target.checked; }); return c; })(),
                 el('span',{text:'Vegetarian'})
               ]);
               w.appendChild(pill); return w; })(),
+            // Guest dietary: Allergies
             (()=>{ const w=el('div'); w.appendChild(el('label',{text:'Food Allergies (if any)'}));
               const i=el('input',{placeholder:'e.g. nuts, shellfish', value:g.allergies || ''});
               i.addEventListener('input', e=>{ g.allergies=e.target.value; });
@@ -137,6 +151,7 @@
           ])
         ]);
         row.querySelector('button').addEventListener('click', () => {
+          if (guests.length === 1) { guests = []; renderGuests(); return; }
           guests = guests.filter((_, i) => i !== idx);
           renderGuests();
         });
@@ -156,102 +171,232 @@
     }
 
     function setLoading(isLoading){
-      const submitBtn=document.getElementById('submitBtn');
-      const submitText=document.getElementById('submitText');
-      const spinner=document.getElementById('submitSpinner');
-      const saveTag=document.getElementById('saveTag');
-      if(isLoading){
-        submitBtn.disabled=true; submitBtn.classList.add('loading');
-        submitText.textContent='Submitting… Please wait';
-        spinner.style.display='inline-block'; saveTag.textContent='Processing…';
+      const submitBtn = document.getElementById('submitBtn');
+      const submitText = document.getElementById('submitText');
+      const spinner = document.getElementById('submitSpinner');
+      const saveTag = document.getElementById('saveTag');
+
+      if (isLoading){
+        submitBtn.disabled = true;
+        submitBtn.classList.add('loading');
+        submitText.textContent = 'Submitting… Please wait';
+        spinner.style.display = 'inline-block';
+        saveTag.textContent = 'Processing…';
+        // a11y
+        submitBtn.setAttribute('aria-busy','true');
       } else {
-        submitBtn.disabled=false; submitBtn.classList.remove('loading');
-        submitText.textContent='Submit Registration';
-        spinner.style.display='none';
+        submitBtn.disabled = false;
+        submitBtn.classList.remove('loading');
+        submitText.textContent = 'Submit Registration';
+        spinner.style.display = 'none';
+        submitBtn.removeAttribute('aria-busy');
       }
     }
 
     async function submitForm(e){
       e.preventDefault();
-      const agentName=document.getElementById('agentName').value.trim();
-      const branch=document.getElementById('branch').value;
-      const email=document.getElementById('email').value.trim();
-      const vegetarian=document.getElementById('veg').checked||false;
-      const allergies=document.getElementById('allergy').value.trim();
-      if(!agentName||!branch||!email){ alert('Please fill Agent/Branch/Email.'); return; }
+      const agentName = document.getElementById('agentName').value.trim();
+      const branch = document.getElementById('branch').value;
+      const email = document.getElementById('email').value.trim();
 
-      const cleanGuests=guests.filter(g=>(g.firstName||'').trim()&&(g.lastName||'').trim())
-        .map(g=>({ firstName:g.firstName.trim(), lastName:g.lastName.trim(), vegetarian:!!g.vegetarian, allergies:(g.allergies||'').trim() }));
+      // Registrant dietary
+      const vegetarian = document.getElementById('veg').checked || false;
+      const allergies  = document.getElementById('allergy').value.trim();
+
+      if (!agentName || !branch || !email) { alert('Please fill Agent/Branch/Email.'); return; }
+
+      // Guests optional — only keep rows with both names filled; include dietary
+      const cleanGuests = guests
+        .filter(g => (g.firstName||'').trim() && (g.lastName||'').trim())
+        .map(g => ({
+          firstName: g.firstName.trim(),
+          lastName:  g.lastName.trim(),
+          vegetarian: !!g.vegetarian,
+          allergies:  (g.allergies||'').trim()
+        }));
 
       setLoading(true);
-      try{
-        const subRef=await addDoc(collection(db,'gala_submissions'),{
-          agentName,branch,email,vegetarian,allergies,createdAt:serverTimestamp()
+
+      try {
+        // 1) Save submission (with registrant dietary)
+        const subRef = await addDoc(collection(db, 'gala_submissions'), {
+          agentName, branch, email,
+          vegetarian, allergies,
+          createdAt: serverTimestamp()
         });
-        if(cleanGuests.length){
-          const guestsCol=fsCollection(doc(db,'gala_submissions',subRef.id),'guests');
-          await Promise.all(cleanGuests.map(g=>addDoc(guestsCol,g)));
+
+        // 2) Save guests if any
+        if (cleanGuests.length) {
+          const guestsCol = fsCollection(doc(db, 'gala_submissions', subRef.id), 'guests');
+          await Promise.all(cleanGuests.map(g => addDoc(guestsCol, g)));
         }
-        await fetch('/.netlify/functions/send-gala-confirmation',{
-          method:'POST',headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({submissionId:subRef.id,agentName,branch,email,guests:cleanGuests,registrantDiet:{vegetarian,allergies},createdAt:new Date().toISOString()})
-        }).catch(()=>{});
-        document.getElementById('saveTag').textContent=`Saved ✓ Ref: ${subRef.id}`;
-        document.getElementById('regForm').style.display='none';
-        const thanks=document.createElement('div');
-        thanks.style.marginTop='20px'; thanks.innerHTML='<h2>Thank you for registering for the 2025 Xmas Gala!</h2>';
+
+        // 3) Trigger emails via Netlify Function (confirmation + internal alert)
+        try {
+          await fetch('/.netlify/functions/send-gala-confirmation', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              submissionId: subRef.id,
+              agentName,
+              branch,
+              email,
+              registrantDiet: { vegetarian, allergies },
+              guests: cleanGuests,
+              createdAt: new Date().toISOString()
+            })
+          });
+        } catch (mailErr) {
+          console.warn('Email send failed:', mailErr);
+        }
+
+        document.getElementById('saveTag').textContent = `Saved ✓ Ref: ${subRef.id}`;
+        // Hide form and show thank you
+        document.getElementById('regForm').style.display = 'none';
+        const thanks = document.createElement('div');
+        thanks.style.marginTop = '20px';
+        thanks.innerHTML = '<h2>Thank you for registering for the 2025 Xmas Gala!</h2>';
         document.querySelector('.card').appendChild(thanks);
-      }catch(err){
-        alert('Submit failed: '+err.message);
-      }finally{ setLoading(false); }
+      } catch(err){
+        alert('Submit failed: ' + err.message);
+        document.getElementById('saveTag').textContent = '';
+      } finally {
+        setLoading(false);
+      }
     }
 
-    document.addEventListener('DOMContentLoaded',()=>{
+    document.addEventListener('DOMContentLoaded', () => {
       renderGuests();
-      document.getElementById('addGuest').addEventListener('click',()=>{guests.push({firstName:'',lastName:'',vegetarian:false,allergies:''});renderGuests();});
-      document.getElementById('regForm').addEventListener('submit',submitForm);
-      document.getElementById('resetBtn').addEventListener('click',resetForm);
+      document.getElementById('addGuest').addEventListener('click', () => {
+        guests.push({ firstName:'', lastName:'', vegetarian:false, allergies:'' });
+        renderGuests();
+      });
+      document.getElementById('regForm').addEventListener('submit', submitForm);
+      document.getElementById('resetBtn').addEventListener('click', resetForm);
     });
   </script>
 </head>
 <body>
   <div class="wrap">
-    <header><h1>2025 Xmas Gala — Staff Registration</h1></header>
+    <header style="margin: 0 0 16px;">
+      <h1>2025 Xmas Gala — Staff Registration</h1>
+    </header>
+
     <div class="card">
       <form id="regForm" class="grid">
+        <!-- Collapsible Banner (inside the form, at top) -->
         <div id="bannerBox" class="banner collapsed">
           <img id="bannerImg" src="images/XmasGala2025Poster.png" alt="Xmas Gala Poster"/>
           <div class="banner-gradient" id="bannerGrad"></div>
-          <button id="bannerToggle" class="banner-toggle">Show more ▾</button>
+          <button id="bannerToggle" class="banner-toggle" aria-expanded="false" title="Show more">Show more ▾</button>
         </div>
+
+        <!-- One-line description box -->
         <div class="descbox">
           2025 Xmas Gala — Internal registration for KW Living Realty agents and staff.
           Guest(s) are optional. Please let us know any <strong>vegetarian</strong> preference or
           <strong>food allergies</strong> for yourself and your guest(s).
         </div>
+
+        <!-- Registrant details -->
         <div class="grid grid-2">
-          <div><label>Agent / Staff Full Name</label><input id="agentName" required placeholder="e.g. Peter Pan"/></div>
-          <div><label>Branch</label><select id="branch" required><option value="" disabled selected>Select a branch</option><option>ICI</option><option>Woodbine</option><option>North Markham</option><option>Mississauga</option><option>Younge & Eglinton</option><option>Head Office</option></select></div>
-          <div style="grid-column:1/span 2;"><label>Email</label><input id="email" type="email" required placeholder="name@company.com"/></div>
+          <div>
+            <label>Agent / Staff Full Name</label>
+            <input id="agentName" placeholder="e.g. Peter Pan" required />
+          </div>
+          <div>
+            <label>Branch</label>
+            <select id="branch" required>
+              <option value="" disabled selected>Select a branch</option>
+              <option>ICI</option>
+              <option>Woodbine</option>
+              <option>North Markham</option>
+              <option>Mississauga</option>
+              <option>Younge & Eglinton</option>
+              <option>Head Office</option>
+            </select>
+          </div>
+          <div style="grid-column: 1 / span 2;">
+            <label>Email</label>
+            <input id="email" type="email" placeholder="name@company.com" required />
+          </div>
         </div>
-        <div class="grid grid-2">
-          <div><label>Meal Preference</label><label class="pill"><input id="veg" type="checkbox"/><span>Vegetarian</span></label></div>
-          <div><label>Food Allergies (if any)</label><input id="allergy" placeholder="e.g. peanuts, shellfish"/></div>
+
+        <!-- Registrant Dietary -->
+        <div class="grid grid-2" style="margin-top:4px;">
+          <div>
+            <label>Meal Preference</label>
+            <label class="pill" for="veg">
+              <input id="veg" type="checkbox" />
+              <span>Vegetarian</span>
+            </label>
+          </div>
+          <div>
+            <label>Food Allergies (if any)</label>
+            <input id="allergy" placeholder="e.g. peanuts, shellfish" />
+          </div>
         </div>
-        <div class="row" style="justify-content:space-between;margin-top:4px;">
+
+        <!-- Guests -->
+        <div class="row" style="justify-content: space-between; margin-top: 4px;">
           <strong>Guest(s) <span class="muted">(Optional)</span></strong>
           <button id="addGuest" type="button" class="btn">＋ Add Guest</button>
         </div>
-        <div id="guestsBox" class="grid" style="gap:12px;display:none;"></div>
+
+        <div id="guestsBox" class="grid" style="gap:12px; display:none;"></div>
+
+        <!-- Actions -->
         <div class="row" style="gap:12px;">
-          <button type="submit" id="submitBtn" class="btn primary"><span id="submitText">Submit Registration</span><span id="submitSpinner" class="spinner"></span></button>
+          <button type="submit" id="submitBtn" class="btn primary" aria-live="polite">
+            <span id="submitText">Submit Registration</span>
+            <span id="submitSpinner" class="spinner" aria-hidden="true"></span>
+          </button>
           <button type="button" id="resetBtn" class="btn">Reset</button>
-          <span id="saveTag" class="tag"></span>
+          <span id="saveTag" class="tag" aria-live="polite"></span>
         </div>
       </form>
     </div>
+
     <div class="footer">© <span id="yr"></span> KW Living Realty</div>
   </div>
-  <script>document.getElementById('yr').textContent=new Date().getFullYear();</script>
+
+  <script>document.getElementById('yr').textContent = new Date().getFullYear();</script>
+  <script>
+    // Lightweight banner toggle (Show more / Show less)
+    (function(){
+      function ready(fn){ if (document.readyState!=='loading'){ fn(); } else { document.addEventListener('DOMContentLoaded', fn); } }
+      ready(function(){
+        var bannerBox = document.getElementById('bannerBox');
+        var bannerImg = document.getElementById('bannerImg');
+        var bannerTog = document.getElementById('bannerToggle');
+        var bannerGrad = document.getElementById('bannerGrad');
+        if(!bannerBox||!bannerImg||!bannerTog) return;
+        function setCollapsedHeight(){
+          var h = bannerImg.clientHeight || 0;
+          var half = Math.max(200, Math.round(h/2));
+          bannerBox.style.setProperty('--collapsedH', half + 'px');
+        }
+        function setExpandedUI(expanded){
+          bannerTog.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+          bannerTog.textContent = expanded ? 'Show less ▴' : 'Show more ▾';
+          if (bannerGrad) bannerGrad.style.opacity = expanded ? '0' : '1';
+        }
+        bannerImg.addEventListener('load', function(){ setCollapsedHeight(); setExpandedUI(false); });
+        window.addEventListener('resize', function(){ if (bannerBox.classList.contains('collapsed')) setCollapsedHeight(); });
+        bannerTog.addEventListener('click', function(e){
+          e.preventDefault();
+          var isCollapsed = bannerBox.classList.contains('collapsed');
+          if (isCollapsed){
+            bannerBox.classList.remove('collapsed');
+            setExpandedUI(true);
+          } else {
+            bannerBox.classList.add('collapsed');
+            setCollapsedHeight();
+            setExpandedUI(false);
+          }
+        });
+      });
+    })();
+  </script>
 </body>
 </html>
