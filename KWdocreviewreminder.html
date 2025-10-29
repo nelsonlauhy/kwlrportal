@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="light">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Trade Documents · Manager Reminder</title>
+
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet" />
+  <link rel="icon" href="images/KW-LIVING-LOGO-SQUARE.png" type="image/png" />
+
+  <style>
+    body { background:#f7f7fb; }
+    .navbar-brand img { height:24px; }
+    .card { border:none; box-shadow: 0 6px 24px rgba(16,24,40,.06), 0 2px 4px rgba(16,24,40,.04); }
+    .badge-muted { background:#eef2f7; color:#5b6b7b; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","Courier New", monospace; }
+    .group-card { border:1px solid rgba(16,24,40,.08); }
+    .smallmuted { font-size:.875rem; color:#6c757d; }
+    .table > :not(caption) > * > * { vertical-align: middle; }
+    .link-small { font-size:.875rem; }
+    #debugBox { white-space:pre-wrap; font-family:ui-monospace,Consolas,monospace; font-size:.85rem; }
+  </style>
+</head>
+<body>
+  <!-- Navbar -->
+  <nav class="navbar navbar-expand-lg bg-white border-bottom sticky-top shadow-sm">
+    <div class="container-fluid">
+      <a class="navbar-brand d-flex align-items-center gap-2" href="#">
+        <img src="images/logokw.png" alt="Logo" />
+        <span class="fw-semibold">Trade Record Portal</span>
+      </a>
+      <div class="ms-auto d-flex align-items-center gap-3">
+        <span class="text-secondary small">Manager Reminder</span>
+      </div>
+    </div>
+  </nav>
+
+  <div class="container py-4">
+    <!-- Actions -->
+    <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+      <button id="btnRefresh" class="btn btn-outline-primary">
+        <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+      </button>
+      <button id="btnPing" class="btn btn-outline-secondary">
+        <i class="bi bi-activity me-1"></i>Ping Function
+      </button>
+      <button id="btnSend" class="btn btn-danger">
+        <i class="bi bi-envelope-exclamation me-1"></i>Send Manager Reminder
+      </button>
+      <span id="countBadge" class="badge badge-muted ms-auto">0 records · 0 branches</span>
+    </div>
+
+    <!-- Grouped results -->
+    <div id="groupsContainer" class="vstack gap-3"></div>
+
+    <!-- Optional debug -->
+    <div id="debugBox" class="text-secondary mt-3"></div>
+  </div>
+
+  <!-- Toast -->
+  <div class="position-fixed bottom-0 end-0 p-3" style="z-index:1080;">
+    <div id="toast" class="toast align-items-center" role="alert" aria-live="assertive" aria-atomic="true">
+      <div class="d-flex">
+        <div class="toast-body" id="toastBody">Ready</div>
+        <button type="button" class="btn-close me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Firebase v8 -->
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-storage.js"></script>
+
+  <!-- Config loader (tries frebaseConfigKW.js then firebaseConfigKW.js) -->
+  <script>
+    (async ()=>{
+      function inject(src){
+        return new Promise((resolve,reject)=>{
+          const s=document.createElement('script'); s.src=src;
+          s.onload=()=>resolve(src); s.onerror=()=>reject(new Error('Failed to load '+src));
+          document.head.appendChild(s);
+        });
+      }
+      try { await inject('frebaseConfigKW.js'); console.log('[config] loaded frebaseConfigKW.js'); }
+      catch(e1){
+        try { await inject('firebaseConfigKW.js'); console.log('[config] loaded firebaseConfigKW.js'); }
+        catch(e2){
+          console.error('[config] Both config files failed', e1, e2);
+          document.body.insertAdjacentHTML('afterbegin','<div class="alert alert-danger m-3">Firebase config file not found.</div>');
+        }
+      }
+    })();
+  </script>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+    // --- UI refs ---
+    const groupsContainer = document.getElementById('groupsContainer');
+    const toastEl = new bootstrap.Toast(document.getElementById('toast'));
+    const toastBody = document.getElementById('toastBody');
+    const countBadge = document.getElementById('countBadge');
+    const debugBox = document.getElementById('debugBox');
+
+    function showToast(msg){ toastBody.textContent = msg; toastEl.show(); }
+    function escapeHtml(s){ return (s==null?'':String(s)).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])); }
+    function logDebug(msg){ console.log(msg); debugBox.textContent = (debugBox.textContent?debugBox.textContent+'\n':'') + msg; }
+
+    // Flexible getters for possible field-name variations
+    function getAgentNo(d){ return d.agentNo ?? d.agentno ?? d.agentID ?? d.agentId ?? ''; }
+    function getManagerName(d){ return d.managerName ?? d.managername ?? d.managerFullName ?? d.managerfullname ?? ''; }
+    function getManagerEmail(d){ return d.managerEmail ?? d.manageremail ?? d.managerEmailAddress ?? ''; }
+
+    async function fetchManagerMetaForBranches(branchNames){
+      const result = {};
+      await Promise.all(branchNames.map(async (bn)=>{
+        if(!bn || result[bn]) return;
+        try{
+          let snap = await window.db.collection('docreviewmanagers')
+            .where('branchname','==', bn).limit(1).get();
+          if (snap.empty){
+            // some records might be stored as "brandname" typo
+            snap = await window.db.collection('docreviewmanagers')
+              .where('brandname','==', bn).limit(1).get();
+          }
+          if(!snap.empty){
+            const r = snap.docs[0].data();
+            const branchIdRaw = r.branchid ?? r.brandid ?? r.branchId ?? r.brandId;
+            result[bn] = {
+              managerName: r.managerfullname || r.managerFullName || '',
+              managerEmail: r.manageremail || r.managerEmail || r.email || '',
+              branchId: (typeof branchIdRaw === 'number') ? branchIdRaw : Number(branchIdRaw)
+            };
+          } else {
+            result[bn] = { managerName:'', managerEmail:'', branchId: null };
+          }
+        }catch(e){
+          console.warn('fetchManagerMetaForBranches error', e);
+          result[bn] = { managerName:'', managerEmail:'', branchId: null };
+        }
+      }));
+      return result;
+    }
+
+    function groupCard(branchName, managerName, managerEmail, branchId, rows){
+      const safeBranch = escapeHtml(branchName || '(No branch)');
+      const safeMgr = escapeHtml(managerName || '—');
+      const safeEmail = escapeHtml(managerEmail || '—');
+      const hasId = typeof branchId === 'number' && !Number.isNaN(branchId);
+      const linkUrl = hasId ? `https://lridocreview.netlify.app/kwdocreviewmanager.html?branchid=${branchId}` : '';
+
+      const tableRows = rows.map(r=>{
+        const tradeNo = escapeHtml(r.tradeNo || r.tradNo || '');
+        const agentNo = escapeHtml(getAgentNo(r));
+        const agentName = escapeHtml(r.agentName || '');
+        return `<tr>
+          <td class="mono">${tradeNo || '-'}</td>
+          <td class="mono">${agentNo || '-'}</td>
+          <td>${agentName || '-'}</td>
+        </tr>`;
+      }).join('');
+
+      const card = document.createElement('div');
+      card.className = 'group-card rounded-3 bg-white';
+      card.innerHTML = `
+        <div class="p-3 border-bottom d-flex align-items-center justify-content-between flex-wrap gap-2">
+          <div>
+            <div class="h6 mb-0">${safeBranch}</div>
+            <div class="smallmuted">Manager: <span class="fw-semibold">${safeMgr}</span> &nbsp; <span class="text-decoration-underline">${safeEmail}</span></div>
+          </div>
+          <div class="d-flex align-items-center gap-2">
+            ${hasId ? `<a class="link-small text-decoration-none" href="${linkUrl}" target="_blank" rel="noopener">
+              <i class="bi bi-box-arrow-up-right me-1"></i>Open Manager View
+            </a>` : `<span class="smallmuted">No branch ID</span>`}
+            <span class="badge bg-primary-subtle text-primary-emphasis">${rows.length} pending</span>
+          </div>
+        </div>
+        <div class="p-0">
+          <div class="table-responsive">
+            <table class="table table-sm align-middle mb-0">
+              <thead class="table-light">
+                <tr>
+                  <th style="width:160px;">Trade No.</th>
+                  <th style="width:160px;">Agent No.</th>
+                  <th>Agent Name</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${tableRows || '<tr><td colspan="3" class="text-center text-secondary py-4">No records</td></tr>'}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+      return card;
+    }
+
+    async function loadData(){
+      if(!window.db){ showToast('Database not ready'); return; }
+      groupsContainer.innerHTML = `<div class="text-center text-secondary py-5">Loading…</div>`;
+      try{
+        const snap = await window.db.collection('docreview')
+          .where('reviewStatus','in',['PendingManager','Pending for Manager Approval'])
+          .get();
+
+        if (snap.empty){
+          groupsContainer.innerHTML = `<div class="alert alert-info">No records found for <strong>PendingManager</strong>.</div>`;
+          countBadge.textContent = `0 records · 0 branches`;
+          window._reminderPayload = [];
+          return;
+        }
+
+        // Group by branchName
+        const groups = {};
+        snap.docs.forEach(doc=>{
+          const d = doc.data();
+          const branchName = d.branchName || d.branchname || '(No branch)';
+          if(!groups[branchName]) groups[branchName] = { rows:[], managerName:'', managerEmail:'', branchId: null };
+          groups[branchName].rows.push({
+            tradeNo: d.tradeNo ?? d.tradNo ?? '',
+            agentNo: getAgentNo(d),
+            agentName: d.agentName ?? '',
+          });
+          if(!groups[branchName].managerName){
+            const mName = getManagerName(d);
+            if(mName) groups[branchName].managerName = mName;
+          }
+          if(!groups[branchName].managerEmail){
+            const mEmail = getManagerEmail(d);
+            if(mEmail) groups[branchName].managerEmail = mEmail;
+          }
+        });
+
+        const branchNames = Object.keys(groups);
+        const meta = await fetchManagerMetaForBranches(branchNames);
+        branchNames.forEach(bn=>{
+          if(!groups[bn].managerName) groups[bn].managerName = meta[bn]?.managerName || '';
+          if(!groups[bn].managerEmail) groups[bn].managerEmail = meta[bn]?.managerEmail || '';
+          groups[bn].branchId = meta[bn]?.branchId ?? null;
+        });
+
+        groupsContainer.innerHTML = '';
+        let total = 0;
+        branchNames.sort((a,b)=>a.localeCompare(b, undefined, { sensitivity:'base' }));
+        branchNames.forEach(bn=>{
+          const g = groups[bn];
+          total += g.rows.length;
+          groupsContainer.appendChild(groupCard(bn, g.managerName, g.managerEmail, g.branchId, g.rows));
+        });
+
+        countBadge.textContent = `${total} record${total!==1?'s':''} · ${branchNames.length} branch${branchNames.length!==1?'es':''}`;
+
+        // Build payload for sending (one branch per request)
+        window._reminderPayload = branchNames.map(bn=>{
+          const g = groups[bn];
+          const branchLink = (typeof g.branchId==='number' && !Number.isNaN(g.branchId))
+            ? `https://lridocreview.netlify.app/kwdocreviewmanager.html?branchid=${g.branchId}`
+            : '';
+          return {
+            branchName: bn,
+            branchId: g.branchId ?? null,
+            managerName: g.managerName || '',
+            managerEmail: g.managerEmail || '',
+            managerViewUrl: branchLink,
+            items: g.rows.map(r=>({
+              tradeNo: r.tradeNo || '',
+              agentNo: r.agentNo || '',
+              agentName: r.agentName || ''
+            }))
+          };
+        });
+      }catch(err){
+        console.error(err);
+        groupsContainer.innerHTML = `<div class="alert alert-danger">Failed to load data. Check Firestore rules/indexes and try again.</div>`;
+        window._reminderPayload = [];
+      }
+    }
+
+    // ---- Function calls with timeout + diagnostics ----
+    async function fetchWithTimeout(url, options={}, timeoutMs=20000){
+      const ctrl = new AbortController();
+      const t = setTimeout(()=>ctrl.abort(), timeoutMs);
+      try{
+        const res = await fetch(url, { ...options, signal: ctrl.signal });
+        return res;
+      } finally {
+        clearTimeout(t);
+      }
+    }
+
+    async function pingFunction(){
+      try{
+        const res = await fetchWithTimeout('/.netlify/functions/send-manager-reminder?ping=1', {}, 8000);
+        if(!res.ok){
+          const txt = await res.text();
+          showToast(`Ping failed: HTTP ${res.status}`);
+          logDebug(`Ping failed: ${res.status}\n${txt}`);
+          return;
+        }
+        const data = await res.json();
+        showToast('Function reachable ✓');
+        logDebug(`Ping OK: ${JSON.stringify(data)}`);
+      }catch(e){
+        showToast('Ping timed out / network error');
+        logDebug(`Ping error: ${e}`);
+      }
+    }
+
+    async function sendOneBranch(group){
+      const res = await fetchWithTimeout('/.netlify/functions/send-manager-reminder', {
+        method: 'POST',
+        headers: { 'Content-Type':'application/json' },
+        body: JSON.stringify({ group })
+      }, 20000);
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(`HTTP ${res.status}: ${txt}`);
+      }
+      return res.json();
+    }
+
+    document.getElementById('btnRefresh').addEventListener('click', loadData);
+    document.getElementById('btnPing').addEventListener('click', pingFunction);
+    document.getElementById('btnSend').addEventListener('click', async ()=>{
+      const groups = (window._reminderPayload || []).filter(g => (g.items||[]).length);
+      if (!groups.length) { showToast('Nothing to send'); return; }
+
+      let sent = 0, failed = 0;
+      showToast(`Sending… (0/${groups.length})`);
+
+      for (const g of groups) {
+        try {
+          await sendOneBranch(g);
+          sent++;
+        } catch (e) {
+          console.error('Send error', g.branchName, e);
+          failed++;
+        }
+        showToast(`Sending… (${sent+failed}/${groups.length})`);
+      }
+
+      showToast(`Done: ${sent} sent, ${failed} failed`);
+    });
+
+    async function waitForDb(maxMs=6000){
+      const t0=Date.now();
+      while(Date.now()-t0<maxMs){
+        if(window.db) return true;
+        await new Promise(r=>setTimeout(r,120));
+      }
+      return false;
+    }
+    window.addEventListener('DOMContentLoaded', async ()=>{
+      const ok = await waitForDb();
+      if(!ok){
+        document.body.insertAdjacentHTML('afterbegin','<div class="alert alert-warning m-3">Waiting for Firebase to initialize failed. Check the config file path.</div>');
+        return;
+      }
+      loadData();
+    });
+  </script>
+</body>
+</html>
