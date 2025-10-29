@@ -104,7 +104,7 @@ export const handler = async (event) => {
     const BCC = "itsupport@livingrealtykw.com";
     const FROM = `KW Living Realty <${process.env.O365_USER}>`;
 
-    const subject = `[Reminder] Pending Trades — ${branchDisplay} (${group.items.length})`;
+    const subject = `[Reminder] Pending Trades Review — ${branchDisplay} (${group.items.length})`;
 
     const html = `
       <div style="font:14px/1.45 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;color:#111;">
