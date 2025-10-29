@@ -18,7 +18,7 @@ function esc(s) {
   return (s == null ? "" : String(s)).trim();
 }
 
-// Map incoming branchName to the display version
+// Map branch names to display format
 function displayBranchName(raw) {
   const v = (raw || "").trim().toUpperCase();
   if (v === "YONGE & EGLINTO") return "YONGE & EGLINTON BRANCH";
@@ -26,7 +26,6 @@ function displayBranchName(raw) {
   if (v === "NORTH MARKHAM") return "NORTH MARKHAM BRANCH";
   if (v === "ICI BRANCH") return "ICI BRANCH";
   if (v === "MISSISSAUGA OFF") return "MISSISSAUGA BRANCH";
-  // default: return original as-is
   return raw || "(No branch)";
 }
 
@@ -79,20 +78,17 @@ export const handler = async (event) => {
       };
     }
 
-    // Link for manager view
+    // Manager view link
     const link =
       typeof group.branchId === "number"
         ? `https://lridocreview.netlify.app/kwdocreviewmanager.html?branchid=${group.branchId}`
         : "";
 
-    // Normalize branch name for display
     const branchDisplay = displayBranchName(group.branchName);
-
-    // Greeting with manager name
     const managerName = esc(group.managerName);
     const greet = managerName ? `Hi ${managerName},` : "Hello,";
 
-    // Transporter (same settings as your working gala function)
+    // Transporter setup
     const transporter = nodemailer.createTransport({
       host: "smtp.office365.com",
       port: 587,
@@ -106,10 +102,10 @@ export const handler = async (event) => {
 
     const TO = process.env.TEST_TO || "itsupport@livingrealtykw.com";
     const FROM = `KW Living Realty <${process.env.O365_USER}>`;
+    const BCC = "nelsonlau@livingrealtykw.com";
 
     const subject = `[Reminder] Pending Trades — ${branchDisplay} (${group.items.length})`;
 
-    // Smaller font + tighter rows (font-size:12px; padding 4px; line-height 1.2)
     const html = `
       <div style="font:14px/1.45 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;color:#111;">
         <p>${greet}</p>
@@ -117,11 +113,6 @@ export const handler = async (event) => {
         ${
           link
             ? `<p><a href="${link}" target="_blank" style="color:#0d6efd;">Open Manager View</a></p>`
-            : ""
-        }
-        ${
-          group.managerEmail
-            ? `<p style="color:#6c757d;margin:6px 0 0 0;">Manager Email: &lt;${esc(group.managerEmail)}&gt;</p>`
             : ""
         }
 
@@ -150,14 +141,14 @@ export const handler = async (event) => {
       `${greet}\n\n` +
       `This is a scheduled system reminder for ${branchDisplay} with pending trade records requiring manager attention.\n` +
       (link ? `Manager View: ${link}\n\n` : `\n`) +
-      (group.managerEmail ? `Manager Email: <${esc(group.managerEmail)}>\n\n` : "") +
       `Items:\n${rowsText(group.items)}\n\n` +
       `This is a scheduled system email. Please do not reply.\n` +
       `For questions, contact accounting@livingrealtykw.com.\n`;
 
     await transporter.sendMail({
       from: FROM,
-      to: TO, // still sending to test address
+      to: TO, // test first
+      bcc: BCC, // add BCC copy
       subject,
       text,
       html,
@@ -165,7 +156,7 @@ export const handler = async (event) => {
 
     return {
       statusCode: 200,
-      body: JSON.stringify({ ok: true, sentTo: TO, count: group.items.length }),
+      body: JSON.stringify({ ok: true, sentTo: TO, bcc: BCC, count: group.items.length }),
     };
   } catch (err) {
     return { statusCode: 500, body: JSON.stringify({ ok: false, error: err.message }) };
