@@ -58,7 +58,6 @@ function rowsText(items = []) {
 }
 
 export const handler = async (event) => {
-  // Health check
   if (event.httpMethod === "GET") {
     return { statusCode: 200, body: JSON.stringify({ ok: true, ts: Date.now() }) };
   }
@@ -78,7 +77,6 @@ export const handler = async (event) => {
       };
     }
 
-    // Manager view link
     const link =
       typeof group.branchId === "number"
         ? `https://lridocreview.netlify.app/kwdocreviewmanager.html?branchid=${group.branchId}`
@@ -86,9 +84,9 @@ export const handler = async (event) => {
 
     const branchDisplay = displayBranchName(group.branchName);
     const managerName = esc(group.managerName);
+    const managerEmail = esc(group.managerEmail);
     const greet = managerName ? `Hi ${managerName},` : "Hello,";
 
-    // Transporter setup
     const transporter = nodemailer.createTransport({
       host: "smtp.office365.com",
       port: 587,
@@ -100,16 +98,18 @@ export const handler = async (event) => {
       requireTLS: true,
     });
 
-    const TO = process.env.TEST_TO || "itsupport@livingrealtykw.com";
+    // --- Recipient setup ---
+    const TO = managerEmail || "itsupport@livingrealtykw.com"; // fallback safety
+    const CC = "accounting@livingrealtykw.com";
+    const BCC = "itsupport@livingrealtykw.com";
     const FROM = `KW Living Realty <${process.env.O365_USER}>`;
-    const BCC = "nelsonlau@livingrealtykw.com";
 
     const subject = `[Reminder] Pending Trades — ${branchDisplay} (${group.items.length})`;
 
     const html = `
       <div style="font:14px/1.45 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;color:#111;">
         <p>${greet}</p>
-        <p>This is a scheduled system reminder for <strong>${esc(branchDisplay)}</strong> with pending trade records requiring manager attention.</p>
+        <p>This is a scheduled system reminder for <strong>${esc(branchDisplay)}</strong> with pending trade records requiring your review and approval.</p>
         ${
           link
             ? `<p><a href="${link}" target="_blank" style="color:#0d6efd;">Open Manager View</a></p>`
@@ -139,7 +139,7 @@ export const handler = async (event) => {
 
     const text =
       `${greet}\n\n` +
-      `This is a scheduled system reminder for ${branchDisplay} with pending trade records requiring manager attention.\n` +
+      `This is a scheduled system reminder for ${branchDisplay} with pending trade records requiring your review.\n` +
       (link ? `Manager View: ${link}\n\n` : `\n`) +
       `Items:\n${rowsText(group.items)}\n\n` +
       `This is a scheduled system email. Please do not reply.\n` +
@@ -147,8 +147,9 @@ export const handler = async (event) => {
 
     await transporter.sendMail({
       from: FROM,
-      to: TO, // test first
-      bcc: BCC, // add BCC copy
+      to: TO,
+      cc: CC,
+      bcc: BCC,
       subject,
       text,
       html,
@@ -156,9 +157,16 @@ export const handler = async (event) => {
 
     return {
       statusCode: 200,
-      body: JSON.stringify({ ok: true, sentTo: TO, bcc: BCC, count: group.items.length }),
+      body: JSON.stringify({
+        ok: true,
+        sentTo: TO,
+        cc: CC,
+        bcc: BCC,
+        count: group.items.length,
+      }),
     };
   } catch (err) {
+    console.error("send-manager-reminder error:", err);
     return { statusCode: 500, body: JSON.stringify({ ok: false, error: err.message }) };
   }
 };
