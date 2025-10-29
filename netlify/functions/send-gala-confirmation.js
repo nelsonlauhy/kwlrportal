@@ -80,10 +80,10 @@ export const handler = async (event) => {
     await transporter.sendMail({
       from: `KW Living Realty <${process.env.O365_USER}>`,
       to: email,
-      subject: "2025 Xmas Gala Registration Confirmation",
+      subject: "45th Christmas Gala Registration Confirmation",
       text:
         `Hi ${agentName},\n\n` +
-        `Thank you for registering for the 2025 Xmas Gala.\n\n` +
+        `Thank you for registering for the 45th Christmas Gala.\n\n` +
         `Branch: ${branch}\n` +
         `Submission Ref: ${submissionId}\n` +
         `\n` +
@@ -95,7 +95,7 @@ export const handler = async (event) => {
         `We will follow up with details closer to the event.\n\n— KW Living Realty`,
       html:
         `<p>Hi ${agentName},</p>` +
-        `<p>Thank you for registering for the <strong>2025 Xmas Gala</strong>.</p>` +
+        `<p>Thank you for registering for the <strong>45th Christmas Gala</strong>.</p>` +
         `<p><strong>Branch:</strong> ${branch}<br/><strong>Submission Ref:</strong> ${submissionId}</p>` +
         `<p><strong>Your Meal Preferences</strong>:</p>${fmtDiet(registrantDiet)}` +
         `<p><strong>Guest(s)</strong>:</p>${guestListHtml}` +
