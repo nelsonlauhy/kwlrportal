@@ -5,10 +5,10 @@ import nodemailer from "nodemailer";
  * Expected POST body:
  * {
  *   group: {
- *     agentNo: string,              // 支援多種欄位名稱，見 getAgentNo()
+ *     agentNo: string,
  *     agentName?: string,
- *     agentEmail?: string,          // 不會用於寄件（測試階段只寄到 itsupport）
- *     agentViewUrl?: string,        // e.g. https://lridocreview.netlify.app/kwdocreviewagent.html?agentno=M234
+ *     agentEmail?: string,
+ *     agentViewUrl?: string,
  *     items: Array<{ tradeNo?: string, branchName?: string }>
  *   }
  * }
@@ -16,10 +16,6 @@ import nodemailer from "nodemailer";
 
 function esc(s) {
   return (s == null ? "" : String(s)).trim();
-}
-
-function getAgentNo(g) {
-  return g?.agentNo ?? g?.agentno ?? g?.agentID ?? g?.agentId ?? "";
 }
 
 function rowsHtml(items = []) {
@@ -61,18 +57,17 @@ export const handler = async (event) => {
       return {
         statusCode: 400,
         body:
-          "Invalid payload: { group: { agentNo, agentName?, agentEmail?, agentViewUrl?, items:[] } } required",
+          "Invalid payload: { group: { agentEmail?, agentViewUrl?, items:[] } } required",
       };
     }
 
-    const agentNo = esc(getAgentNo(group));
-    const agentName = esc(group.agentName);
+    const agentEmail = esc(group.agentEmail);
     const agentViewUrl = esc(group.agentViewUrl);
+    const greet = "Hello,";
 
-    const greet = agentName ? `Hi ${agentName},` : "Hello,";
-    const subject = `[Reminder] Pending Agent Review — Agent ${agentNo || "(Unknown)"} (${group.items.length})`;
+    const subject = `[Reminder] Pending Trade Record Review (${group.items.length})`;
 
-    // Office 365 Transport
+    // Office 365 SMTP
     const transporter = nodemailer.createTransport({
       host: "smtp.office365.com",
       port: 587,
@@ -84,21 +79,20 @@ export const handler = async (event) => {
       requireTLS: true,
     });
 
-    // --- Recipients (TESTING) ---
-    // 只寄到 IT Support，避免在測試階段打擾代理
-    const TO = "itsupport@livingrealtykw.com";
-    const CC = "";  // 如需副本可加入 e.g. "accounting@livingrealtykw.com"
-    const BCC = ""; // 測試期可留空
+    // Recipients (Production)
+    const TO = agentEmail || "itsupport@livingrealtykw.com"; // safety fallback
+    const CC = "accounting@livingrealtykw.com";
+    const BCC = "itsupport@livingrealtykw.com";
     const FROM = `KW Living Realty <${process.env.O365_USER}>`;
 
     const openLinkHtml = agentViewUrl
-      ? `<p><a href="${agentViewUrl}" target="_blank" style="color:#0d6efd;">Open Agent View</a></p>`
+      ? `<p><a href="${agentViewUrl}" target="_blank" style="color:#0d6efd;">Open Trade Review</a></p>`
       : "";
 
     const html = `
       <div style="font:14px/1.45 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;color:#111;">
         <p>${greet}</p>
-        <p>This is a scheduled system reminder for <strong>Agent ${esc(agentNo || "(Unknown)")}</strong> with pending trade records requiring review and approval.</p>
+        <p>This is a system reminder for your pending trade records that require your review and approval.</p>
         ${openLinkHtml}
 
         <table style="border-collapse:collapse;width:100%;max-width:760px;margin:10px 0;border:1px solid #eee;font-size:12px;line-height:1.2;">
@@ -114,23 +108,25 @@ export const handler = async (event) => {
         </table>
 
         <p style="color:#6c757d;font-size:12px;margin-top:12px;">
-          This is a scheduled system email (TESTING mode: sent to IT Support). Please do not reply to this message.
+          If there is any problem, please contact 
+          <a href="mailto:accounting@livingrealtykw.com" style="color:#0d6efd;">accounting@livingrealtykw.com</a>.
         </p>
       </div>
     `;
 
     const text =
-        `${greet}\n\n` +
-        `This is a scheduled system reminder for ${agentName || "(Unknown Agent)"}${agentNo ? ` (Agent ${agentNo})` : ""} with pending trade records requiring review.\n` +
-        (agentViewUrl ? `Agent View: ${agentViewUrl}\n\n` : `\n`) +
-        `Items:\n${rowsText(group.items)}\n\n` +
-        `This is a scheduled system email (TESTING mode: sent to IT Support). Please do not reply.\n`;
+      `${greet}\n\n` +
+      `This is a system reminder for your pending trade records that require your review and approval.\n` +
+      (agentViewUrl ? `Trade Review Link: ${agentViewUrl}\n\n` : `\n`) +
+      `Items:\n${rowsText(group.items)}\n\n` +
+      `This is a scheduled system email. Please do not reply.\n` +
+      `For questions, contact accounting@livingrealtykw.com.\n`;
 
     await transporter.sendMail({
       from: FROM,
       to: TO,
-      cc: CC || undefined,
-      bcc: BCC || undefined,
+      cc: CC,
+      bcc: BCC,
       subject,
       text,
       html,
@@ -141,8 +137,9 @@ export const handler = async (event) => {
       body: JSON.stringify({
         ok: true,
         sentTo: TO,
+        cc: CC,
+        bcc: BCC,
         count: group.items.length,
-        agentNo,
       }),
     };
   } catch (err) {
