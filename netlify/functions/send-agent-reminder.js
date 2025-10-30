@@ -120,11 +120,11 @@ export const handler = async (event) => {
     `;
 
     const text =
-      `${greet}\n\n` +
-      `This is a scheduled system reminder for Agent ${agentNo || "(Unknown)"} with pending trade records requiring review.\n` +
-      (agentViewUrl ? `Agent View: ${agentViewUrl}\n\n` : `\n`) +
-      `Items:\n${rowsText(group.items)}\n\n` +
-      `This is a scheduled system email (TESTING mode: sent to IT Support). Please do not reply.\n`;
+        `${greet}\n\n` +
+        `This is a scheduled system reminder for ${agentName || "(Unknown Agent)"}${agentNo ? ` (Agent ${agentNo})` : ""} with pending trade records requiring review.\n` +
+        (agentViewUrl ? `Agent View: ${agentViewUrl}\n\n` : `\n`) +
+        `Items:\n${rowsText(group.items)}\n\n` +
+        `This is a scheduled system email (TESTING mode: sent to IT Support). Please do not reply.\n`;
 
     await transporter.sendMail({
       from: FROM,
