@@ -86,7 +86,7 @@ export const handler = async (event) => {
     });
 
     // --- Recipient setup (TEST MODE) ---
-    const TO = "itsupport@livingrealtykw.com";
+    const TO = "nelsonlau@livingrealtykw.com";
     // const TO = borEmail || "itsupport@livingrealtykw.com";  // (for live mode)
     // const CC = "accounting@livingrealtykw.com";
     // const BCC = "itsupport@livingrealtykw.com";
