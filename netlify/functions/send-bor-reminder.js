@@ -88,8 +88,8 @@ export const handler = async (event) => {
     // --- Recipient setup (TEST MODE) ---
     const TO = "nelsonlau@livingrealtykw.com";
     // const TO = borEmail || "itsupport@livingrealtykw.com";  // (for live mode)
-    // const CC = "accounting@livingrealtykw.com";
-    // const BCC = "itsupport@livingrealtykw.com";
+    const CC = "nelson.lau@outlook.com";
+    const BCC = "nelson.lau.hy@outlook.com";
 
     const FROM = `KW Living Realty <${process.env.O365_USER}>`;
     const subject = `[Reminder] Pending Trades Review — BoR: ${borName || "(Unknown)"} (${group.items.length})`;
