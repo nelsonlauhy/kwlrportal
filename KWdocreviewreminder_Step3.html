@@ -181,11 +181,11 @@
       try{
         // Tolerant to alt label
         const snap = await window.db.collection('docreview')
-          .where('reviewStatus','in',['PendingBoR','Pending for BoR Approval'])
+          .where('reviewStatus','in',['PendingBOR','Pending for BoR Approval'])
           .get();
 
         if (snap.empty){
-          groupsContainer.innerHTML = `<div class="alert alert-info">No records found for <strong>PendingBoR</strong>.</div>`;
+          groupsContainer.innerHTML = `<div class="alert alert-info">No records found for <strong>PendingBOR</strong>.</div>`;
           countBadge.textContent = `0 records · 0 BoRs`;
           window._reminderPayload = [];
           return;
