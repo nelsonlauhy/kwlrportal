@@ -45,7 +45,6 @@ function rowsText(items = []) {
 }
 
 export const handler = async (event) => {
-  // Simple ping
   if (event.httpMethod === "GET") {
     return { statusCode: 200, body: JSON.stringify({ ok: true, ts: Date.now() }) };
   }
@@ -69,9 +68,9 @@ export const handler = async (event) => {
     const borEmail = esc(group.borEmail);
     const greet = borName ? `Hi ${borName},` : "Hello,";
 
-    // --- Review link ---
+    // Review link
     const link = borEmail
-      ? `https://lridocreview.netlify.app/kwdocreviewbor.html?borEmail=${encodeURIComponent(borEmail)}`
+      ? `https://lridocreview.netlify.app/kwdocreviewbor.html?boremail=${encodeURIComponent(borEmail)}`
       : "";
 
     const transporter = nodemailer.createTransport({
@@ -85,12 +84,8 @@ export const handler = async (event) => {
       requireTLS: true,
     });
 
-    // --- Recipient setup (TEST MODE) ---
-    const TO = "itsupport@livingrealtykw.com";
-    // const TO = borEmail || "itsupport@livingrealtykw.com";  // (for live mode)
-    // const CC = "accounting@livingrealtykw.com";
-    // const BCC = "itsupport@livingrealtykw.com";
-
+    // Recipients (send directly to BoR; fallback to IT if email missing)
+    const TO = borEmail || "itsupport@livingrealtykw.com";
     const FROM = `KW Living Realty <${process.env.O365_USER}>`;
     const subject = `[Reminder] Pending Trades Review — BoR: ${borName || "(Unknown)"} (${group.items.length})`;
 
@@ -133,17 +128,13 @@ export const handler = async (event) => {
       `This is a scheduled system email. Please do not reply.\n` +
       `If there is any problem, contact accounting@livingrealtykw.com.\n`;
 
-    const mailOptions = {
+    await transporter.sendMail({
       from: FROM,
       to: TO,
       subject,
       text,
       html,
-      // cc: CC,   // (remarked for testing)
-      // bcc: BCC, // (remarked for testing)
-    };
-
-    await transporter.sendMail(mailOptions);
+    });
 
     return {
       statusCode: 200,
