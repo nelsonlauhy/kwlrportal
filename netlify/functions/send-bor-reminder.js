@@ -71,7 +71,7 @@ export const handler = async (event) => {
 
     // --- Review link ---
     const link = borEmail
-      ? `https://lridocreview.netlify.app/kwdocreviewbor.html?boremail=${encodeURIComponent(borEmail)}`
+      ? `https://lridocreview.netlify.app/kwdocreviewbor.html?borEmail=${encodeURIComponent(borEmail)}`
       : "";
 
     const transporter = nodemailer.createTransport({
@@ -86,10 +86,10 @@ export const handler = async (event) => {
     });
 
     // --- Recipient setup (TEST MODE) ---
-    //const TO = "itsupport@livingrealtykw.com";
-    const TO = borEmail || "itsupport@livingrealtykw.com";  // (for live mode)
-    const CC = "accounting@livingrealtykw.com";
-    const BCC = "itsupport@livingrealtykw.com";
+    const TO = "itsupport@livingrealtykw.com";
+    // const TO = borEmail || "itsupport@livingrealtykw.com";  // (for live mode)
+    // const CC = "accounting@livingrealtykw.com";
+    // const BCC = "itsupport@livingrealtykw.com";
 
     const FROM = `KW Living Realty <${process.env.O365_USER}>`;
     const subject = `[Reminder] Pending Trades Review — BoR: ${borName || "(Unknown)"} (${group.items.length})`;
@@ -139,8 +139,8 @@ export const handler = async (event) => {
       subject,
       text,
       html,
-      // cc: CC,   // (remarked for testing)
-      // bcc: BCC, // (remarked for testing)
+      cc: CC,   // (remarked for testing)
+      bcc: BCC, // (remarked for testing)
     };
 
     await transporter.sendMail(mailOptions);
