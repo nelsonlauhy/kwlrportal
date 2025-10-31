@@ -71,7 +71,7 @@ export const handler = async (event) => {
 
     // --- Review link ---
     const link = borEmail
-      ? `https://lridocreview.netlify.app/kwdocreviewbor.html?boremail=${encodeURIComponent(borEmail)}`
+      ? `https://lridocreview.netlify.app/kwdocreviewbor.html?borEmail=${encodeURIComponent(borEmail)}`
       : "";
 
     const transporter = nodemailer.createTransport({
