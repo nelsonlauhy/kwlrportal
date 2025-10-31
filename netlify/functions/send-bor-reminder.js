@@ -69,6 +69,11 @@ export const handler = async (event) => {
     const borEmail = esc(group.borEmail);
     const greet = borName ? `Hi ${borName},` : "Hello,";
 
+    // --- Review link ---
+    const link = borEmail
+      ? `https://lridocreview.netlify.app/kwdocreviewbor.html?boremail=${encodeURIComponent(borEmail)}`
+      : "";
+
     const transporter = nodemailer.createTransport({
       host: "smtp.office365.com",
       port: 587,
@@ -81,12 +86,8 @@ export const handler = async (event) => {
     });
 
     // --- Recipient setup (TEST MODE) ---
-    // IMPORTANT: For testing, always send to IT Support.
     const TO = "itsupport@livingrealtykw.com";
-    // When going live, switch to:
-    // const TO = borEmail || "itsupport@livingrealtykw.com";
-
-    // CC/BCC remarked out for testing as requested.
+    // const TO = borEmail || "itsupport@livingrealtykw.com";  // (for live mode)
     // const CC = "accounting@livingrealtykw.com";
     // const BCC = "itsupport@livingrealtykw.com";
 
@@ -97,6 +98,11 @@ export const handler = async (event) => {
       <div style="font:14px/1.45 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;color:#111;">
         <p>${greet}</p>
         <p>This is a scheduled system reminder for <strong>Broker of Record</strong> with pending trade records requiring review and approval.</p>
+        ${
+          link
+            ? `<p><a href="${link}" target="_blank" style="color:#0d6efd;">Open BoR Review Page</a></p>`
+            : ""
+        }
 
         <table style="border-collapse:collapse;width:100%;max-width:760px;margin:10px 0;border:1px solid #eee;font-size:12px;line-height:1.2;">
           <thead>
@@ -121,7 +127,8 @@ export const handler = async (event) => {
 
     const text =
       `${greet}\n\n` +
-      `This is a scheduled system reminder for the Broker of Record with pending trade records requiring review.\n\n` +
+      `This is a scheduled system reminder for the Broker of Record with pending trade records requiring review.\n` +
+      (link ? `BoR Review Page: ${link}\n\n` : "\n") +
       `Items:\n${rowsText(group.items)}\n\n` +
       `This is a scheduled system email. Please do not reply.\n` +
       `If there is any problem, contact accounting@livingrealtykw.com.\n`;
@@ -143,8 +150,7 @@ export const handler = async (event) => {
       body: JSON.stringify({
         ok: true,
         sentTo: TO,
-        // cc: CC,
-        // bcc: BCC,
+        reviewLink: link,
         count: group.items.length,
       }),
     };
