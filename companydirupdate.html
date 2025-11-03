@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="light">
+<head>
+  <meta charset="utf-8" />
+  <title>Company Directory Import</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link
+    href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
+    rel="stylesheet"
+  />
+</head>
+<body class="bg-light">
+  <div class="container py-4">
+    <h1 class="h4 mb-3">Company Directory Import → Firestore</h1>
+    <p class="mb-2">
+      這個工具會從
+      <code>commanydirectorypdf/Company Directory Data 20251103.xlsx</code>
+      的 <strong>ContactData</strong> 工作表讀取 Table2，
+      然後寫入 Firestore collection：<code>companydirectory</code>。
+    </p>
+    <button id="startBtn" class="btn btn-primary mb-3">
+      Start Import
+    </button>
+
+    <div id="status" class="small text-muted mb-2"></div>
+
+    <pre id="log"
+         class="small bg-white p-2 border rounded"
+         style="max-height: 320px; overflow: auto;"></pre>
+  </div>
+
+  <!-- SheetJS for reading Excel -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
+  <!-- Main script -->
+  <script type="module">
+    import { db } from "./js/firebaseConfig.js";
+    import {
+      collection,
+      addDoc
+    } from "https://www.gstatic.com/firebasejs/10.12.3/firebase-firestore.js";
+
+    // Excel 檔案路徑
+    const excelUrl =
+      "commanydirectorypdf/Company Directory Data 20251103.xlsx";
+
+    const startBtn = document.getElementById("startBtn");
+    const statusEl = document.getElementById("status");
+    const logEl = document.getElementById("log");
+
+    function log(msg) {
+      logEl.textContent += msg + "\n";
+    }
+
+    // 依 Officeid 取得 companyCode
+    function getCompanyCode(officeId) {
+      switch (officeId) {
+        case 1:
+        case 2:
+        case 3:
+        case 4:
+        case 5:
+          return "KWLR";
+        case 7:
+          return "ICI";
+        case 8:
+          return "LPI HO";
+        case 9:
+          return "LPI CT";
+        case 11:
+          return "LPI EQ1";
+        case 12:
+          return "LPI EQ2";
+        case 13:
+          return "LPI AT";
+        case 14:
+          return "IHMG";
+        default:
+          return "";
+      }
+    }
+
+    // 依 Officeid 取得 Company
+    function getCompanyName(officeId) {
+      switch (officeId) {
+        case 1:
+        case 2:
+        case 3:
+        case 4:
+        case 5:
+        case 6:
+        case 7:
+          return "KW Living Realty";
+        case 8:
+        case 9:
+        case 10:
+        case 11:
+        case 12:
+        case 13:
+          return "Living Properties";
+        case 14:
+          return "IHMG";
+        default:
+          return "";
+      }
+    }
+
+    startBtn.addEventListener("click", async () => {
+      startBtn.disabled = true;
+      logEl.textContent = "";
+      statusEl.textContent = "Downloading Excel file...";
+
+      try {
+        // 1. 下載 Excel
+        const res = await fetch(excelUrl);
+        if (!res.ok) {
+          throw new Error("Failed to fetch Excel file: HTTP " + res.status);
+        }
+        const arrayBuffer = await res.arrayBuffer();
+        const data = new Uint8Array(arrayBuffer);
+
+        // 2. 讀取工作簿與工作表
+        statusEl.textContent = "Parsing Excel workbook...";
+        const workbook = XLSX.read(data, { type: "array" });
+
+        const sheetName = "ContactData";
+        const worksheet = workbook.Sheets[sheetName];
+        if (!worksheet) {
+          throw new Error("Worksheet 'ContactData' not found in workbook.");
+        }
+
+        // 3. 轉成 JSON；假設 Table2 的第一行是表頭
+        const rows = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
+        if (!rows.length) {
+          throw new Error("No data rows found in 'ContactData'.");
+        }
+
+        statusEl.textContent = `Found ${rows.length} rows. Uploading to Firestore...`;
+        const colRef = collection(db, "companydirectory");
+
+        let successCount = 0;
+
+        for (let i = 0; i < rows.length; i++) {
+          const row = rows[i];
+
+          // 可以視需要調整 skip 條件
+          if (!row.DisplayName && !row.ContactType) {
+            log(`Row ${i + 2}: skipped (no DisplayName / ContactType).`);
+            continue;
+          }
+
+          const officeIdRaw =
+            row.Officeid || row.OfficeId || row.officeid || row.OFFICEID;
+          const officeId = Number(officeIdRaw);
+
+          const docData = {
+            // 1–10：直接對應
+            DisplayOrder: row.DisplayOrder ?? "",
+            ContactType: row.ContactType ?? "",
+            DirectTel: row.DirectTel ?? "",
+            DisplayName: row.DisplayName ?? "",
+            Email: row.Email ?? "",
+            Ext: row.Ext ?? "",
+            OfficeName: row.OfficeName ?? "",
+            PersonalTel: row.PersonalTel ?? "",
+            Title: row.Title ?? "",
+            AgentList: row.AgentList ?? "",
+            // 11: CompanyCode → companyCode (由 Officeid 計算)
+            companyCode: getCompanyCode(officeId),
+            // 12: Officeid → Company (由 Officeid 計算)
+            Company: getCompanyName(officeId)
+          };
+
+          await addDoc(colRef, docData);
+          successCount++;
+
+          if (successCount % 10 === 0) {
+            statusEl.textContent = `Uploaded ${successCount} records...`;
+          }
+        }
+
+        statusEl.textContent = `Done. Uploaded ${successCount} records to Firestore collection "companydirectory".`;
+        log("Import completed successfully.");
+      } catch (err) {
+        console.error(err);
+        statusEl.textContent = "Error: " + err.message;
+        log("Error: " + err.message);
+      } finally {
+        startBtn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
