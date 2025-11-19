@@ -292,6 +292,7 @@
   // ---------- LIST VIEW ----------
   function renderList() {
     if (!filtered.length) {
+      const msg = showPastEvents ? "No past events found." : "No upcoming events match your filters.";
       containerList.innerHTML = `
         <div class="text-center text-muted py-5">
           <i class="bi bi-calendar-x me-2"></i>No upcoming events match your filters.
@@ -666,19 +667,19 @@
     if (typeof unsubscribeEvents === "function") { unsubscribeEvents(); unsubscribeEvents = null; }
 
     const col = window.db.collection("events");
+    let query = col.where("visibility", "==", "public")
+                  .where("status", "==", "published");
 
-    let query = col
-      .where("visibility", "==", "public")
-      .where("status", "==", "published");
+    const now = new Date();
 
     if (showPastEvents) {
-      // Past events: end < now, newest first
-      const now = new Date();
-      query = query.where("end", "<", now).orderBy("end", "desc");
+      // PAST EVENTS: event has already ENDED → end < now
+      query = query.where("end", "<", now)
+                  .orderBy("end", "desc");          // newest finished first
     } else {
-      // Upcoming: start >= now, soonest first
-      const now = new Date();
-      query = query.where("start", ">=", now).orderBy("start", "asc");
+      // UPCOMING EVENTS: event has NOT ended yet → end >= now
+      query = query.where("end", ">=", now)
+                  .orderBy("end", "asc");           // soonest ending first
     }
 
     try {
@@ -686,22 +687,24 @@
         allEvents = snap.docs.map(d => ({ _id: d.id, ...d.data() }));
         applyFilter();
       }, err => {
-        console.warn("Preferred query failed, falling back:", err);
+        console.warn("Query failed, falling back:", err);
         fallbackEventsListener();
       });
     } catch (err) {
-      console.warn("Query setup failed:", err);
+      console.warn("Query setup error:", err);
       fallbackEventsListener();
     }
   }
 
   function fallbackEventsListener() {
     const col = window.db.collection("events");
-    let q = col.orderBy("start");
+    let q = col;
+    const now = new Date();
 
     if (showPastEvents) {
-      const now = new Date();
       q = q.where("end", "<", now).orderBy("end", "desc");
+    } else {
+      q = q.where("end", ">=", now).orderBy("end", "asc");
     }
 
     try {
@@ -711,7 +714,7 @@
         applyFilter();
       });
     } catch (err) {
-      console.error("Fallback listener failed:", err);
+      console.error("Fallback failed:", err);
     }
   }
 
