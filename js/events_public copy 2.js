@@ -73,9 +73,6 @@
   let currentView = "list";
   let cursorDate  = truncateToDay(new Date());
 
-  // ADD THIS NEW STATE
-  let showPastEvents = false;
-
   // registration target
   let regTarget = null;
 
@@ -664,54 +661,43 @@
 
   function attachEventsListener() {
     if (typeof unsubscribeEvents === "function") { unsubscribeEvents(); unsubscribeEvents = null; }
-
-    const col = window.db.collection("events");
-
-    let query = col
-      .where("visibility", "==", "public")
-      .where("status", "==", "published");
-
-    if (showPastEvents) {
-      // Past events: end < now, newest first
-      const now = new Date();
-      query = query.where("end", "<", now).orderBy("end", "desc");
-    } else {
-      // Upcoming: start >= now, soonest first
-      const now = new Date();
-      query = query.where("start", ">=", now).orderBy("start", "asc");
-    }
-
+    const now = new Date(); const col = window.db.collection("events");
     try {
-      unsubscribeEvents = query.onSnapshot(snap => {
-        allEvents = snap.docs.map(d => ({ _id: d.id, ...d.data() }));
-        applyFilter();
-      }, err => {
-        console.warn("Preferred query failed, falling back:", err);
-        fallbackEventsListener();
-      });
-    } catch (err) {
-      console.warn("Query setup failed:", err);
-      fallbackEventsListener();
-    }
+      unsubscribeEvents = col
+        .where("visibility","==","public")
+        .where("status","==","published")
+        .where("start",">=", now)
+        .orderBy("start","asc")
+        .onSnapshot(snap => {
+          allEvents = snap.docs.map(d => ({ _id: d.id, ...d.data() }));
+          applyFilter();
+        }, err => { console.warn("events preferred query error; falling back:", err); fallbackEventsListener(); });
+    } catch (err) { console.warn("events preferred query threw; falling back:", err); fallbackEventsListener(); }
   }
 
   function fallbackEventsListener() {
-    const col = window.db.collection("events");
-    let q = col.orderBy("start");
-
-    if (showPastEvents) {
-      const now = new Date();
-      q = q.where("end", "<", now).orderBy("end", "desc");
-    }
-
+    const now = new Date(); const col = window.db.collection("events");
     try {
-      unsubscribeEvents = q.onSnapshot(snap => {
-        const rows = snap.docs.map(d => ({ _id: d.id, ...d.data() }));
-        allEvents = rows.filter(ev => ev.visibility === "public" && ev.status === "published");
-        applyFilter();
-      });
+      unsubscribeEvents = col
+        .where("start", ">=", now).orderBy("start","asc")
+        .onSnapshot(snap => {
+          const rows = snap.docs.map(d => ({ _id: d.id, ...d.data() } ));
+          allEvents = rows.filter(ev => ev.visibility === "public" && ev.status === "published");
+          applyFilter();
+        }, err => {
+          console.error("events fallback listener failed; trying one-time get:", err);
+          col.where("start", ">=", now).orderBy("start","asc").get().then(snap2 => {
+            const rows2 = snap2.docs.map(d => ({ _id: d.id, ...d.data() } ));
+            allEvents = rows2.filter(ev => ev.visibility === "public" && ev.status === "published");
+            applyFilter();
+          }).catch(err2 => {
+            console.error("events one-time fallback failed:", err2);
+            containerList.innerHTML = `<div class="text-danger py-4 text-center">Failed to load events.</div>`;
+          });
+        });
     } catch (err) {
-      console.error("Fallback listener failed:", err);
+      console.error("events fallback threw:", err);
+      containerList.innerHTML = `<div class="text-danger py-4 text-center">Failed to load events.</div>`;
     }
   }
 
@@ -821,27 +807,5 @@
     btnToday.addEventListener("click", gotoToday);
     btnPrev .addEventListener("click", prevPeriod);
     btnNext .addEventListener("click", nextPeriod);
-
-    // ←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←
-    // PASTE THE TOGGLE LISTENER RIGHT HERE (or just below)
-    document.getElementById("togglePastEvents").addEventListener("change", function(e) {
-      showPastEvents = e.target.checked;
-
-      // Update the top label
-      calLabel.textContent = showPastEvents ? "Past Events" : "Upcoming";
-
-      // Force list view when toggling (best UX)
-      currentView = "list";
-      document.querySelectorAll("#btnMonth,#btnWeek,#btnDay,#btnList")
-        .forEach(b => b.classList.remove("active"));
-      btnList.classList.add("active");
-
-      // Reload events with the new time direction
-      attachEventsListener();
-    });
-
-    // Optional: set initial label correctly (in case you ever default to true)
-    calLabel.textContent = showPastEvents ? "Past Events" : "Upcoming";
-
   });
 })();
