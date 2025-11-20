@@ -22,6 +22,40 @@
     .summaryBox { margin:12px 0; padding:10px; background:#f1f5f9; border:1px solid var(--border); border-radius:12px; font-size:14px; }
     .tag { display:inline-block; padding:2px 8px; border:1px solid var(--border); border-radius:999px; font-size:12px; background:#fff; }
 
+    /* Filter bar */
+    .filterbar {
+      display:flex;
+      flex-wrap:wrap;
+      gap:8px 16px;
+      margin:8px 0 4px;
+      justify-content: space-between;
+      align-items:flex-end;
+    }
+    .filter-group {
+      display:flex;
+      flex-wrap:wrap;
+      gap:12px;
+    }
+    .filter-field {
+      min-width:160px;
+    }
+    .filter-field label {
+      display:block;
+      font-size:12px;
+      color:var(--muted);
+      margin-bottom:3px;
+    }
+    .filter-field select,
+    .filter-field input[type="text"] {
+      width:100%;
+      box-sizing:border-box;
+      border-radius:8px;
+      border:1px solid var(--border);
+      padding:6px 8px;
+      font-size:13px;
+      background:#f9fafb;
+    }
+
     /* Modal */
     .modal {
       position: fixed;
@@ -175,23 +209,81 @@
     }
 
     let currentEdit = null; // { submissionId, originalGuestIds }
+    let allSubs = [];       // cached submissions + guest counts
 
-    // ---------- Load submissions ----------
+    // ---------- Load submissions from Firestore ----------
     async function loadSubmissions(){
       status('Loading…');
       const qref = query(collection(db, 'gala_submissions'), orderBy('createdAt','desc'));
       const snap = await getDocs(qref);
-      const rows = snap.docs.map(d => ({ id:d.id, ...d.data() }));
+      const baseRows = snap.docs.map(d => ({ id:d.id, ...d.data() }));
 
-      let totalRegisters = rows.length;
-      let totalGuests = 0;
-      let totalVegetarian = 0; // registrants + guests
+      allSubs = [];
+      for (const it of baseRows){
+        const subRef = doc(db, 'gala_submissions', it.id);
+        const guestsSnap = await getDocs(fsCollection(subRef, 'guests'));
+
+        let guestCount = guestsSnap.size;
+        let guestVegCount = 0;
+        guestsSnap.forEach(g => { if (g.data()?.vegetarian) guestVegCount++; });
+
+        allSubs.push({
+          ...it,
+          guestCount,
+          guestVegCount
+        });
+      }
+
+      buildBranchFilterOptions();
+      applyFiltersAndRender();
+      status(allSubs.length ? '' : 'No submissions yet.');
+    }
+
+    // ---------- Build Branch dropdown ----------
+    function buildBranchFilterOptions(){
+      const select = document.getElementById('filterBranch');
+      if (!select) return;
+
+      const prev = select.value || '';
+      const branches = Array.from(new Set(
+        allSubs.map(r => (r.branch || '').trim()).filter(Boolean)
+      )).sort((a,b) => a.localeCompare(b));
+
+      select.innerHTML = '<option value="">All branches</option>' +
+        branches.map(b => `<option value="${b}">${b}</option>`).join('');
+
+      if (branches.includes(prev)) {
+        select.value = prev;
+      }
+    }
+
+    // ---------- Apply filters and render table + summary ----------
+    function applyFiltersAndRender(){
+      const branchVal = document.getElementById('filterBranch').value;
+      const agentQuery = document.getElementById('filterAgent').value.trim().toLowerCase();
+
+      let filtered = allSubs.slice();
+
+      if (branchVal) {
+        filtered = filtered.filter(r => (r.branch || '') === branchVal);
+      }
+      if (agentQuery) {
+        filtered = filtered.filter(r =>
+          (r.agentName || '').toLowerCase().includes(agentQuery)
+        );
+      }
 
       const body = tbody();
       body.innerHTML = '';
-      for (const [idx, it] of rows.entries()){
-        // count registrant vegetarian
+
+      let totalRegisters = filtered.length;
+      let totalGuests = 0;
+      let totalVegetarian = 0;
+
+      filtered.forEach((it, idx) => {
         if (it.vegetarian) totalVegetarian++;
+        totalGuests += it.guestCount || 0;
+        totalVegetarian += it.guestVegCount || 0;
 
         const tr = document.createElement('tr');
         tr.innerHTML = `
@@ -212,9 +304,7 @@
 
         const subId = it.id;
         tr.querySelector('.btn-guests').addEventListener('click', () =>
-          toggleGuests(subId, tr, (vegCount) => {
-            totalVegetarian += vegCount; // not used immediately; we recalc after loop
-          })
+          toggleGuests(subId, tr, () => {})
         );
         tr.querySelector('.btn-edit').addEventListener('click', () =>
           openEdit(subId)
@@ -222,19 +312,11 @@
         tr.querySelector('.btn-del').addEventListener('click', () =>
           deleteSubmission(subId)
         );
+      });
 
-        // count guests per submission
-        const guestsSnap = await getDocs(fsCollection(doc(db,'gala_submissions', subId), 'guests'));
-        totalGuests += guestsSnap.size;
-
-        // also accumulate vegetarian from guests in this fast pass
-        guestsSnap.forEach(g => { if (g.data()?.vegetarian) totalVegetarian++; });
-      }
-
+      const totalAll = allSubs.length;
       document.getElementById('summaryTotals').textContent =
-        `Total Registrations: ${totalRegisters} | Total Guests: ${totalGuests} | Combined: ${totalRegisters + totalGuests} | Vegetarian meals (registrants + guests): ${totalVegetarian}`;
-
-      status(rows.length ? '' : 'No submissions yet.');
+        `Total Registrations (filtered): ${totalRegisters} | Total Guests (filtered): ${totalGuests} | Combined: ${totalRegisters + totalGuests} | Vegetarian meals (filtered): ${totalVegetarian} | Showing ${filtered.length} of ${totalAll} registrations.`;
     }
 
     // ---------- Expand/Collapse guests for a submission ----------
@@ -495,6 +577,9 @@
         if (e.target.id === 'editModal') closeEditModal();
       });
 
+      document.getElementById('filterBranch').addEventListener('change', applyFiltersAndRender);
+      document.getElementById('filterAgent').addEventListener('input', applyFiltersAndRender);
+
       loadSubmissions();
     });
   </script>
@@ -503,13 +588,31 @@
   <div class="wrap">
     <header style="margin:0 0 16px;">
       <h1>2025 Xmas Gala — Operations</h1>
-      <div class="muted">View, edit, and export submissions for reporting.</div>
+      <div class="muted">View, filter, edit, and export submissions for reporting.</div>
     </header>
 
     <div class="card">
       <div class="descbox">
-        View all registrations submitted via the staff form. Click “Guests” to see each submission’s guest list (with dietary info).
-        Use “Edit” to adjust registrant / guest details, and “Del” to remove a registration. Use “Export CSV” to download a flattened spreadsheet (one guest per row).
+        View all registrations submitted via the staff form. Use the filters to narrow down by Branch or Agent / Staff name.
+        Click “Guests” to see each submission’s guest list (with dietary info). Use “Edit” to adjust details, and “Del” to remove a registration.
+        “Export CSV” downloads a flattened spreadsheet (one guest per row, all records).
+      </div>
+
+      <!-- Filters -->
+      <div class="filterbar">
+        <div class="filter-group">
+          <div class="filter-field">
+            <label for="filterBranch">Branch</label>
+            <select id="filterBranch">
+              <option value="">All branches</option>
+            </select>
+          </div>
+          <div class="filter-field">
+            <label for="filterAgent">Agent / Staff</label>
+            <input type="text" id="filterAgent" placeholder="Search name…" />
+          </div>
+        </div>
+        <div class="muted" style="font-size:12px;">Filters apply to the table and totals.</div>
       </div>
 
       <div id="summaryTotals" class="summaryBox">Loading totals…</div>
