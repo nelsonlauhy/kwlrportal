@@ -305,6 +305,7 @@
           <td>${fmtDate(it.createdAt) || '—'}</td>
           <td><span class="tag">${yesNo(!!it.vegetarian)}</span></td>
           <td>${it.allergies ? it.allergies : ''}</td>
+          <td>${it.guestCount || 0}</td>
           <td>
             <button class="btn btn-guests" data-id="${it.id}">Guests</button>
             <button class="btn btn-edit" data-id="${it.id}">Edit</button>
@@ -705,6 +706,7 @@
               <th>Created</th>
               <th>Registrant Veg</th>
               <th>Registrant Allergies</th>
+              <th>Total Guests</th>
               <th>Actions</th>
             </tr>
           </thead>
