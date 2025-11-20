@@ -14,13 +14,160 @@
     .descbox { background:#f1f5f9; border:1px solid var(--border); border-radius:12px; padding:12px 14px; font-size:13px; margin:12px 0 16px; line-height:1.4; }
     table { width:100%; border-collapse: collapse; font-size:14px; }
     th, td { text-align:left; border-bottom:1px solid var(--border); padding:10px; vertical-align: top; }
-    .btn { display:inline-flex; align-items:center; gap:8px; padding:8px 12px; border-radius:10px; border:1px solid var(--border); background:#fff; cursor:pointer; }
+    .btn { display:inline-flex; align-items:center; gap:6px; padding:6px 10px; border-radius:10px; border:1px solid var(--border); background:#fff; cursor:pointer; font-size:12px; }
     .btn:hover { background:#f8fafc; }
     .toolbar { display:flex; gap:10px; align-items:center; justify-content: space-between; margin: 0 0 12px; }
     details { background:#fcfdff; border:1px solid var(--border); border-radius:12px; padding:10px 12px; }
     .footer { margin-top: 16px; font-size:12px; color:var(--muted); }
     .summaryBox { margin:12px 0; padding:10px; background:#f1f5f9; border:1px solid var(--border); border-radius:12px; font-size:14px; }
     .tag { display:inline-block; padding:2px 8px; border:1px solid var(--border); border-radius:999px; font-size:12px; background:#fff; }
+
+    /* Filter bar */
+    .filterbar {
+      display:flex;
+      flex-wrap:wrap;
+      gap:8px 16px;
+      margin:8px 0 4px;
+      justify-content: space-between;
+      align-items:flex-end;
+    }
+    .filter-group {
+      display:flex;
+      flex-wrap:wrap;
+      gap:12px;
+    }
+    .filter-field {
+      min-width:160px;
+    }
+    .filter-field label {
+      display:block;
+      font-size:12px;
+      color:var(--muted);
+      margin-bottom:3px;
+    }
+    .filter-field select,
+    .filter-field input[type="text"] {
+      width:100%;
+      box-sizing:border-box;
+      border-radius:8px;
+      border:1px solid var(--border);
+      padding:6px 8px;
+      font-size:13px;
+      background:#f9fafb;
+    }
+
+    /* Modal */
+    .modal {
+      position: fixed;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 50;
+    }
+    .modal.visible { display:flex; }
+    .modal-backdrop {
+      position:absolute;
+      inset:0;
+      background:rgba(15,23,42,.45);
+    }
+    .modal-card {
+      position:relative;
+      background:var(--card);
+      border-radius:16px;
+      box-shadow:0 20px 40px rgba(15,23,42,.25);
+      max-width:720px;
+      width:100%;
+      padding:20px 22px;
+      max-height:80vh;
+      overflow:auto;
+      z-index:1;
+    }
+    .modal-header {
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      margin-bottom:10px;
+    }
+    .modal-header h2 {
+      font-size:18px;
+      margin:0;
+    }
+    .modal-close {
+      border:none;
+      background:transparent;
+      font-size:18px;
+      cursor:pointer;
+      padding:4px 6px;
+    }
+    .form-grid {
+      display:grid;
+      grid-template-columns: repeat(auto-fit,minmax(200px,1fr));
+      gap:10px 16px;
+      margin-bottom:12px;
+    }
+    .field label {
+      display:block;
+      font-size:12px;
+      color:var(--muted);
+      margin-bottom:3px;
+    }
+    .field input[type="text"],
+    .field input[type="email"] {
+      width:100%;
+      box-sizing:border-box;
+      border-radius:8px;
+      border:1px solid var(--border);
+      padding:6px 8px;
+      font-size:13px;
+      background:#f9fafb;
+    }
+    .field textarea {
+      width:100%;
+      box-sizing:border-box;
+      border-radius:8px;
+      border:1px solid var(--border);
+      padding:6px 8px;
+      font-size:13px;
+      background:#f9fafb;
+      min-height:52px;
+      resize:vertical;
+    }
+    .field-inline {
+      display:flex;
+      align-items:center;
+      gap:6px;
+      margin-bottom:8px;
+      font-size:13px;
+    }
+    .modal-table th,
+    .modal-table td {
+      padding:6px 8px;
+      font-size:12px;
+    }
+    .modal-actions {
+      display:flex;
+      justify-content:flex-end;
+      gap:8px;
+      margin-top:12px;
+    }
+    .btn-danger {
+      border-color:#fecaca;
+      background:#fef2f2;
+    }
+    .btn-danger:hover {
+      background:#fee2e2;
+    }
+    .guest-header-row {
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      margin:12px 0 4px;
+    }
+    .guest-header-row h3 {
+      font-size:15px;
+      margin:0;
+    }
   </style>
 
   <!-- Firebase CDN v10 (modular) -->
@@ -33,7 +180,12 @@
       orderBy,
       query,
       doc,
-      collection as fsCollection
+      collection as fsCollection,
+      getDoc,
+      updateDoc,
+      deleteDoc,
+      writeBatch,
+      addDoc
     } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
     // === Firebase config (same project as galareg.html) ===
@@ -52,7 +204,9 @@
 
     // ---------- Helpers ----------
     const tbody = () => document.querySelector('#subsBody');
-    const status = (msg) => document.querySelector('#status').textContent = msg || '';
+    const status = (msg) => {
+      document.querySelector('#status').textContent = msg || '';
+    };
 
     function fmtDate(ts){
       return ts?.toDate ? ts.toDate().toLocaleString() : '';
@@ -65,22 +219,82 @@
       return `"${s}"`;
     }
 
-    // ---------- Load submissions ----------
+    let currentEdit = null; // { submissionId, originalGuestIds }
+    let allSubs = [];       // cached submissions + guest counts
+
+    // ---------- Load submissions from Firestore ----------
     async function loadSubmissions(){
       status('Loading…');
       const qref = query(collection(db, 'gala_submissions'), orderBy('createdAt','desc'));
       const snap = await getDocs(qref);
-      const rows = snap.docs.map(d => ({ id:d.id, ...d.data() }));
+      const baseRows = snap.docs.map(d => ({ id:d.id, ...d.data() }));
 
-      let totalRegisters = rows.length;
-      let totalGuests = 0;
-      let totalVegetarian = 0; // registrants + guests
+      allSubs = [];
+      for (const it of baseRows){
+        const subRef = doc(db, 'gala_submissions', it.id);
+        const guestsSnap = await getDocs(fsCollection(subRef, 'guests'));
+
+        let guestCount = guestsSnap.size;
+        let guestVegCount = 0;
+        guestsSnap.forEach(g => { if (g.data()?.vegetarian) guestVegCount++; });
+
+        allSubs.push({
+          ...it,
+          guestCount,
+          guestVegCount
+        });
+      }
+
+      buildBranchFilterOptions();
+      applyFiltersAndRender();
+      status(allSubs.length ? '' : 'No submissions yet.');
+    }
+
+    // ---------- Build Branch dropdown ----------
+    function buildBranchFilterOptions(){
+      const select = document.getElementById('filterBranch');
+      if (!select) return;
+
+      const prev = select.value || '';
+      const branches = Array.from(new Set(
+        allSubs.map(r => (r.branch || '').trim()).filter(Boolean)
+      )).sort((a,b) => a.localeCompare(b));
+
+      select.innerHTML = '<option value="">All branches</option>' +
+        branches.map(b => `<option value="${b}">${b}</option>`).join('');
+
+      if (branches.includes(prev)) {
+        select.value = prev;
+      }
+    }
+
+    // ---------- Apply filters and render table + summary ----------
+    function applyFiltersAndRender(){
+      const branchVal = document.getElementById('filterBranch').value;
+      const agentQuery = document.getElementById('filterAgent').value.trim().toLowerCase();
+
+      let filtered = allSubs.slice();
+
+      if (branchVal) {
+        filtered = filtered.filter(r => (r.branch || '') === branchVal);
+      }
+      if (agentQuery) {
+        filtered = filtered.filter(r =>
+          (r.agentName || '').toLowerCase().includes(agentQuery)
+        );
+      }
 
       const body = tbody();
       body.innerHTML = '';
-      for (const [idx, it] of rows.entries()){
-        // count registrant vegetarian
+
+      let totalRegisters = filtered.length;
+      let totalGuests = 0;
+      let totalVegetarian = 0;
+
+      filtered.forEach((it, idx) => {
         if (it.vegetarian) totalVegetarian++;
+        totalGuests += it.guestCount || 0;
+        totalVegetarian += it.guestVegCount || 0;
 
         const tr = document.createElement('tr');
         tr.innerHTML = `
@@ -91,27 +305,29 @@
           <td>${fmtDate(it.createdAt) || '—'}</td>
           <td><span class="tag">${yesNo(!!it.vegetarian)}</span></td>
           <td>${it.allergies ? it.allergies : ''}</td>
-          <td><button class="btn" data-id="${it.id}">View</button></td>
+          <td>
+            <button class="btn btn-guests" data-id="${it.id}">Guests</button>
+            <button class="btn btn-edit" data-id="${it.id}">Edit</button>
+            <button class="btn btn-danger btn-del" data-id="${it.id}">Del</button>
+          </td>
         `;
         body.appendChild(tr);
-        tr.querySelector('button').addEventListener('click', () => toggleGuests(it.id, tr, (vegCount) => {
-          // callback to add guest vegetarian count when loaded
-          totalVegetarian += vegCount;
-          // we don't rewrite summary here to avoid flicker; totals updated at end after first pass
-        }));
 
-        // count guests per submission
-        const guestsSnap = await getDocs(fsCollection(doc(db,'gala_submissions', it.id), 'guests'));
-        totalGuests += guestsSnap.size;
+        const subId = it.id;
+        tr.querySelector('.btn-guests').addEventListener('click', () =>
+          toggleGuests(subId, tr, () => {})
+        );
+        tr.querySelector('.btn-edit').addEventListener('click', () =>
+          openEdit(subId)
+        );
+        tr.querySelector('.btn-del').addEventListener('click', () =>
+          deleteSubmission(subId)
+        );
+      });
 
-        // also accumulate vegetarian from guests in this fast pass
-        guestsSnap.forEach(g => { if (g.data()?.vegetarian) totalVegetarian++; });
-      }
-
+      const totalAll = allSubs.length;
       document.getElementById('summaryTotals').textContent =
-        `Total Registrations: ${totalRegisters} | Total Guests: ${totalGuests} | Combined: ${totalRegisters + totalGuests} | Vegetarian meals (registrants + guests): ${totalVegetarian}`;
-
-      status(rows.length ? '' : 'No submissions yet.');
+        `Total Registrations (filtered): ${totalRegisters} | Total Guests (filtered): ${totalGuests} | Combined: ${totalRegisters + totalGuests} | Vegetarian meals (filtered): ${totalVegetarian} | Showing ${filtered.length} of ${totalAll} registrations.`;
     }
 
     // ---------- Expand/Collapse guests for a submission ----------
@@ -166,6 +382,210 @@
       }
     }
 
+    // ---------- Open Edit Modal ----------
+    async function openEdit(submissionId){
+      try {
+        status('Loading record…');
+        const subRef = doc(db,'gala_submissions', submissionId);
+        const subSnap = await getDoc(subRef);
+        if (!subSnap.exists()) {
+          alert('Record not found.');
+          status('');
+          return;
+        }
+        const subData = { id: subSnap.id, ...subSnap.data() };
+
+        const guestsSnap = await getDocs(fsCollection(subRef, 'guests'));
+        const guests = guestsSnap.docs.map(d => ({ id:d.id, ...d.data() }));
+
+        currentEdit = {
+          submissionId,
+          originalGuestIds: guests.map(g => g.id)
+        };
+
+        // Fill registrant fields
+        document.getElementById('edit_agentName').value = subData.agentName || '';
+        document.getElementById('edit_branch').value = subData.branch || '';
+        document.getElementById('edit_email').value = subData.email || '';
+        document.getElementById('edit_vegetarian').checked = !!subData.vegetarian;
+        document.getElementById('edit_allergies').value = subData.allergies || '';
+
+        // Fill guests table
+        const gBody = document.getElementById('editGuestsBody');
+        gBody.innerHTML = '';
+        guests.forEach(g => {
+          const tr = createGuestRow({
+            id: g.id,
+            firstName: g.firstName || '',
+            lastName: g.lastName || '',
+            vegetarian: !!g.vegetarian,
+            allergies: g.allergies || ''
+          });
+          gBody.appendChild(tr);
+        });
+
+        document.getElementById('editGuestsEmpty').style.display = guests.length ? 'none' : 'block';
+
+        document.getElementById('editModal').classList.add('visible');
+        status('');
+      } catch (err) {
+        console.error(err);
+        alert('Failed to load record for editing.');
+        status('');
+      }
+    }
+
+    function closeEditModal(){
+      const modal = document.getElementById('editModal');
+      modal.classList.remove('visible');
+      currentEdit = null;
+    }
+
+    // ---------- Helper to create a guest row ----------
+    function createGuestRow(guest){
+      const { id, firstName, lastName, vegetarian, allergies } = guest || {};
+      const tr = document.createElement('tr');
+      if (id) tr.dataset.gid = id; // existing guest; new ones will have no gid
+
+      tr.innerHTML = `
+        <td><input class="g-first" type="text" value="${firstName || ''}"></td>
+        <td><input class="g-last" type="text" value="${lastName || ''}"></td>
+        <td style="text-align:center;"><input class="g-veg" type="checkbox" ${vegetarian ? 'checked' : ''}></td>
+        <td><input class="g-all" type="text" value="${allergies || ''}"></td>
+        <td><button type="button" class="btn btn-danger btn-gdel">Del</button></td>
+      `;
+
+      tr.querySelector('.btn-gdel').addEventListener('click', () => {
+        const gBody = document.getElementById('editGuestsBody');
+        if (confirm('Delete this guest from this registration?')) {
+          tr.remove();
+          if (!gBody.querySelector('tr')) {
+            document.getElementById('editGuestsEmpty').style.display = 'block';
+          }
+        }
+      });
+
+      return tr;
+    }
+
+    // ---------- Add a new guest row (in modal only, not yet in Firestore) ----------
+    function addGuestRow(){
+      const gBody = document.getElementById('editGuestsBody');
+      const row = createGuestRow({
+        id: null,
+        firstName: '',
+        lastName: '',
+        vegetarian: false,
+        allergies: ''
+      });
+      gBody.appendChild(row);
+      document.getElementById('editGuestsEmpty').style.display = 'none';
+    }
+
+    // ---------- Save Edit ----------
+    async function saveEdit(){
+      if (!currentEdit) return;
+      const subId = currentEdit.submissionId;
+      const subRef = doc(db,'gala_submissions', subId);
+
+      const payload = {
+        agentName: document.getElementById('edit_agentName').value.trim(),
+        branch: document.getElementById('edit_branch').value.trim(),
+        email: document.getElementById('edit_email').value.trim(),
+        vegetarian: document.getElementById('edit_vegetarian').checked,
+        allergies: document.getElementById('edit_allergies').value.trim()
+      };
+
+      try {
+        status('Saving changes…');
+        await updateDoc(subRef, payload);
+
+        // Guests update / create / delete
+        const gBody = document.getElementById('editGuestsBody');
+        const rows = Array.from(gBody.querySelectorAll('tr'));
+        const keepIds = [];
+        const newGuests = [];
+
+        for (const row of rows){
+          const gid = row.dataset.gid;
+          const fn = row.querySelector('.g-first').value.trim();
+          const ln = row.querySelector('.g-last').value.trim();
+          const veg = row.querySelector('.g-veg').checked;
+          const all = row.querySelector('.g-all').value.trim();
+
+          // if completely empty new row, skip
+          const isEmpty = !fn && !ln && !veg && !all;
+          if (!gid && isEmpty) {
+            continue;
+          }
+
+          if (gid) {
+            // existing guest -> update
+            keepIds.push(gid);
+            const gRef = doc(db,'gala_submissions', subId, 'guests', gid);
+            await updateDoc(gRef, {
+              firstName: fn,
+              lastName: ln,
+              vegetarian: veg,
+              allergies: all
+            });
+          } else {
+            // new guest -> create
+            newGuests.push({
+              firstName: fn,
+              lastName: ln,
+              vegetarian: veg,
+              allergies: all
+            });
+          }
+        }
+
+        // create new guest docs
+        for (const g of newGuests){
+          await addDoc(fsCollection(subRef, 'guests'), g);
+        }
+
+        // delete removed guests
+        const originalIds = currentEdit.originalGuestIds || [];
+        const toDelete = originalIds.filter(id => !keepIds.includes(id));
+        for (const gid of toDelete){
+          await deleteDoc(doc(db,'gala_submissions', subId, 'guests', gid));
+        }
+
+        closeEditModal();
+        await loadSubmissions();
+        status('Changes saved.');
+      } catch (err) {
+        console.error(err);
+        alert('Failed to save changes.');
+        status('');
+      }
+    }
+
+    // ---------- Delete whole submission ----------
+    async function deleteSubmission(submissionId){
+      if (!confirm('Delete this registration and all its guests? This cannot be undone.')) return;
+
+      try {
+        status('Deleting…');
+
+        const subRef = doc(db,'gala_submissions', submissionId);
+        const guestsSnap = await getDocs(fsCollection(subRef, 'guests'));
+
+        const batch = writeBatch(db);
+        guestsSnap.forEach(gdoc => batch.delete(gdoc.ref));
+        batch.delete(subRef);
+
+        await batch.commit();
+        await loadSubmissions();
+        status('Registration deleted.');
+      } catch (err) {
+        console.error(err);
+        alert('Failed to delete registration.');
+        status('');
+      }
+    }
+
     // ---------- Export CSV (flattened: one guest per row) ----------
     async function exportCSV(){
       status('Exporting CSV…');
@@ -209,13 +629,26 @@
       a.download = `xmas_gala_submissions_${ts}.csv`;
       document.body.appendChild(a); a.click(); a.remove();
       URL.revokeObjectURL(url);
-      status(''); // clear
+      status('');
     }
 
     // ---------- Init ----------
     document.addEventListener('DOMContentLoaded', () => {
       document.getElementById('refresh').addEventListener('click', loadSubmissions);
       document.getElementById('export').addEventListener('click', exportCSV);
+
+      document.getElementById('editSave').addEventListener('click', saveEdit);
+      document.getElementById('editCancel').addEventListener('click', closeEditModal);
+      document.getElementById('editClose').addEventListener('click', closeEditModal);
+      document.getElementById('editModal').addEventListener('click', (e) => {
+        if (e.target.id === 'editModal') closeEditModal();
+      });
+
+      document.getElementById('filterBranch').addEventListener('change', applyFiltersAndRender);
+      document.getElementById('filterAgent').addEventListener('input', applyFiltersAndRender);
+
+      document.getElementById('addGuestBtn').addEventListener('click', addGuestRow);
+
       loadSubmissions();
     });
   </script>
@@ -224,12 +657,31 @@
   <div class="wrap">
     <header style="margin:0 0 16px;">
       <h1>2025 Xmas Gala — Operations</h1>
-      <div class="muted">View submissions and export a CSV for reporting.</div>
+      <div class="muted">View, filter, edit, and export submissions for reporting.</div>
     </header>
 
     <div class="card">
       <div class="descbox">
-        View all registrations submitted via the staff form. Click “View” to see each submission’s guest list (with dietary info). Use “Export CSV” to download a flattened spreadsheet (one guest per row).
+        View all registrations submitted via the staff form. Use the filters to narrow down by Branch or Agent / Staff name.
+        Click “Guests” to see each submission’s guest list (with dietary info). Use “Edit” to adjust details (including guests), and “Del” to remove a registration.
+        “Export CSV” downloads a flattened spreadsheet (one guest per row, all records).
+      </div>
+
+      <!-- Filters -->
+      <div class="filterbar">
+        <div class="filter-group">
+          <div class="filter-field">
+            <label for="filterBranch">Branch</label>
+            <select id="filterBranch">
+              <option value="">All branches</option>
+            </select>
+          </div>
+          <div class="filter-field">
+            <label for="filterAgent">Agent / Staff</label>
+            <input type="text" id="filterAgent" placeholder="Search name…" />
+          </div>
+        </div>
+        <div class="muted" style="font-size:12px;">Filters apply to the table and totals.</div>
       </div>
 
       <div id="summaryTotals" class="summaryBox">Loading totals…</div>
@@ -253,7 +705,7 @@
               <th>Created</th>
               <th>Registrant Veg</th>
               <th>Registrant Allergies</th>
-              <th>Guests</th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody id="subsBody"></tbody>
@@ -264,6 +716,71 @@
     <div class="footer">© <span id="yr"></span> KW Living Realty</div>
   </div>
 
-  <script>document.getElementById('yr').textContent = new Date().getFullYear();</script>
+  <!-- Edit Modal -->
+  <div class="modal" id="editModal">
+    <div class="modal-backdrop"></div>
+    <div class="modal-card">
+      <div class="modal-header">
+        <h2>Edit Registration</h2>
+        <button type="button" class="modal-close" id="editClose">×</button>
+      </div>
+      <div class="muted" style="margin-bottom:8px;">Update main registrant info and guest dietary details for this registration.</div>
+
+      <div class="form-grid">
+        <div class="field">
+          <label>Agent / Staff Name</label>
+          <input type="text" id="edit_agentName" />
+        </div>
+        <div class="field">
+          <label>Branch</label>
+          <input type="text" id="edit_branch" />
+        </div>
+        <div class="field">
+          <label>Email</label>
+          <input type="email" id="edit_email" />
+        </div>
+        <div class="field">
+          <label>Registrant Allergies</label>
+          <textarea id="edit_allergies"></textarea>
+        </div>
+      </div>
+
+      <div class="field-inline">
+        <input type="checkbox" id="edit_vegetarian" />
+        <label for="edit_vegetarian">Registrant vegetarian meal</label>
+      </div>
+
+      <div class="guest-header-row">
+        <h3>Guests</h3>
+        <button type="button" class="btn" id="addGuestBtn">+ Add guest</button>
+      </div>
+
+      <div id="editGuestsEmpty" class="muted" style="display:none;">No guests for this registration.</div>
+
+      <div style="overflow:auto; margin-top:6px;">
+        <table class="modal-table" style="width:100%; border-collapse:collapse;">
+          <thead>
+            <tr>
+              <th>First Name</th>
+              <th>Last Name</th>
+              <th>Veg</th>
+              <th>Allergies</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="editGuestsBody"></tbody>
+        </table>
+      </div>
+
+      <div class="modal-actions">
+        <button type="button" class="btn" id="editCancel">Cancel</button>
+        <button type="button" class="btn" id="editSave">Save changes</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    document.getElementById('yr').textContent = new Date().getFullYear();
+  </script>
 </body>
 </html>
