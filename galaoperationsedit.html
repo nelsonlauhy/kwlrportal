@@ -158,6 +158,16 @@
     .btn-danger:hover {
       background:#fee2e2;
     }
+    .guest-header-row {
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      margin:12px 0 4px;
+    }
+    .guest-header-row h3 {
+      font-size:15px;
+      margin:0;
+    }
   </style>
 
   <!-- Firebase CDN v10 (modular) -->
@@ -174,7 +184,8 @@
       getDoc,
       updateDoc,
       deleteDoc,
-      writeBatch
+      writeBatch,
+      addDoc
     } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
     // === Firebase config (same project as galareg.html) ===
@@ -403,21 +414,14 @@
         const gBody = document.getElementById('editGuestsBody');
         gBody.innerHTML = '';
         guests.forEach(g => {
-          const tr = document.createElement('tr');
-          tr.dataset.gid = g.id;
-          tr.innerHTML = `
-            <td><input class="g-first" type="text" value="${g.firstName || ''}"></td>
-            <td><input class="g-last" type="text" value="${g.lastName || ''}"></td>
-            <td style="text-align:center;"><input class="g-veg" type="checkbox" ${g.vegetarian ? 'checked' : ''}></td>
-            <td><input class="g-all" type="text" value="${g.allergies || ''}"></td>
-            <td><button type="button" class="btn btn-danger btn-gdel">Del</button></td>
-          `;
-          gBody.appendChild(tr);
-          tr.querySelector('.btn-gdel').addEventListener('click', () => {
-            if (confirm('Delete this guest from this registration?')) {
-              tr.remove();
-            }
+          const tr = createGuestRow({
+            id: g.id,
+            firstName: g.firstName || '',
+            lastName: g.lastName || '',
+            vegetarian: !!g.vegetarian,
+            allergies: g.allergies || ''
           });
+          gBody.appendChild(tr);
         });
 
         document.getElementById('editGuestsEmpty').style.display = guests.length ? 'none' : 'block';
@@ -435,6 +439,47 @@
       const modal = document.getElementById('editModal');
       modal.classList.remove('visible');
       currentEdit = null;
+    }
+
+    // ---------- Helper to create a guest row ----------
+    function createGuestRow(guest){
+      const { id, firstName, lastName, vegetarian, allergies } = guest || {};
+      const tr = document.createElement('tr');
+      if (id) tr.dataset.gid = id; // existing guest; new ones will have no gid
+
+      tr.innerHTML = `
+        <td><input class="g-first" type="text" value="${firstName || ''}"></td>
+        <td><input class="g-last" type="text" value="${lastName || ''}"></td>
+        <td style="text-align:center;"><input class="g-veg" type="checkbox" ${vegetarian ? 'checked' : ''}></td>
+        <td><input class="g-all" type="text" value="${allergies || ''}"></td>
+        <td><button type="button" class="btn btn-danger btn-gdel">Del</button></td>
+      `;
+
+      tr.querySelector('.btn-gdel').addEventListener('click', () => {
+        const gBody = document.getElementById('editGuestsBody');
+        if (confirm('Delete this guest from this registration?')) {
+          tr.remove();
+          if (!gBody.querySelector('tr')) {
+            document.getElementById('editGuestsEmpty').style.display = 'block';
+          }
+        }
+      });
+
+      return tr;
+    }
+
+    // ---------- Add a new guest row (in modal only, not yet in Firestore) ----------
+    function addGuestRow(){
+      const gBody = document.getElementById('editGuestsBody');
+      const row = createGuestRow({
+        id: null,
+        firstName: '',
+        lastName: '',
+        vegetarian: false,
+        allergies: ''
+      });
+      gBody.appendChild(row);
+      document.getElementById('editGuestsEmpty').style.display = 'none';
     }
 
     // ---------- Save Edit ----------
@@ -455,30 +500,52 @@
         status('Saving changes…');
         await updateDoc(subRef, payload);
 
-        // Guests update/delete
+        // Guests update / create / delete
         const gBody = document.getElementById('editGuestsBody');
         const rows = Array.from(gBody.querySelectorAll('tr'));
         const keepIds = [];
+        const newGuests = [];
 
         for (const row of rows){
           const gid = row.dataset.gid;
-          if (!gid) continue;
-          keepIds.push(gid);
-
           const fn = row.querySelector('.g-first').value.trim();
           const ln = row.querySelector('.g-last').value.trim();
           const veg = row.querySelector('.g-veg').checked;
           const all = row.querySelector('.g-all').value.trim();
 
-          const gRef = doc(db,'gala_submissions', subId, 'guests', gid);
-          await updateDoc(gRef, {
-            firstName: fn,
-            lastName: ln,
-            vegetarian: veg,
-            allergies: all
-          });
+          // if completely empty new row, skip
+          const isEmpty = !fn && !ln && !veg && !all;
+          if (!gid && isEmpty) {
+            continue;
+          }
+
+          if (gid) {
+            // existing guest -> update
+            keepIds.push(gid);
+            const gRef = doc(db,'gala_submissions', subId, 'guests', gid);
+            await updateDoc(gRef, {
+              firstName: fn,
+              lastName: ln,
+              vegetarian: veg,
+              allergies: all
+            });
+          } else {
+            // new guest -> create
+            newGuests.push({
+              firstName: fn,
+              lastName: ln,
+              vegetarian: veg,
+              allergies: all
+            });
+          }
         }
 
+        // create new guest docs
+        for (const g of newGuests){
+          await addDoc(fsCollection(subRef, 'guests'), g);
+        }
+
+        // delete removed guests
         const originalIds = currentEdit.originalGuestIds || [];
         const toDelete = originalIds.filter(id => !keepIds.includes(id));
         for (const gid of toDelete){
@@ -580,6 +647,8 @@
       document.getElementById('filterBranch').addEventListener('change', applyFiltersAndRender);
       document.getElementById('filterAgent').addEventListener('input', applyFiltersAndRender);
 
+      document.getElementById('addGuestBtn').addEventListener('click', addGuestRow);
+
       loadSubmissions();
     });
   </script>
@@ -594,7 +663,7 @@
     <div class="card">
       <div class="descbox">
         View all registrations submitted via the staff form. Use the filters to narrow down by Branch or Agent / Staff name.
-        Click “Guests” to see each submission’s guest list (with dietary info). Use “Edit” to adjust details, and “Del” to remove a registration.
+        Click “Guests” to see each submission’s guest list (with dietary info). Use “Edit” to adjust details (including guests), and “Del” to remove a registration.
         “Export CSV” downloads a flattened spreadsheet (one guest per row, all records).
       </div>
 
@@ -681,7 +750,11 @@
         <label for="edit_vegetarian">Registrant vegetarian meal</label>
       </div>
 
-      <h3 style="font-size:15px; margin:12px 0 4px;">Guests</h3>
+      <div class="guest-header-row">
+        <h3>Guests</h3>
+        <button type="button" class="btn" id="addGuestBtn">+ Add guest</button>
+      </div>
+
       <div id="editGuestsEmpty" class="muted" style="display:none;">No guests for this registration.</div>
 
       <div style="overflow:auto; margin-top:6px;">
