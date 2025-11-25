@@ -70,7 +70,7 @@
   const resourceCache = Object.create(null);
 
   // calendar state
-  let currentView = "list";
+  let currentView = "month";
   let cursorDate  = truncateToDay(new Date());
 
   // ADD THIS NEW STATE
