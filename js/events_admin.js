@@ -57,8 +57,14 @@
   const newLocationDetailsWrap= document.getElementById("newLocationDetailsWrap");
   const f_newLocationAddress  = document.getElementById("f_newLocationAddress");
   const f_newLocationOwners   = document.getElementById("f_newLocationOwners");
+
+  // NOTE: these two were removed from latest HTML, so they will be null:
   const f_newLocationMapsUrl  = document.getElementById("f_newLocationMapsUrl");
   const f_newLocationMapsEmbedUrl = document.getElementById("f_newLocationMapsEmbedUrl");
+
+  // New Map Preview (added in latest HTML)
+  const newLocationMapPreviewWrap = document.getElementById("newLocationMapPreviewWrap");
+  const newLocationMapPreview = document.getElementById("newLocationMapPreview");
 
   // Recurrence
   const f_repeat              = document.getElementById("f_repeat");
@@ -108,6 +114,10 @@
   let existingBannerPath = null;
   let existingBannerUrl  = null;
   let flagRemoveBanner   = false;
+
+  // New Location derived maps
+  let derivedMapsUrl = "";
+  let derivedMapsEmbedUrl = "";
 
   // ---------- Storage (force correct bucket) ----------
   const STORAGE_BUCKET_URL = "gs://kwlrintranet.firebasestorage.app";
@@ -231,17 +241,71 @@
     editErrInline.classList.remove("d-none");
   }
 
+  // ---------- New Location: auto-generate maps + preview ----------
+  function buildMapsUrlsFromAddress(address) {
+    const a = (address || "").trim();
+    if (!a) return { mapsUrl: "", mapsEmbedUrl: "" };
+    const q = encodeURIComponent(a);
+    return {
+      mapsUrl: `https://www.google.com/maps?q=${q}`,
+      mapsEmbedUrl: `https://www.google.com/maps?q=${q}&output=embed`
+    };
+  }
+
+  function updateNewLocationMapPreview(address) {
+    const { mapsUrl, mapsEmbedUrl } = buildMapsUrlsFromAddress(address);
+    derivedMapsUrl = mapsUrl;
+    derivedMapsEmbedUrl = mapsEmbedUrl;
+
+    if (newLocationMapPreviewWrap && newLocationMapPreview) {
+      if (mapsEmbedUrl) {
+        newLocationMapPreview.src = mapsEmbedUrl;
+        newLocationMapPreviewWrap.classList.remove("d-none");
+      } else {
+        newLocationMapPreview.src = "";
+        newLocationMapPreviewWrap.classList.add("d-none");
+      }
+    }
+  }
+
+  function debounce(fn, ms = 250) {
+    let t = null;
+    return function (...args) {
+      clearTimeout(t);
+      t = setTimeout(() => fn.apply(this, args), ms);
+    };
+  }
+
+  const debouncedMapUpdate = debounce(() => {
+    updateNewLocationMapPreview(f_newLocationAddress ? f_newLocationAddress.value : "");
+  }, 250);
+
   // ---------- New Location UI toggle ----------
   function toggleNewLocationDetails() {
     if (!newLocationDetailsWrap || !f_newLocationName) return;
     const typed = (f_newLocationName.value || "").trim();
-    if (typed) newLocationDetailsWrap.classList.remove("d-none");
-    else newLocationDetailsWrap.classList.add("d-none");
+    if (typed) {
+      newLocationDetailsWrap.classList.remove("d-none");
+      // show preview if address already present
+      if (f_newLocationAddress) updateNewLocationMapPreview(f_newLocationAddress.value);
+    } else {
+      newLocationDetailsWrap.classList.add("d-none");
+      if (newLocationMapPreviewWrap) newLocationMapPreviewWrap.classList.add("d-none");
+      if (newLocationMapPreview) newLocationMapPreview.src = "";
+      derivedMapsUrl = "";
+      derivedMapsEmbedUrl = "";
+    }
   }
 
   if (f_newLocationName && newLocationDetailsWrap) {
     f_newLocationName.addEventListener("input", toggleNewLocationDetails);
     toggleNewLocationDetails();
+  }
+
+  if (f_newLocationAddress) {
+    f_newLocationAddress.addEventListener("input", () => {
+      debouncedMapUpdate();
+    });
   }
 
   // ---------- Banner URL resolver for list thumbnails ----------
@@ -426,7 +490,7 @@
                   data-title="${esc(e.title || "")}"
                   data-start="${esc(s ? s.toISOString() : "")}"
                   data-end="${esc(ee ? ee.toISOString() : "")}"
-                  data-branch="" 
+                  data-branch=""
                   data-resource="${esc(e.resourceName || "")}"></button>
 
           <button class="btn btn-light btn-sm p-1"
@@ -544,7 +608,6 @@
 
   // ---------- Create/Reuse resource if New Location typed ----------
   async function ensureResourceSelectedOrCreateNew() {
-    // If New Location not enabled in HTML, just behave as old
     const typed = (f_newLocationName && f_newLocationName.value || "").trim();
 
     // New location flow
@@ -559,11 +622,18 @@
       }
 
       const operator = getOperator();
+      const address = (f_newLocationAddress && f_newLocationAddress.value || "").trim();
+
+      // auto-generate maps from address (since fields removed from UI)
+      const auto = buildMapsUrlsFromAddress(address);
+      const mapsUrl = auto.mapsUrl || derivedMapsUrl || "";
+      const mapsEmbedUrl = auto.mapsEmbedUrl || derivedMapsEmbedUrl || "";
+
       const payload = {
         name: typed,
-        address: (f_newLocationAddress && f_newLocationAddress.value || "").trim(),
-        mapsUrl: (f_newLocationMapsUrl && f_newLocationMapsUrl.value || "").trim(),
-        mapsEmbedUrl: (f_newLocationMapsEmbedUrl && f_newLocationMapsEmbedUrl.value || "").trim(),
+        address,
+        mapsUrl,
+        mapsEmbedUrl,
         owners: ((f_newLocationOwners && f_newLocationOwners.value) || DEFAULT_OWNERS).trim(),
 
         capacity: (f_capacity && f_capacity.value !== "" && !isNaN(Number(f_capacity.value))) ? Number(f_capacity.value) : null,
@@ -636,11 +706,17 @@
     if (f_color) f_color.value = "#3b82f6";
 
     // New location defaults
+    derivedMapsUrl = "";
+    derivedMapsEmbedUrl = "";
     if (f_newLocationName) f_newLocationName.value = "";
     if (f_newLocationAddress) f_newLocationAddress.value = "";
     if (f_newLocationOwners) f_newLocationOwners.value = DEFAULT_OWNERS;
-    if (f_newLocationMapsUrl) f_newLocationMapsUrl.value = "";
-    if (f_newLocationMapsEmbedUrl) f_newLocationMapsEmbedUrl.value = "";
+    if (f_newLocationMapsUrl) f_newLocationMapsUrl.value = ""; // likely null
+    if (f_newLocationMapsEmbedUrl) f_newLocationMapsEmbedUrl.value = ""; // likely null
+
+    if (newLocationMapPreviewWrap) newLocationMapPreviewWrap.classList.add("d-none");
+    if (newLocationMapPreview) newLocationMapPreview.src = "";
+
     toggleNewLocationDetails();
 
     // Recurrence defaults
@@ -1252,9 +1328,6 @@
             title,
             description,
             detailDescription: detailDescriptionHtml,
-
-            // Branch removed from Version A
-            // (do not include)
 
             resourceId,
             resourceName,
