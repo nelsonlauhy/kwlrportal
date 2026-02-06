@@ -1,15 +1,20 @@
 // Events Admin (Firestore v8) — O365 operator-enabled
-// Version A (NO schema migration):
-// - Remove Branch from event creation/edit flow (do not write branch on save)
-// - Wording: Resources => Locations (still stored in resources collection)
-// - Allow user to type New Location + details; save into resources collection
-// - Conflict detection: resource-only overlap (index recommended: resourceId + start)
-// - Backward compatible: old events/resources may still have branch field; we just don't use it.
+// - Reads operator from window.KWLR.currentUser injected by events-admin.html guard
+// - Stamps createdBy*/updatedBy* on create/update
+// - List-only with Edit/Create modal
+// - Banner Image (Firebase Storage v8) with preview, validation, upload, remove
+// - detailDescription: auto-link + <br> with live preview (and safe round-trip on edit)
+// - Color tag + tiny swatch in list
+// - Conflict detection (branch + resource overlap)  [index recommended: branch, resourceId, start]
+// - Registration windows (days-before-start) + "Open registration now" auto-calc
+// - Combined filter: Location (Resource-only) + Search
+// - Thumbnails resolved from Storage
+// - Compact icon buttons (Registrations/Edit/Delete/Copy) + "Event Detail Page" hyperlink
+// - Registrations icon now clicks a hidden "proxy" Bootstrap trigger so `relatedTarget` is correct for events_admin_regs.js
 
 (function () {
   // ---------- Constants ----------
   const PUBLIC_EVENT_URL_BASE = "https://intranet.livingrealtykw.com/event_public.html?id=";
-  const DEFAULT_OWNERS = "training@livingrealtykw.com";
 
   // ---------- DOM ----------
   const containerList   = document.getElementById("eventsContainer");
@@ -32,9 +37,7 @@
   // Fields
   const f_title               = document.getElementById("f_title");
   const f_status              = document.getElementById("f_status");
-  // Branch removed in Version A (keep null-safe)
-  const f_branch              = document.getElementById("f_branch"); // may be null after HTML change
-
+  const f_branch              = document.getElementById("f_branch");
   const f_resourceId          = document.getElementById("f_resourceId");
   const f_resourceName        = document.getElementById("f_resourceName");
   const f_start               = document.getElementById("f_start");
@@ -51,14 +54,6 @@
   const f_colorPreset         = document.getElementById("f_colorPreset");
   const f_color               = document.getElementById("f_color");
   const f_regOpenNow          = document.getElementById("f_regOpenNow");
-
-  // New Location fields (Version A)
-  const f_newLocationName     = document.getElementById("f_newLocationName");
-  const newLocationDetailsWrap= document.getElementById("newLocationDetailsWrap");
-  const f_newLocationAddress  = document.getElementById("f_newLocationAddress");
-  const f_newLocationOwners   = document.getElementById("f_newLocationOwners");
-  const f_newLocationMapsUrl  = document.getElementById("f_newLocationMapsUrl");
-  const f_newLocationMapsEmbedUrl = document.getElementById("f_newLocationMapsEmbedUrl");
 
   // Recurrence
   const f_repeat              = document.getElementById("f_repeat");
@@ -87,7 +82,7 @@
   const f_bannerRemove        = document.getElementById("f_bannerRemove");
   const f_bannerMeta          = document.getElementById("f_bannerMeta");
 
-  // Toast (optional) for copy feedback
+  // Toast (optional) for copy feedback (only if you add an element with id="copyToast" in HTML)
   const copyToastEl           = document.getElementById("copyToast");
   const copyToast             = copyToastEl ? new bootstrap.Toast(copyToastEl, { delay: 2000 }) : null;
 
@@ -103,8 +98,8 @@
   let editDetailTouched = false;
 
   // Banner state
-  let pendingBannerFile = null;
-  let pendingBannerMeta = null;
+  let pendingBannerFile = null;  // File selected (not yet uploaded)
+  let pendingBannerMeta = null;  // {width,height,type,size}
   let existingBannerPath = null;
   let existingBannerUrl  = null;
   let flagRemoveBanner   = false;
@@ -118,7 +113,7 @@
 
   try { console.log("[Storage bucket]", storage.ref().toString()); } catch (_) {}
 
-  // ---------- OPERATOR ----------
+  // ---------- OPERATOR (O365 via MSAL guard) ----------
   function getOperator() {
     const msalUser = (window.KWLR && window.KWLR.currentUser) ? window.KWLR.currentUser : null;
     const fbUser   = (firebase.auth && firebase.auth().currentUser) ? firebase.auth().currentUser : null;
@@ -220,28 +215,13 @@
 
   function clearEditErrors() {
     [editErr, editErrInline, editOk].forEach((el) => {
-      if (!el) return;
       el.classList.add("d-none");
       el.textContent = "";
     });
   }
   function showInlineError(msg) {
-    if (!editErrInline) return;
     editErrInline.textContent = msg;
     editErrInline.classList.remove("d-none");
-  }
-
-  // ---------- New Location UI toggle ----------
-  function toggleNewLocationDetails() {
-    if (!newLocationDetailsWrap || !f_newLocationName) return;
-    const typed = (f_newLocationName.value || "").trim();
-    if (typed) newLocationDetailsWrap.classList.remove("d-none");
-    else newLocationDetailsWrap.classList.add("d-none");
-  }
-
-  if (f_newLocationName && newLocationDetailsWrap) {
-    f_newLocationName.addEventListener("input", toggleNewLocationDetails);
-    toggleNewLocationDetails();
   }
 
   // ---------- Banner URL resolver for list thumbnails ----------
@@ -272,20 +252,17 @@
 
   // ---------- Combined Filter ----------
   function applyFilter() {
-    const q = (searchInput?.value || "").toLowerCase().trim();
+    const q = (searchInput.value || "").toLowerCase().trim();
     const locSel = locationFilter?.value || "ALL";
 
     filtered = allEvents.filter((ev) => {
-      // Filter by resourceId (Location)
       if (locSel !== "ALL") {
         if (!locSel.startsWith("RS:")) return false;
         const rid = locSel.slice(3);
         if ((ev.resourceId || "") !== rid) return false;
       }
-
-      // Search (no branch)
       if (q) {
-        const hay = [ev.title, ev.description, ev.resourceName, ev.status, ev.visibility].map((v) =>
+        const hay = [ev.title, ev.description, ev.resourceName, ev.branch].map((v) =>
           (v || "").toString().toLowerCase()
         );
         if (!hay.some((v) => v.includes(q))) return false;
@@ -298,8 +275,6 @@
 
   // ---------- Render ----------
   function renderList() {
-    if (!containerList) return;
-
     if (!filtered.length) {
       containerList.innerHTML = `
         <div class="text-center text-muted py-5">
@@ -307,15 +282,15 @@
         </div>`;
       return;
     }
-
     const groups = {};
     for (const e of filtered) {
       const d = toDate(e.start);
       if (!d) continue;
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-      (groups[key] ||= { label: d.toLocaleString(undefined, { month: "long", year: "numeric" }), events: [] }).events.push(e);
+      (groups[key] ||= { label: d.toLocaleString(undefined, { month: "long", year: "numeric" }), events: [] }).events.push(
+        e
+      );
     }
-
     const parts = [];
     Object.keys(groups)
       .sort()
@@ -324,7 +299,6 @@
         parts.push(`<div class="month-header">${esc(g.label)}</div>`);
         for (const e of g.events) parts.push(renderEventRow(e));
       });
-
     containerList.innerHTML = parts.join("");
 
     // wire actions
@@ -342,7 +316,7 @@
       });
     });
 
-    // registrations icon -> click hidden proxy trigger
+    // registrations icon -> click hidden proxy trigger (ensures relatedTarget is correct)
     containerList.querySelectorAll("[data-action='registrations']").forEach((btn) => {
       btn.addEventListener("click", () => {
         const proxyId = btn.getAttribute("data-proxy");
@@ -373,7 +347,7 @@
     });
   }
 
-  // Share block HTML
+  // Share block HTML (label + hyperlink + copy icon)
   function shareAreaHTML(eid) {
     const url = publicEventUrl(eid);
     return `
@@ -392,7 +366,7 @@
     `;
   }
 
-  // Row renderer (branch removed from badges; keep proxy data-branch blank for compatibility)
+  // Row renderer (includes a hidden PROXY registrations trigger)
   function renderEventRow(e) {
     const s = toDate(e.start), ee = toDate(e.end);
     const dateLine = `${fmtDateTime(s)} – ${fmtDateTime(ee)}`;
@@ -403,7 +377,9 @@
 
     const colorHex = e.color ? normalizeHex(e.color) : null;
     const colorBadge = colorHex
-      ? `<span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:${esc(colorHex)};border:1px solid #cbd5e1;vertical-align:middle;margin-right:.4rem;"></span>`
+      ? `<span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:${esc(
+          colorHex
+        )};border:1px solid #cbd5e1;vertical-align:middle;margin-right:.4rem;"></span>`
       : "";
 
     const thumb = `
@@ -411,13 +387,23 @@
         <i class="bi bi-image"></i>
       </div>`;
 
+    // proxy ID shared between icon and hidden trigger
     const proxyId = `regbtn-${esc(e._id)}`;
 
     const actions = `
       <div class="mt-2 d-flex align-items-center gap-2 flex-wrap">
         ${remainTxt ? `<div class="small text-muted me-1">${esc(remainTxt)}</div>` : ""}
         <div class="d-flex align-items-center gap-1">
-          <!-- hidden proxy trigger -->
+          <!-- visible icon -->
+          <!-- 
+          <button class="btn btn-light btn-sm p-1"
+                  data-action="registrations"
+                  data-proxy="${proxyId}"
+                  data-bs-toggle="tooltip" data-bs-title="Registrations" aria-label="Registrations">
+            <i class="bi bi-people"></i>
+          </button>
+          --> 
+          <!-- hidden proxy trigger: this is what Bootstrap will treat as relatedTarget -->
           <button id="${proxyId}"
                   type="button"
                   class="d-none"
@@ -426,7 +412,7 @@
                   data-title="${esc(e.title || "")}"
                   data-start="${esc(s ? s.toISOString() : "")}"
                   data-end="${esc(ee ? ee.toISOString() : "")}"
-                  data-branch="" 
+                  data-branch="${esc(e.branch || "")}"
                   data-resource="${esc(e.resourceName || "")}"></button>
 
           <button class="btn btn-light btn-sm p-1"
@@ -453,7 +439,8 @@
         <div class="event-meta mt-1">
           <span class="me-2"><i class="bi bi-clock"></i> ${esc(dateLine)}</span>
           ${colorBadge}
-          ${e.resourceName ? `<span class="badge badge-room me-2"><i class="bi bi-geo-alt me-1"></i>${esc(e.resourceName)}</span>` : ""}
+          ${e.resourceName ? `<span class="badge badge-room me-2"><i class="bi bi-building me-1"></i>${esc(e.resourceName)}</span>` : ""}
+          ${e.branch ? `<span class="badge badge-branch me-2">${esc(e.branch)}</span>` : ""}
           <span class="badge text-bg-light border">${esc(e.status || "")}</span>
           <span class="badge text-bg-light border">${esc(e.visibility || "")}</span>
         </div>
@@ -475,43 +462,38 @@
   function populateLocationFilter(resources) {
     if (!locationFilter) return;
     const opts = [`<option value="ALL">All Locations</option>`];
-
-    const byName = [...resources].sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
-    byName.forEach((r) => {
-      const nm = r.name || r.id || "Location";
-      opts.push(`<option value="RS:${esc(r.id)}">${esc(nm)}</option>`);
+    const byBranchThenName = [...resources].sort(
+      (a, b) => String(a.branch || "").localeCompare(String(b.branch || "")) || String(a.name || "").localeCompare(String(b.name || ""))
+    );
+    byBranchThenName.forEach((r) => {
+      const br = (r.branch || "").toUpperCase();
+      const nm = r.name || r.id || "Resource";
+      opts.push(`<option value="RS:${esc(r.id)}">${esc(br)} — ${esc(nm)}</option>`);
     });
-
     locationFilter.innerHTML = opts.join("");
   }
 
   // ---------- Load ----------
   async function loadResources() {
     const col = window.db.collection("resources");
-    let snap;
-
     try {
-      // safest: order by name only
-      snap = await col.orderBy("name", "asc").get();
+      const snap = await col.orderBy("branch", "asc").orderBy("name", "asc").get();
       resources = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
     } catch (err) {
-      console.warn("resources orderBy(name) failed; client-sort fallback:", err);
-      snap = await col.get();
+      console.warn("resources index missing; client-sort fallback:", err);
+      const snap = await col.get();
       resources = snap.docs
         .map((d) => ({ id: d.id, ...d.data() }))
-        .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
+        .sort(
+          (a, b) =>
+            String(a.branch || "").localeCompare(String(b.branch || "")) ||
+            String(a.name || "").localeCompare(String(b.name || ""))
+        );
     }
-
-    // Modal dropdown
-    if (f_resourceId) {
-      const opts = [`<option value="">-- select --</option>`].concat(
-        resources
-          .filter((r) => (r.name || "").trim())
-          .map((r) => `<option value="${esc(r.id)}">${esc(r.name)}</option>`)
-      );
-      f_resourceId.innerHTML = opts.join("");
-    }
-
+    const opts = [`<option value="">-- select --</option>`].concat(
+      resources.map((r) => `<option value="${esc(r.id)}">${esc(r.name)} (${esc(r.branch || "-")})</option>`)
+    );
+    f_resourceId.innerHTML = opts.join("");
     populateLocationFilter(resources);
   }
 
@@ -533,125 +515,63 @@
           },
           (err) => {
             console.error("events listener error:", err);
-            if (containerList) containerList.innerHTML = `<div class="text-danger py-4 text-center">Failed to load events.</div>`;
+            containerList.innerHTML = `<div class="text-danger py-4 text-center">Failed to load events.</div>`;
           }
         );
     } catch (err) {
       console.error("events listener threw:", err);
-      if (containerList) containerList.innerHTML = `<div class="text-danger py-4 text-center">Failed to load events.</div>`;
+      containerList.innerHTML = `<div class="text-danger py-4 text-center">Failed to load events.</div>`;
     }
-  }
-
-  // ---------- Create/Reuse resource if New Location typed ----------
-  async function ensureResourceSelectedOrCreateNew() {
-    // If New Location not enabled in HTML, just behave as old
-    const typed = (f_newLocationName && f_newLocationName.value || "").trim();
-
-    // New location flow
-    if (typed) {
-      // exact-match duplicate guard
-      const q = await window.db.collection("resources").where("name", "==", typed).limit(1).get();
-      if (!q.empty) {
-        const doc = q.docs[0];
-        if (f_resourceId) f_resourceId.value = doc.id;
-        if (f_resourceName) f_resourceName.value = typed;
-        return { resourceId: doc.id, resourceName: typed, created: false };
-      }
-
-      const operator = getOperator();
-      const payload = {
-        name: typed,
-        address: (f_newLocationAddress && f_newLocationAddress.value || "").trim(),
-        mapsUrl: (f_newLocationMapsUrl && f_newLocationMapsUrl.value || "").trim(),
-        mapsEmbedUrl: (f_newLocationMapsEmbedUrl && f_newLocationMapsEmbedUrl.value || "").trim(),
-        owners: ((f_newLocationOwners && f_newLocationOwners.value) || DEFAULT_OWNERS).trim(),
-
-        capacity: (f_capacity && f_capacity.value !== "" && !isNaN(Number(f_capacity.value))) ? Number(f_capacity.value) : null,
-
-        // keep compatibility with your existing resource schema
-        requiresApproval: false,
-        type: "room",
-        branch: "",
-
-        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-        createdByEmail: operator.email || null,
-        createdByName: operator.name || null,
-        createdByOid: operator.oid || null,
-      };
-
-      const ref = await window.db.collection("resources").add(payload);
-
-      // reload dropdown/filter then select new
-      await loadResources();
-      if (f_resourceId) f_resourceId.value = ref.id;
-      if (f_resourceName) f_resourceName.value = typed;
-
-      return { resourceId: ref.id, resourceName: typed, created: true };
-    }
-
-    // Existing selection flow
-    const resourceId = (f_resourceId && f_resourceId.value) || "";
-    const resourceName = (f_resourceName && f_resourceName.value || "").trim();
-
-    return { resourceId, resourceName, created: false };
   }
 
   // ---------- Open Edit ----------
   function openEdit(id) {
     clearEditErrors();
-    if (editOk) editOk.classList.add("d-none");
-    if (btnSave) btnSave.disabled = false;
-    if (editBusy) editBusy.classList.add("d-none");
+    editOk.classList.add("d-none");
+    btnSave.disabled = false;
+    editBusy.classList.add("d-none");
 
     editingId = id || null;
-    if (editTitle) editTitle.textContent = editingId ? "Edit Event" : "New Event";
+    editTitle.textContent = editingId ? "Edit Event" : "New Event";
 
     // remove prior share box if injected
-    const oldShare = editModalEl?.querySelector("#editShareBox");
+    const oldShare = editModalEl.querySelector("#editShareBox");
     if (oldShare && oldShare.parentElement) oldShare.parentElement.removeChild(oldShare);
 
     // Defaults
-    if (f_title) f_title.value = "";
-    if (f_status) f_status.value = "draft";
-    if (f_branch) f_branch.value = ""; // ignored if exists
-    if (f_resourceId) f_resourceId.value = "";
-    if (f_resourceName) f_resourceName.value = "";
-    if (f_start) f_start.value = "";
-    if (f_end) f_end.value = "";
-    if (f_description) f_description.value = "";
-    if (f_detailDescription) f_detailDescription.value = "";
-    if (f_detailPreview) f_detailPreview.innerHTML = "";
+    f_title.value = "";
+    f_status.value = "draft";
+    f_branch.value = "";
+    f_resourceId.value = "";
+    f_resourceName.value = "";
+    f_start.value = "";
+    f_end.value = "";
+    f_description.value = "";
+    f_detailDescription.value = "";
+    f_detailPreview.innerHTML = "";
     editDetailHTMLOriginal = "";
     editDetailTouched = false;
 
-    if (f_allowRegistration) f_allowRegistration.value = "true";
-    if (f_capacity) f_capacity.value = "";
-    if (f_remaining) f_remaining.value = "";
-    if (f_regOpensDays) f_regOpensDays.value = "7";
-    if (f_regClosesDays) f_regClosesDays.value = "1";
+    f_allowRegistration.value = "true";
+    f_capacity.value = "";
+    f_remaining.value = "";
+    f_regOpensDays.value = "7";
+    f_regClosesDays.value = "1";
     if (f_regOpenNow) f_regOpenNow.checked = false;
 
-    if (f_visibility) f_visibility.value = "public";
-    if (f_colorPreset) f_colorPreset.value = "#3b82f6";
-    if (f_color) f_color.value = "#3b82f6";
-
-    // New location defaults
-    if (f_newLocationName) f_newLocationName.value = "";
-    if (f_newLocationAddress) f_newLocationAddress.value = "";
-    if (f_newLocationOwners) f_newLocationOwners.value = DEFAULT_OWNERS;
-    if (f_newLocationMapsUrl) f_newLocationMapsUrl.value = "";
-    if (f_newLocationMapsEmbedUrl) f_newLocationMapsEmbedUrl.value = "";
-    toggleNewLocationDetails();
+    f_visibility.value = "public";
+    f_colorPreset.value = "#3b82f6";
+    f_color.value = "#3b82f6";
 
     // Recurrence defaults
-    if (f_repeat) f_repeat.value = "none";
-    if (f_interval) f_interval.value = "1";
-    if (weeklyDaysWrap) weeklyDaysWrap.style.display = "none";
-    if (f_repeatEndType) f_repeatEndType.value = "count";
-    if (repeatCountWrap) repeatCountWrap.style.display = "";
-    if (repeatUntilWrap) repeatUntilWrap.style.display = "none";
-    if (f_repeatCount) f_repeatCount.value = "1";
-    if (f_repeatUntil) f_repeatUntil.value = "";
+    f_repeat.value = "none";
+    f_interval.value = "1";
+    weeklyDaysWrap.style.display = "none";
+    f_repeatEndType.value = "count";
+    repeatCountWrap.style.display = "";
+    repeatUntilWrap.style.display = "none";
+    f_repeatCount.value = "1";
+    f_repeatUntil.value = "";
 
     // Banner UI/state reset
     resetBannerStateAndUI();
@@ -668,37 +588,37 @@
     }
 
     // Fill form
-    if (f_title) f_title.value = ev.title || "";
-    if (f_status) f_status.value = ev.status || "draft";
-    if (f_branch) f_branch.value = ev.branch || ""; // legacy only
-    if (f_resourceId) f_resourceId.value = ev.resourceId || "";
-    if (f_resourceName) f_resourceName.value = ev.resourceName || "";
-    if (f_start) f_start.value = inputValueFromDate(toDate(ev.start));
-    if (f_end) f_end.value = inputValueFromDate(toDate(ev.end));
-    if (f_description) f_description.value = ev.description || "";
+    f_title.value = ev.title || "";
+    f_status.value = ev.status || "draft";
+    f_branch.value = ev.branch || "";
+    f_resourceId.value = ev.resourceId || "";
+    f_resourceName.value = ev.resourceName || "";
+    f_start.value = inputValueFromDate(toDate(ev.start));
+    f_end.value = inputValueFromDate(toDate(ev.end));
+    f_description.value = ev.description || "";
 
     editDetailHTMLOriginal = ev.detailDescription || "";
     editDetailTouched = false;
-    if (f_detailDescription) f_detailDescription.value = htmlToPlainForTextarea(editDetailHTMLOriginal);
-    if (f_detailPreview) f_detailPreview.innerHTML = editDetailHTMLOriginal;
+    f_detailDescription.value = htmlToPlainForTextarea(editDetailHTMLOriginal);
+    f_detailPreview.innerHTML = editDetailHTMLOriginal;
 
-    if (f_allowRegistration) f_allowRegistration.value = ev.allowRegistration === false ? "false" : "true";
-    if (f_capacity) f_capacity.value = ev.capacity ?? "";
-    if (f_remaining) f_remaining.value = ev.remaining ?? "";
-    if (f_visibility) f_visibility.value = ev.visibility || "public";
+    f_allowRegistration.value = ev.allowRegistration === false ? "false" : "true";
+    f_capacity.value = ev.capacity ?? "";
+    f_remaining.value = ev.remaining ?? "";
+    f_visibility.value = ev.visibility || "public";
 
     if (ev.color) {
-      if (f_colorPreset) f_colorPreset.value = isPreset(ev.color) ? ev.color : "__custom";
-      if (f_color) f_color.value = normalizeHex(ev.color);
+      f_colorPreset.value = isPreset(ev.color) ? ev.color : "__custom";
+      f_color.value = normalizeHex(ev.color);
     } else {
-      if (f_colorPreset) f_colorPreset.value = "#3b82f6";
-      if (f_color) f_color.value = "#3b82f6";
+      f_colorPreset.value = "#3b82f6";
+      f_color.value = "#3b82f6";
     }
 
     backfillRegDays(ev);
     loadBannerFromEvent(ev);
 
-    // Shareable link box
+    // Shareable link box: label + hyperlink + copy icon
     try {
       const modalBody = editModalEl.querySelector(".modal-body");
       if (modalBody) {
@@ -726,6 +646,7 @@
 
         const btnEditCopyLink = box.querySelector("#btnEditCopyLink");
         if (btnEditCopyLink) btnEditCopyLink.addEventListener("click", () => copyToClipboard(url));
+
         box.querySelectorAll("[data-bs-toggle='tooltip']").forEach((el) => new bootstrap.Tooltip(el));
       }
     } catch (e) {
@@ -747,8 +668,8 @@
     }
     const openDays = daysBefore(startDate, opensAt);
     const closeDays = daysBefore(startDate, closesAt);
-    if (openDays !== null && !Number.isNaN(openDays) && f_regOpensDays) f_regOpensDays.value = String(openDays);
-    if (closeDays !== null && !Number.isNaN(closeDays) && f_regClosesDays) f_regClosesDays.value = String(closeDays);
+    if (openDays !== null && !Number.isNaN(openDays)) f_regOpensDays.value = String(openDays);
+    if (closeDays !== null && !Number.isNaN(closeDays)) f_regClosesDays.value = String(closeDays);
 
     if (f_regOpenNow) {
       if (opensAt && opensAt <= new Date()) {
@@ -775,65 +696,55 @@
   // ---------- Delete ----------
   function openDelete(id) {
     pendingDeleteId = id || null;
-    if (delErr) delErr.classList.add("d-none");
-    if (delBusy) delBusy.classList.add("d-none");
-    if (delMsg) delMsg.textContent = "Are you sure to delete this event?";
+    delErr.classList.add("d-none");
+    delBusy.classList.add("d-none");
+    delMsg.textContent = "Are you sure to delete this event?";
     delModal.show();
   }
 
-  if (btnDoDelete) {
-    btnDoDelete.addEventListener("click", async () => {
-      if (!pendingDeleteId) return;
-      if (delErr) delErr.classList.add("d-none");
-      if (delBusy) delBusy.classList.remove("d-none");
-      try {
-        await window.db.collection("events").doc(pendingDeleteId).delete();
-        delModal.hide();
-      } catch (err) {
-        console.error("delete error:", err);
-        if (delErr) {
-          delErr.textContent = err.message || "Delete failed.";
-          delErr.classList.remove("d-none");
-        }
-      } finally {
-        if (delBusy) delBusy.classList.add("d-none");
-      }
-    });
-  }
+  btnDoDelete.addEventListener("click", async () => {
+    if (!pendingDeleteId) return;
+    delErr.classList.add("d-none");
+    delBusy.classList.remove("d-none");
+    try {
+      await window.db.collection("events").doc(pendingDeleteId).delete();
+      delModal.hide();
+    } catch (err) {
+      console.error("delete error:", err);
+      delErr.textContent = err.message || "Delete failed.";
+      delErr.classList.remove("d-none");
+    } finally {
+      delBusy.classList.add("d-none");
+    }
+  });
 
   // ---------- Color + Recurrence UI ----------
-  if (f_colorPreset && f_color) {
-    f_colorPreset.addEventListener("change", () => {
-      if (f_colorPreset.value !== "__custom") f_color.value = f_colorPreset.value;
-    });
-    f_color.addEventListener("input", () => {
-      f_colorPreset.value = "__custom";
-    });
-  }
+  f_colorPreset.addEventListener("change", () => {
+    if (f_colorPreset.value !== "__custom") f_color.value = f_colorPreset.value;
+  });
+  f_color.addEventListener("input", () => {
+    f_colorPreset.value = "__custom";
+  });
 
-  if (f_repeat && weeklyDaysWrap) {
-    f_repeat.addEventListener("change", () => {
-      weeklyDaysWrap.style.display = f_repeat.value === "weekly" ? "" : "none";
-    });
-  }
-  if (f_repeatEndType && repeatCountWrap && repeatUntilWrap) {
-    f_repeatEndType.addEventListener("change", () => {
-      const isCount = f_repeatEndType.value === "count";
-      repeatCountWrap.style.display = isCount ? "" : "none";
-      repeatUntilWrap.style.display = isCount ? "none" : "";
-    });
-  }
+  f_repeat.addEventListener("change", () => {
+    weeklyDaysWrap.style.display = f_repeat.value === "weekly" ? "" : "none";
+  });
+  f_repeatEndType.addEventListener("change", () => {
+    const isCount = f_repeatEndType.value === "count";
+    repeatCountWrap.style.display = isCount ? "" : "none";
+    repeatUntilWrap.style.display = isCount ? "none" : "";
+  });
 
   // ---------- "Open registration now" ----------
   function recalcRegOpensDaysFromNow() {
-    const start = dtLocalFromInput(f_start?.value);
-    if (!start || !f_regOpensDays) return;
+    const start = dtLocalFromInput(f_start.value);
+    if (!start) return;
     const now = new Date();
     let days = Math.ceil((start.getTime() - now.getTime()) / 86400000);
     if (days < 0) days = 0;
     f_regOpensDays.value = String(days);
   }
-  if (f_regOpenNow && f_start && f_regOpensDays) {
+  if (f_regOpenNow) {
     f_regOpenNow.addEventListener("change", () => {
       if (f_regOpenNow.checked) recalcRegOpensDaysFromNow();
     });
@@ -846,24 +757,20 @@
   }
 
   // ---------- Detail preview ----------
-  if (f_detailDescription && f_detailPreview) {
-    f_detailDescription.addEventListener("input", () => {
-      editDetailTouched = true;
-      f_detailPreview.innerHTML = plainToHtml(f_detailDescription.value);
-    });
-  }
+  f_detailDescription.addEventListener("input", () => {
+    editDetailTouched = true;
+    f_detailPreview.innerHTML = plainToHtml(f_detailDescription.value);
+  });
 
   // ---------- Resource auto-fill ----------
-  if (f_resourceId) {
-    f_resourceId.addEventListener("change", () => {
-      const r = resources.find((x) => x.id === f_resourceId.value);
-      if (f_resourceName) f_resourceName.value = r ? (r.name || "") : "";
-      if (r && f_capacity && !f_capacity.value && typeof r.capacity === "number") {
-        f_capacity.value = r.capacity;
-        if (f_remaining && !f_remaining.value) f_remaining.value = r.capacity;
-      }
-    });
-  }
+  f_resourceId.addEventListener("change", () => {
+    const r = resources.find((x) => x.id === f_resourceId.value);
+    f_resourceName.value = r ? r.name || "" : "";
+    if (r && !f_capacity.value && typeof r.capacity === "number") {
+      f_capacity.value = r.capacity;
+      if (!f_remaining.value) f_remaining.value = r.capacity;
+    }
+  });
 
   // ---------- Banner helpers ----------
   function resetBannerStateAndUI() {
@@ -873,17 +780,17 @@
     existingBannerUrl = null;
     flagRemoveBanner = false;
 
-    if (f_bannerFile) f_bannerFile.value = "";
-    if (f_bannerMeta) f_bannerMeta.textContent = "";
-    if (bannerProgWrap) bannerProgWrap.classList.add("d-none");
-    if (bannerProg) bannerProg.style.width = "0%";
+    f_bannerFile.value = "";
+    f_bannerMeta.textContent = "";
+    bannerProgWrap.classList.add("d-none");
+    bannerProg.style.width = "0%";
 
     if (f_bannerPreview) {
       f_bannerPreview.src = "";
       f_bannerPreview.style.display = "none";
     }
     if (f_bannerPlaceholder) f_bannerPlaceholder.style.display = "";
-    if (f_bannerRemove) f_bannerRemove.classList.add("d-none");
+    f_bannerRemove.classList.add("d-none");
   }
 
   function loadBannerFromEvent(ev) {
@@ -901,9 +808,9 @@
       if (ev.bannerWidth && ev.bannerHeight) metaParts.push(`${ev.bannerWidth}×${ev.bannerHeight}`);
       if (ev.bannerType) metaParts.push(ev.bannerType);
       if (typeof ev.bannerSize === "number") metaParts.push(`${(ev.bannerSize / 1024 / 1024).toFixed(2)} MB`);
-      if (f_bannerMeta) f_bannerMeta.textContent = metaParts.join(" · ");
+      f_bannerMeta.textContent = metaParts.join(" · ");
 
-      if (f_bannerRemove) f_bannerRemove.classList.remove("d-none");
+      f_bannerRemove.classList.remove("d-none");
     } else {
       resetBannerStateAndUI();
     }
@@ -951,21 +858,19 @@
       size: file.size,
     };
     const softWarn = dim.width !== 2160 || dim.height !== 1080 ? " (tip: recommended 2160×1080)" : "";
-    if (f_bannerMeta) {
-      f_bannerMeta.textContent = `${dim.width || "?"}×${dim.height || "?"} · ${(file.size / 1024 / 1024).toFixed(2)} MB · ${(file.type || "").toUpperCase()}${softWarn}`;
-    }
+    f_bannerMeta.textContent = `${dim.width || "?"}×${dim.height || "?"} · ${(file.size / 1024 / 1024).toFixed(
+      2
+    )} MB · ${(file.type || "").toUpperCase()}${softWarn}`;
 
     const reader = new FileReader();
     reader.onload = (e) => {
-      if (f_bannerPreview) {
-        f_bannerPreview.src = e.target.result;
-        f_bannerPreview.style.display = "block";
-      }
+      f_bannerPreview.src = e.target.result;
+      f_bannerPreview.style.display = "block";
       if (f_bannerPlaceholder) f_bannerPlaceholder.style.display = "none";
     };
     reader.readAsDataURL(file);
 
-    if (f_bannerRemove) f_bannerRemove.classList.remove("d-none");
+    f_bannerRemove.classList.remove("d-none");
   }
 
   // Upload under banners/events/<groupId>.<ext>
@@ -974,8 +879,8 @@
     const path = `banners/events/${groupId}.${ext}`;
     const ref = storage.ref().child(path);
 
-    if (bannerProgWrap) bannerProgWrap.classList.remove("d-none");
-    if (bannerProg) bannerProg.style.width = "0%";
+    bannerProgWrap.classList.remove("d-none");
+    bannerProg.style.width = "0%";
 
     try {
       const task = ref.put(file, { contentType: file.type });
@@ -984,7 +889,7 @@
           "state_changed",
           (snap) => {
             const pct = snap.totalBytes ? (snap.bytesTransferred / snap.totalBytes) * 100 : 0;
-            if (bannerProg) bannerProg.style.width = `${pct.toFixed(0)}%`;
+            bannerProg.style.width = `${pct.toFixed(0)}%`;
           },
           (err) => reject(err),
           async () => {
@@ -997,10 +902,10 @@
           }
         );
       });
-      if (bannerProg) bannerProg.style.width = "100%";
+      bannerProg.style.width = "100%";
       return res;
     } catch (err) {
-      if (bannerProgWrap) bannerProgWrap.classList.add("d-none");
+      bannerProgWrap.classList.add("d-none");
       const msg =
         err && err.code === "storage/unauthorized"
           ? "Upload not authorized by Storage Rules."
@@ -1012,7 +917,7 @@
       showInlineError(msg);
       throw err;
     } finally {
-      setTimeout(() => bannerProgWrap && bannerProgWrap.classList.add("d-none"), 400);
+      setTimeout(() => bannerProgWrap.classList.add("d-none"), 400);
     }
   }
 
@@ -1027,198 +932,113 @@
   }
 
   // File change
-  if (f_bannerFile) {
-    f_bannerFile.addEventListener("change", async () => {
-      clearEditErrors();
-      const file = f_bannerFile.files && f_bannerFile.files[0];
-      const err = validateBannerFile(file);
-      if (err) {
-        pendingBannerFile = null;
-        pendingBannerMeta = null;
-        if (f_bannerMeta) f_bannerMeta.textContent = err;
-        if (f_bannerPreview) {
-          f_bannerPreview.src = "";
-          f_bannerPreview.style.display = "none";
-        }
-        if (f_bannerPlaceholder) f_bannerPlaceholder.style.display = "";
-        if (f_bannerRemove) f_bannerRemove.classList.add("d-none");
-        return;
-      }
-      pendingBannerFile = file;
-      flagRemoveBanner = false;
-      await previewBannerFile(file);
-    });
-  }
-
-  // Remove click
-  if (f_bannerRemove) {
-    f_bannerRemove.addEventListener("click", () => {
-      flagRemoveBanner = true;
+  f_bannerFile.addEventListener("change", async () => {
+    clearEditErrors();
+    const file = f_bannerFile.files && f_bannerFile.files[0];
+    const err = validateBannerFile(file);
+    if (err) {
       pendingBannerFile = null;
       pendingBannerMeta = null;
-      if (f_bannerFile) f_bannerFile.value = "";
-      if (f_bannerMeta) f_bannerMeta.textContent = existingBannerUrl ? "Marked for removal on save." : "";
+      f_bannerMeta.textContent = err;
       if (f_bannerPreview) {
         f_bannerPreview.src = "";
         f_bannerPreview.style.display = "none";
       }
       if (f_bannerPlaceholder) f_bannerPlaceholder.style.display = "";
       f_bannerRemove.classList.add("d-none");
-    });
-  }
+      return;
+    }
+    pendingBannerFile = file;
+    flagRemoveBanner = false;
+    await previewBannerFile(file);
+  });
+
+  // Remove click
+  f_bannerRemove.addEventListener("click", () => {
+    flagRemoveBanner = true;
+    pendingBannerFile = null;
+    pendingBannerMeta = null;
+    f_bannerFile.value = "";
+    f_bannerMeta.textContent = existingBannerUrl ? "Marked for removal on save." : "";
+    if (f_bannerPreview) {
+      f_bannerPreview.src = "";
+      f_bannerPreview.style.display = "none";
+    }
+    if (f_bannerPlaceholder) f_bannerPlaceholder.style.display = "";
+    f_bannerRemove.classList.add("d-none");
+  });
 
   // ---------- New ----------
-  if (btnNew) btnNew.addEventListener("click", () => openEdit(null));
+  btnNew.addEventListener("click", () => openEdit(null));
 
   // ---------- Save ----------
-  if (editForm) {
-    editForm.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      clearEditErrors();
-      if (btnSave) btnSave.disabled = true;
-      if (editBusy) editBusy.classList.remove("d-none");
+  editForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    clearEditErrors();
+    btnSave.disabled = true;
+    editBusy.classList.remove("d-none");
 
-      try {
-        // Basic fields
-        const title = (f_title?.value || "").trim();
-        const status = f_status?.value || "draft";
-        const start = dtLocalFromInput(f_start?.value);
-        const end = dtLocalFromInput(f_end?.value);
+    try {
+      // Basic fields
+      const title = f_title.value.trim();
+      const status = f_status.value;
+      const branch = f_branch.value;
+      const resourceId = f_resourceId.value;
+      const resourceName = f_resourceName.value.trim();
+      const start = dtLocalFromInput(f_start.value);
+      const end = dtLocalFromInput(f_end.value);
+      if (!title || !branch || !resourceId || !start || !end || end <= start) {
+        throw new Error("Please fill Title, Branch, Resource, Start/End (End must be after Start).");
+      }
 
-        if (!title || !start || !end || end <= start) {
-          throw new Error("Please fill Title, Start/End (End must be after Start).");
+      if (f_regOpenNow?.checked) recalcRegOpensDaysFromNow();
+
+      // Registration & visibility
+      const allowRegistration = f_allowRegistration.value === "true";
+      const capacity = f_capacity.value ? Number(f_capacity.value) : null;
+      const remaining = f_remaining.value ? Number(f_remaining.value) : null;
+      const opensDays = Number(f_regOpensDays.value || 0);
+      const closesDays = Number(f_regClosesDays.value || 0);
+      const visibility = f_visibility.value;
+
+      // Color
+      const color = normalizeHex(f_color.value || "#3b82f6");
+
+      // Descriptions
+      const description = f_description.value.trim();
+      const detailDescriptionHtml = editingId
+        ? editDetailTouched
+          ? plainToHtml(f_detailDescription.value)
+          : editDetailHTMLOriginal
+        : plainToHtml(f_detailDescription.value);
+
+      // Recurrence
+      const repeat = f_repeat.value;
+      const interval = Math.max(1, Number(f_interval.value || 1));
+      const endType = f_repeatEndType.value;
+      const count = Math.max(1, Number(f_repeatCount.value || 1));
+      const until = f_repeatUntil.value ? new Date(f_repeatUntil.value + "T23:59:59") : null;
+      const weekdays = Array.from(weeklyDaysWrap.querySelectorAll("input[type='checkbox']:checked")).map((cb) =>
+        Number(cb.value)
+      );
+
+      // Operator
+      const operator = getOperator();
+
+      // ----- EDIT -----
+      if (editingId) {
+        const conflictMsg = await hasConflict(branch, resourceId, start, end, editingId);
+        if (conflictMsg) {
+          showInlineError(conflictMsg);
+          throw new Error(conflictMsg);
         }
 
-        if (f_regOpenNow?.checked) recalcRegOpensDaysFromNow();
-
-        // Ensure resource selection OR create new resource if typed
-        const rr = await ensureResourceSelectedOrCreateNew();
-        const resourceId = rr.resourceId;
-        const resourceName = (rr.resourceName || "").trim();
-
-        if (!resourceId || !resourceName) {
-          throw new Error("Please select a Location, or type a New Location name.");
-        }
-
-        // Registration & visibility
-        const allowRegistration = (f_allowRegistration?.value || "true") === "true";
-        const capacity = f_capacity?.value ? Number(f_capacity.value) : null;
-        const remaining = f_remaining?.value ? Number(f_remaining.value) : null;
-        const opensDays = Number(f_regOpensDays?.value || 0);
-        const closesDays = Number(f_regClosesDays?.value || 0);
-        const visibility = f_visibility?.value || "public";
-
-        // Color
-        const color = normalizeHex((f_color?.value || "#3b82f6"));
-
-        // Descriptions
-        const description = (f_description?.value || "").trim();
-        const detailDescriptionHtml = editingId
-          ? (editDetailTouched ? plainToHtml(f_detailDescription?.value || "") : editDetailHTMLOriginal)
-          : plainToHtml(f_detailDescription?.value || "");
-
-        // Recurrence
-        const repeat = f_repeat?.value || "none";
-        const interval = Math.max(1, Number(f_interval?.value || 1));
-        const endType = f_repeatEndType?.value || "count";
-        const count = Math.max(1, Number(f_repeatCount?.value || 1));
-        const until = f_repeatUntil?.value ? new Date(f_repeatUntil.value + "T23:59:59") : null;
-        const weekdays = weeklyDaysWrap
-          ? Array.from(weeklyDaysWrap.querySelectorAll("input[type='checkbox']:checked")).map((cb) => Number(cb.value))
-          : [];
-
-        // Operator
-        const operator = getOperator();
-
-        // ----- EDIT -----
-        if (editingId) {
-          const conflictMsg = await hasConflict(resourceId, start, end, editingId);
-          if (conflictMsg) {
-            showInlineError(conflictMsg);
-            throw new Error(conflictMsg);
-          }
-
-          // Banner (upload/delete if needed)
-          let bannerPayload = {};
-          if (pendingBannerFile) {
-            const groupId = editingId; // reuse event id
-            const up = await uploadBannerToStorage(pendingBannerFile, groupId);
-            bannerPayload = {
-              bannerUrl: up.url,
-              bannerPath: up.path,
-              bannerWidth: (pendingBannerMeta && pendingBannerMeta.width) || null,
-              bannerHeight: (pendingBannerMeta && pendingBannerMeta.height) || null,
-              bannerType: (pendingBannerMeta && pendingBannerMeta.type) || (pendingBannerFile && pendingBannerFile.type) || null,
-              bannerSize: (pendingBannerMeta && pendingBannerMeta.size) || (pendingBannerFile && pendingBannerFile.size) || null,
-            };
-            if (existingBannerPath && existingBannerPath !== up.path) {
-              await deleteBannerAtPath(existingBannerPath);
-            }
-          } else if (flagRemoveBanner && existingBannerPath) {
-            await deleteBannerAtPath(existingBannerPath);
-            bannerPayload = {
-              bannerUrl: firebase.firestore.FieldValue.delete(),
-              bannerPath: firebase.firestore.FieldValue.delete(),
-              bannerWidth: firebase.firestore.FieldValue.delete(),
-              bannerHeight: firebase.firestore.FieldValue.delete(),
-              bannerType: firebase.firestore.FieldValue.delete(),
-              bannerSize: firebase.firestore.FieldValue.delete(),
-            };
-          }
-
-          const payload = {
-            title,
-            description,
-            detailDescription: detailDescriptionHtml,
-
-            // Branch removed from Version A
-            branch: firebase.firestore.FieldValue.delete(),
-
-            resourceId,
-            resourceName,
-            color,
-            visibility,
-            status,
-            start,
-            end,
-            allowRegistration,
-            capacity: capacity != null ? capacity : firebase.firestore.FieldValue.delete(),
-            remaining: remaining != null ? remaining : firebase.firestore.FieldValue.delete(),
-            updatedAt: new Date(),
-            updatedByEmail: operator.email || null,
-            updatedByName: operator.name || null,
-            updatedByOid: operator.oid || null,
-            ...bannerPayload,
-          };
-
-          if (allowRegistration) {
-            const { regOpensAt, regClosesAt } = deriveRegWindowDays(start, opensDays, closesDays);
-            payload.regOpensAt = regOpensAt;
-            payload.regClosesAt = regClosesAt;
-          } else {
-            payload.regOpensAt = firebase.firestore.FieldValue.delete();
-            payload.regClosesAt = firebase.firestore.FieldValue.delete();
-          }
-
-          await window.db.collection("events").doc(editingId).update(payload);
-          if (editOk) {
-            editOk.textContent = "Saved.";
-            editOk.classList.remove("d-none");
-          }
-          setTimeout(() => editModal.hide(), 800);
-          return;
-        }
-
-        // ----- CREATE -----
-        const occurrences = buildOccurrences({ repeat, interval, start, end, endType, count, until, weekdays });
-        if (!occurrences.length) throw new Error("No occurrences generated. Check your repeat settings.");
-
-        // Upload banner once for new series (reuse)
-        let newBannerData = null;
+        // Banner (upload/delete if needed)
+        let bannerPayload = {};
         if (pendingBannerFile) {
-          const groupId = window.db.collection("_").doc().id; // random id to name the banner file
+          const groupId = editingId; // reuse event id
           const up = await uploadBannerToStorage(pendingBannerFile, groupId);
-          newBannerData = {
+          bannerPayload = {
             bannerUrl: up.url,
             bannerPath: up.path,
             bannerWidth: (pendingBannerMeta && pendingBannerMeta.width) || null,
@@ -1226,98 +1046,162 @@
             bannerType: (pendingBannerMeta && pendingBannerMeta.type) || (pendingBannerFile && pendingBannerFile.type) || null,
             bannerSize: (pendingBannerMeta && pendingBannerMeta.size) || (pendingBannerFile && pendingBannerFile.size) || null,
           };
-        }
-
-        const batch = window.db.batch();
-        const evCol = window.db.collection("events");
-
-        let made = 0;
-        let skipped = 0;
-        let firstConflictMsg = null;
-
-        for (const occ of occurrences) {
-          const occStart = occ.start;
-          const occEnd   = occ.end;
-
-          const conflictMsg = await hasConflict(resourceId, occStart, occEnd, null);
-          if (conflictMsg) {
-            skipped++;
-            if (!firstConflictMsg) firstConflictMsg = conflictMsg;
-            continue;
+          if (existingBannerPath && existingBannerPath !== up.path) {
+            await deleteBannerAtPath(existingBannerPath);
           }
-
-          const docRef = evCol.doc();
-
-          const payload = {
-            title,
-            description,
-            detailDescription: detailDescriptionHtml,
-
-            // Branch removed from Version A
-            // (do not include)
-
-            resourceId,
-            resourceName,
-            color,
-            visibility,
-            status,
-            start: occStart,
-            end: occEnd,
-            allowRegistration,
-            createdAt: new Date(),
-            createdByEmail: operator.email || null,
-            createdByName: operator.name || null,
-            createdByOid: operator.oid || null,
-            updatedAt: new Date(),
-            updatedByEmail: operator.email || null,
-            updatedByName: operator.name || null,
-            updatedByOid: operator.oid || null,
-            ...(capacity != null ? { capacity } : {}),
-            ...(remaining != null ? { remaining } : capacity != null ? { remaining: capacity } : {}),
-            ...(newBannerData || {}),
+        } else if (flagRemoveBanner && existingBannerPath) {
+          await deleteBannerAtPath(existingBannerPath);
+          bannerPayload = {
+            bannerUrl: firebase.firestore.FieldValue.delete(),
+            bannerPath: firebase.firestore.FieldValue.delete(),
+            bannerWidth: firebase.firestore.FieldValue.delete(),
+            bannerHeight: firebase.firestore.FieldValue.delete(),
+            bannerType: firebase.firestore.FieldValue.delete(),
+            bannerSize: firebase.firestore.FieldValue.delete(),
           };
-
-          if (allowRegistration) {
-            const { regOpensAt, regClosesAt } = deriveRegWindowDays(occStart, opensDays, closesDays);
-            payload.regOpensAt = regOpensAt;
-            payload.regClosesAt = regClosesAt;
-          }
-
-          batch.set(docRef, payload);
-          made++;
         }
 
-        if (made === 0) {
-          if (firstConflictMsg) {
-            showInlineError("All occurrences conflict with existing events.");
-            throw new Error(firstConflictMsg);
-          } else {
-            throw new Error("No events created.");
-          }
+        const payload = {
+          title,
+          description,
+          detailDescription: detailDescriptionHtml,
+          branch,
+          resourceId,
+          resourceName,
+          color,
+          visibility,
+          status,
+          start,
+          end,
+          allowRegistration,
+          capacity: capacity != null ? capacity : firebase.firestore.FieldValue.delete(),
+          remaining: remaining != null ? remaining : firebase.firestore.FieldValue.delete(),
+          updatedAt: new Date(),
+          updatedByEmail: operator.email || null,
+          updatedByName: operator.name || null,
+          updatedByOid: operator.oid || null,
+          ...bannerPayload,
+        };
+
+        if (allowRegistration) {
+          const { regOpensAt, regClosesAt } = deriveRegWindowDays(start, opensDays, closesDays);
+          payload.regOpensAt = regOpensAt;
+          payload.regClosesAt = regClosesAt;
+        } else {
+          payload.regOpensAt = firebase.firestore.FieldValue.delete();
+          payload.regClosesAt = firebase.firestore.FieldValue.delete();
         }
 
-        await batch.commit();
-
-        const msg = skipped > 0 ? `Created ${made} event(s). Skipped ${skipped} due to time conflicts.` : `Created ${made} event(s).`;
-        if (editOk) {
-          editOk.textContent = msg;
-          editOk.classList.remove("d-none");
-        }
-        setTimeout(() => editModal.hide(), 1000);
-      } catch (err) {
-        console.error("save error:", err);
-        if (editErrInline && !editErrInline.classList.contains("d-none")) {
-          // inline already shown
-        } else if (editErr) {
-          editErr.textContent = err.message || "Save failed.";
-          editErr.classList.remove("d-none");
-        }
-      } finally {
-        if (editBusy) editBusy.classList.add("d-none");
-        if (btnSave) btnSave.disabled = false;
+        await window.db.collection("events").doc(editingId).update(payload);
+        editOk.textContent = "Saved.";
+        editOk.classList.remove("d-none");
+        setTimeout(() => editModal.hide(), 800);
+        return;
       }
-    });
-  }
+
+      // ----- CREATE -----
+      const occurrences = buildOccurrences({ repeat, interval, start, end, endType, count, until, weekdays });
+      if (!occurrences.length) throw new Error("No occurrences generated. Check your repeat settings.");
+
+      // Upload banner once for new series (reuse)
+      let newBannerData = null;
+      if (pendingBannerFile) {
+        const groupId = window.db.collection("_").doc().id; // random id to name the banner file
+        const up = await uploadBannerToStorage(pendingBannerFile, groupId);
+        newBannerData = {
+          bannerUrl: up.url,
+          bannerPath: up.path,
+          bannerWidth: (pendingBannerMeta && pendingBannerMeta.width) || null,
+          bannerHeight: (pendingBannerMeta && pendingBannerMeta.height) || null,
+          bannerType: (pendingBannerMeta && pendingBannerMeta.type) || (pendingBannerFile && pendingBannerFile.type) || null,
+          bannerSize: (pendingBannerMeta && pendingBannerMeta.size) || (pendingBannerFile && pendingBannerFile.size) || null,
+        };
+      }
+
+      const batch = window.db.batch();
+      const evCol = window.db.collection("events");
+
+      let made = 0;
+      let skipped = 0;
+      let firstConflictMsg = null;
+
+      for (const occ of occurrences) {
+        const occStart = occ.start;
+        const occEnd   = occ.end;
+
+        const conflictMsg = await hasConflict(branch, resourceId, occStart, occEnd, null);
+        if (conflictMsg) {
+          skipped++;
+          if (!firstConflictMsg) firstConflictMsg = conflictMsg;
+          continue;
+        }
+
+        const docRef = evCol.doc();
+
+        const payload = {
+          title,
+          description,
+          detailDescription: detailDescriptionHtml,
+          branch,
+          resourceId,
+          resourceName,
+          color,
+          visibility,
+          status,
+          start: occStart,
+          end: occEnd,
+          allowRegistration,
+          createdAt: new Date(),
+          createdByEmail: operator.email || null,
+          createdByName: operator.name || null,
+          createdByOid: operator.oid || null,
+          updatedAt: new Date(),
+          updatedByEmail: operator.email || null,
+          updatedByName: operator.name || null,
+          updatedByOid: operator.oid || null,
+          ...(capacity != null ? { capacity } : {}),
+          ...(remaining != null ? { remaining } : capacity != null ? { remaining: capacity } : {}),
+          ...(newBannerData || {}),
+        };
+
+        if (allowRegistration) {
+          const { regOpensAt, regClosesAt } = deriveRegWindowDays(occStart, opensDays, closesDays);
+          payload.regOpensAt = regOpensAt;
+          payload.regClosesAt = regClosesAt;
+        }
+
+        batch.set(docRef, payload);
+        made++;
+      }
+
+      if (made === 0) {
+        if (firstConflictMsg) {
+          showInlineError("All occurrences conflict with existing events.");
+          throw new Error(firstConflictMsg);
+        } else {
+          throw new Error("No events created.");
+        }
+      }
+
+      await batch.commit();
+
+      const msg = skipped > 0 ? `Created ${made} event(s). Skipped ${skipped} due to time conflicts.` : `Created ${made} event(s).`;
+      editOk.textContent = msg;
+      editOk.classList.remove("d-none");
+      setTimeout(() => editModal.hide(), 1000);
+    } catch (err) {
+      console.error("save error:", err);
+      if (!editErrInline.classList.contains("d-none")) {
+        // inline shown already
+      } else {
+        editErr.textContent = err.message || "Save failed.";
+        editErr.classList.remove("d-none");
+      }
+    } finally {
+      editBusy.classList.add("d-none");
+      btnSave.disabled = false;
+    }
+  });
 
   // ---------- Occurrence builder ----------
   function buildOccurrences({ repeat, interval, start, end, endType, count, until, weekdays }) {
@@ -1378,17 +1262,17 @@
     return out;
   }
 
-  // ---------- Conflict check (resource-only) ----------
-  async function hasConflict(resourceId, start, end, ignoreId) {
-    if (!resourceId || !start || !end) return null;
+  // ---------- Conflict check ----------
+  async function hasConflict(branch, resourceId, start, end, ignoreId) {
+    if (!branch || !resourceId || !start || !end) return null;
     const col = window.db.collection("events");
     try {
-      // resourceId ==, start < end, orderBy start
       const snap = await col
+        .where("branch", "==", branch)
         .where("resourceId", "==", resourceId)
         .where("start", "<", end)
         .orderBy("start", "asc")
-        .limit(80)
+        .limit(50)
         .get();
 
       const overlap = snap.docs
@@ -1400,10 +1284,10 @@
           return s < end && e > start;
         });
 
-      return overlap ? "Time conflict: this location is already occupied in that time range." : null;
+      return overlap ? "Time conflict: same branch & resource already occupied in that time range." : null;
     } catch (err) {
-      // Create composite index if needed:
-      // events: resourceId == , start < , orderBy start asc
+      // If you see an "index required" error, create a composite index for:
+      // collection: events, where: branch==, resourceId==, start<, orderBy: start asc
       console.warn("conflict check failed; allowing save:", err);
       return null; // fail-open
     }
@@ -1411,7 +1295,7 @@
 
   // ---------- Top filters/search ----------
   locationFilter?.addEventListener("change", applyFilter);
-  searchInput?.addEventListener("input", () => {
+  searchInput.addEventListener("input", () => {
     clearTimeout(searchInput._t);
     searchInput._t = setTimeout(applyFilter, 120);
   });
@@ -1419,7 +1303,7 @@
   // ---------- Init ----------
   document.addEventListener("DOMContentLoaded", async () => {
     if (!window.db) {
-      if (containerList) containerList.innerHTML = `<div class="text-danger py-4 text-center">Firestore not initialized.</div>`;
+      containerList.innerHTML = `<div class="text-danger py-4 text-center">Firestore not initialized.</div>`;
       return;
     }
     await loadResources();
