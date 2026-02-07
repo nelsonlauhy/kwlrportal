@@ -1,7 +1,8 @@
-// /js/resources_admin.js (FIXED v2)
-// - Edit/Delete uses Firestore docId (always exists).
-// - Auto-detects collection properly: picks the first non-empty among ['event_resources','resources']
-//   (falls back to 'resources' if both empty).
+// /js/resources_admin.js (Locations wording + hide Branch everywhere)
+// - List: removes Branch column output (no <td> branch)
+// - Save: does NOT require branch, does NOT write branch
+// - Edit fill: ignores branch
+// - Backward compatible: old docs may still have branch field; we just don’t show/use it.
 
 (function () {
   /* ---------- Firestore ---------- */
@@ -11,7 +12,7 @@
       : firebase.firestore();
   }
 
-  let RES_COL = "resources";            // default
+  let RES_COL = "resources"; // default
   let RES_COL_LOCKED = false;
   const CANDIDATE_COLLECTIONS = ["event_resources", "resources"];
 
@@ -20,7 +21,7 @@
 
     const db = getDB();
 
-    // 1) Prefer a collection that actually has data
+    // Prefer non-empty
     for (const name of CANDIDATE_COLLECTIONS) {
       try {
         const snap = await db.collection(name).limit(1).get();
@@ -30,12 +31,10 @@
           console.info(`[resources_admin] Using collection "${RES_COL}" (non-empty)`);
           return RES_COL;
         }
-      } catch (e) {
-        // ignore and try next
-      }
+      } catch (_) {}
     }
 
-    // 2) If both empty (or blocked), fall back to 'resources' if readable, else first readable
+    // Fallback: first readable
     for (const name of ["resources", "event_resources"]) {
       try {
         await db.collection(name).limit(1).get();
@@ -46,7 +45,6 @@
       } catch (_) {}
     }
 
-    // 3) Last resort
     RES_COL = "resources";
     RES_COL_LOCKED = true;
     console.warn(`[resources_admin] Could not verify collections; defaulting to "${RES_COL}"`);
@@ -68,7 +66,8 @@
 
   const r_id = document.getElementById("r_id");
   const r_name = document.getElementById("r_name");
-  const r_branch = document.getElementById("r_branch");
+  // Branch hidden in HTML; keep null-safe ref
+  const r_branch = document.getElementById("r_branch"); // may be null / hidden
   const r_address = document.getElementById("r_address");
   const r_capacity = document.getElementById("r_capacity");
   const r_owners = document.getElementById("r_owners");
@@ -166,6 +165,7 @@
     if (r_id) r_id.value = "";
     if (resDocId) resDocId.textContent = "";
     if (r_name) r_name.value = "";
+    // keep branch untouched (hidden); but clear if exists
     if (r_branch) r_branch.value = "";
     if (r_address) r_address.value = "";
     if (r_capacity) r_capacity.value = "0";
@@ -179,10 +179,11 @@
   btnResetForm?.addEventListener("click", resetForm);
   btnNewRes?.addEventListener("click", () => { resetForm(); r_name?.focus(); });
 
-  /* ---------- Load list ---------- */
+  /* ---------- Load list (HIDE BRANCH) ---------- */
   async function loadResourcesList() {
     if (!resTBody) return;
-    resTBody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-4">Loading…</td></tr>';
+    // table now has 5 columns (#,Name,Address,Capacity,Actions)
+    resTBody.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-4">Loading…</td></tr>';
 
     try {
       await resolveAndLockCollection();
@@ -194,14 +195,13 @@
         items.push({
           __docId: doc.id,
           name: d.name || "",
-          branch: d.branch || "",
           address: d.address || "",
           capacity: (d.capacity ?? 0),
         });
       });
 
       if (!items.length) {
-        resTBody.innerHTML = `<tr><td colspan="6" class="text-center text-muted py-4">
+        resTBody.innerHTML = `<tr><td colspan="5" class="text-center text-muted py-4">
           No data found in <span class="mono">${escapeHtml(RES_COL)}</span>.
         </td></tr>`;
         return;
@@ -214,7 +214,6 @@
         <tr data-docid="${escapeHtml(d.__docId)}">
           <td>${++i}</td>
           <td>${escapeHtml(d.name)}</td>
-          <td>${escapeHtml(d.branch)}</td>
           <td>${escapeHtml(d.address)}</td>
           <td class="text-end">${Number(d.capacity ?? 0)}</td>
           <td>
@@ -233,7 +232,7 @@
       `).join("");
     } catch (e) {
       console.error("[resources_admin] load error:", e);
-      resTBody.innerHTML = `<tr><td colspan="6" class="text-danger py-4">${escapeHtml(e.message || String(e))}</td></tr>`;
+      resTBody.innerHTML = `<tr><td colspan="5" class="text-danger py-4">${escapeHtml(e.message || String(e))}</td></tr>`;
     }
   }
 
@@ -257,10 +256,10 @@
         await fillFormByDocId(ref);
         window.scrollTo({ top: 0, behavior: "smooth" });
       } else if (act === "del") {
-        if (!confirm("Delete this resource? This cannot be undone.")) return;
+        if (!confirm("Delete this location? This cannot be undone.")) return;
         await ref.delete();
         await loadResourcesList();
-        showSaveMsg("Resource deleted.", "success");
+        showSaveMsg("Location deleted.", "success");
         resetForm();
       }
     } catch (e) {
@@ -269,7 +268,7 @@
     }
   });
 
-  /* ---------- Fill form ---------- */
+  /* ---------- Fill form (IGNORE BRANCH) ---------- */
   async function fillFormByDocId(ref) {
     const doc = await ref.get();
     if (!doc.exists) {
@@ -288,20 +287,21 @@
       }
     }
 
-    r_id.value = d.id || "";
-    resDocId.textContent = `# ${doc.id}`;
-    r_name.value = d.name || "";
-    r_branch.value = d.branch || "";
-    r_address.value = d.address || "";
-    r_capacity.value = d.capacity ?? 0;
-    r_owners.value = d.owners || "training@livingrealtykw.com";
-    r_requiresApproval.checked = !!d.requiresApproval;
-    r_type.value = d.type || "room";
-    r_mapsUrl.value = d.mapsUrl || "";
+    if (r_id) r_id.value = d.id || "";
+    if (resDocId) resDocId.textContent = `# ${doc.id}`;
+    if (r_name) r_name.value = d.name || "";
+    // branch ignored; but clear hidden field if exists
+    if (r_branch) r_branch.value = d.branch || "";
+    if (r_address) r_address.value = d.address || "";
+    if (r_capacity) r_capacity.value = d.capacity ?? 0;
+    if (r_owners) r_owners.value = d.owners || "training@livingrealtykw.com";
+    if (r_requiresApproval) r_requiresApproval.checked = !!d.requiresApproval;
+    if (r_type) r_type.value = d.type || "room";
+    if (r_mapsUrl) r_mapsUrl.value = d.mapsUrl || "";
     updateMapPreview(embed, d.mapsUrl || "");
   }
 
-  /* ---------- Save ---------- */
+  /* ---------- Save (NO BRANCH) ---------- */
   btnSaveRes?.addEventListener("click", async () => {
     saveMsg?.classList.add("d-none");
     saveBusy?.classList.remove("d-none");
@@ -309,23 +309,22 @@
     try {
       await resolveAndLockCollection();
 
-      if (!r_name.value.trim()) throw new Error("Name is required.");
-      if (!r_branch.value) throw new Error("Branch is required.");
-      if (!r_address.value.trim()) throw new Error("Address is required.");
+      if (!r_name?.value.trim()) throw new Error("Name is required.");
+      if (!r_address?.value.trim()) throw new Error("Address is required.");
 
-      const { mapsUrl, mapsEmbedUrl } = normalizeMapsUrl(r_mapsUrl.value, r_address.value);
-      const owners = (r_owners.value || "training@livingrealtykw.com").trim();
+      const { mapsUrl, mapsEmbedUrl } = normalizeMapsUrl(r_mapsUrl?.value || "", r_address?.value || "");
+      const owners = (r_owners?.value || "training@livingrealtykw.com").trim();
 
-      let businessId = (r_id.value || "").trim();
+      let businessId = (r_id?.value || "").trim();
 
       const payload = {
         id: businessId || "",
         name: r_name.value.trim(),
-        type: (r_type.value || "room"),
-        branch: r_branch.value,
+        type: (r_type?.value || "room"),
+        // branch intentionally not written in Version A
         address: r_address.value.trim(),
-        capacity: parseInt(r_capacity.value || "0", 10) || 0,
-        requiresApproval: !!r_requiresApproval.checked,
+        capacity: parseInt(r_capacity?.value || "0", 10) || 0,
+        requiresApproval: !!r_requiresApproval?.checked,
         owners,
         mapsUrl: mapsUrl || "",
         mapsEmbedUrl: mapsEmbedUrl || "",
@@ -339,7 +338,7 @@
         if (!businessId) {
           businessId = await generateUniqueId();
           payload.id = businessId;
-          r_id.value = businessId;
+          if (r_id) r_id.value = businessId;
         }
 
         await ref.set(payload, { merge: true });
@@ -356,8 +355,8 @@
         });
 
         CURRENT_DOCID = ref.id;
-        r_id.value = businessId;
-        resDocId.textContent = `# ${ref.id}`;
+        if (r_id) r_id.value = businessId;
+        if (resDocId) resDocId.textContent = `# ${ref.id}`;
         showSaveMsg("Created successfully.");
       }
 
