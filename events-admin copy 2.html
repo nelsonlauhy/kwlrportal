@@ -19,16 +19,15 @@
     .page-title { display:flex; align-items:center; gap:.5rem; }
     .filter-control { height:38px; padding:.375rem .75rem; font-size:.95rem; line-height:1.5; border-radius:.5rem; }
     .control-row { display:flex; align-items:center; gap:.5rem; flex-wrap:nowrap; }
-    #locationFilter { width:220px; } #searchInput { width:240px; }
-    @media (max-width:576px){
-      .control-row{flex-wrap:wrap!important;}
-      #locationFilter,#searchInput{width:100%;flex:1 1 100%;}
-    }
+    #branchFilter { width:130px; } #resourceFilter { width:180px; } #searchInput { width:240px; }
+    @media (max-width:576px){ .control-row{flex-wrap:wrap!important;} #branchFilter,#resourceFilter,#searchInput{width:100%;flex:1 1 100%;} }
 
     .month-header { font-weight:700; font-size:1.1rem; margin:1.25rem 0 .5rem; color:#334155; }
     .event-card { border:1px solid #e9ecef; border-radius:.75rem; padding:1rem; background:#fff; }
     .event-title { font-weight:700; }
     .event-meta { color:#6c757d; font-size:.9rem; }
+    .badge-branch { background:#eef2ff; color:#3730a3; }
+    .badge-room { background:#ecfeff; color:#155e75; }
     .muted{ color:#94a3b8; }
     .form-hint { font-size:.85rem; color:#64748b; }
     .weekday-pill { user-select:none; }
@@ -51,7 +50,7 @@
     .event-thumb {
       flex: 0 0 96px;
       width: 96px;
-      height: 54px;
+      height: 54px; /* compact 16:9 box */
       border-radius: .5rem;
       object-fit: cover;
       background: #f1f5f9;
@@ -144,9 +143,9 @@
         <div class="d-flex align-items-center gap-2">
           <span id="signedInBadge" class="badge text-bg-light border d-none"></span>
 
-          <!-- Manage Locations -->
+          <!-- NEW: Manage Resources button (opens separate admin page) -->
           <a class="btn btn-outline-secondary btn-sm" href="/resources-admin.html">
-            <i class="bi bi-geo-alt me-1"></i> Manage Locations
+            <i class="bi bi-geo-alt me-1"></i> Manage Resources
           </a>
 
           <button class="btn btn-primary btn-sm" id="btnNew">
@@ -161,9 +160,7 @@
           <select id="locationFilter" class="form-select filter-control" aria-label="Filter by location">
             <option value="ALL">All Locations</option>
           </select>
-          <input id="searchInput" class="form-control filter-control"
-                 placeholder="Search title, location, description…"
-                 aria-label="Search events" />
+          <input id="searchInput" class="form-control filter-control" placeholder="Search title, room, description…" aria-label="Search events" />
         </div>
         <div class="text-muted small"><span id="listLabel">Upcoming</span></div>
       </div>
@@ -199,57 +196,21 @@
                 </select>
               </div>
 
-              <!-- Location selection (keeps old IDs for minimal disruption) -->
               <div class="col-md-6">
-                <label class="form-label">Location</label>
+                <label class="form-label">Branch</label>
+                <select id="f_branch" class="form-select" required>
+                  <option value="">--</option>
+                  <option value="Markham">Markham</option>
+                  <option value="North Markham">North Markham</option>
+                  <option value="Midtown Toronto">Midtown Toronto</option>
+                  <option value="Mississauga">Mississauga</option>
+                </select>
+              </div>
+
+              <div class="col-md-8">
+                <label class="form-label">Resource</label>
                 <select id="f_resourceId" class="form-select"></select>
-                <div class="form-hint">Select an existing location, or type a new one below to save.</div>
-              </div>
-
-              <div class="col-md-6">
-                <label class="form-label">New Location (optional)</label>
-                <input type="text" class="form-control" id="f_newLocationName" maxlength="120"
-                       placeholder="e.g. Training Room">
-              </div>
-
-              <!-- New location details (only shown when typing new name) -->
-              <div class="col-12 d-none" id="newLocationDetailsWrap">
-                <div class="border rounded p-3 bg-light">
-                  <div class="d-flex align-items-center justify-content-between mb-2">
-                    <div class="fw-semibold"><i class="bi bi-geo-alt me-1"></i>New Location Details</div>
-                    <span class="text-muted small">Will be saved to Locations</span>
-                  </div>
-
-                  <div class="row g-3">
-                    <div class="col-md-10">
-                      <label class="form-label">Address</label>
-                      <input type="text" class="form-control" id="f_newLocationAddress" maxlength="200"
-                             placeholder="8 Steelcase Road West, Markham, ON, L3R 1B2">
-                      <div class="form-hint">We will generate Google Maps links automatically.</div>
-                    </div>
-
-                    <!-- Owners (HIDDEN, keep ID so JS won't break) -->
-                    <div class="col-md-2 d-none">
-                      <label class="form-label">Owners</label>
-                      <input type="text" class="form-control" id="f_newLocationOwners"
-                             value="training@livingrealtykw.com">
-                      <div class="form-hint">Default owner email.</div>
-                    </div>
-
-                    <!-- Maps URL / Embed URL (REMOVED from UI to reduce confusion) -->
-
-                    <!-- Map Preview (optional UX) -->
-                    <div class="col-12 d-none" id="newLocationMapPreviewWrap">
-                      <label class="form-label mb-1">Map Preview</label>
-                      <iframe id="newLocationMapPreview"
-                              class="w-100 rounded border"
-                              style="height:220px"
-                              loading="lazy"
-                              referrerpolicy="no-referrer-when-downgrade"></iframe>
-                      <div class="form-hint mt-1">Preview will appear after you type an address.</div>
-                    </div>
-                  </div>
-                </div>
+                <div class="form-hint">Selecting a resource will autofill name & default capacity.</div>
               </div>
 
               <div class="col-md-6">
@@ -316,7 +277,7 @@
                 </select>
               </div>
               <div class="col-md-6">
-                <label class="form-label">Location Name (auto)</label>
+                <label class="form-label">Resource Name (auto)</label>
                 <input type="text" class="form-control" id="f_resourceName" readonly>
               </div>
 
@@ -421,10 +382,12 @@
               </div>
             </div>
 
+            <!-- top/bottom messages -->
             <div class="alert alert-danger mt-3 d-none" id="editErr"></div>
             <div class="alert alert-success mt-3 d-none" id="editOk">Saved.</div>
           </div>
 
+          <!-- footer with inline error (left) -->
           <div class="modal-footer d-flex align-items-center justify-content-end gap-2">
             <div id="editErrInline" class="text-danger small me-auto d-none"></div>
             <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Close</button>
@@ -537,7 +500,7 @@
   <!-- Firebase config (defines window.db & storage) -->
   <script src="./js/firebaseConfig.js"></script>
 
-  <!-- MSAL then YOUR auth wrapper -->
+  <!-- MSAL then YOUR auth wrapper (relative path like index.html) -->
   <script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@2.39.0/lib/msal-browser.min.js"></script>
   <script src="./js/auth.js"></script>
 
@@ -569,6 +532,7 @@
           </div>`;
       }
 
+      // Wait for auth init
       async function waitForAuth(maxMs = 6000, stepMs = 150) {
         if (window._authReady && typeof window._authReady.then === 'function') {
           try { await Promise.race([window._authReady, new Promise((_,rej)=>setTimeout(()=>rej(new Error('timeout')), maxMs))]); }
@@ -591,7 +555,7 @@
       let account = window._auth.getActiveAccount() || window._auth.getAllAccounts()[0];
       if (!account) {
         try {
-          const loginResp = await window._auth.signIn(['User.Read']);
+          const loginResp = await window._auth.signIn(['User.Read']); // popup with redirect fallback
           account = loginResp && loginResp.account;
           if (account) window._auth.setActiveAccount(account);
         } catch (e) {
@@ -619,9 +583,11 @@
         return;
       }
 
+      // Expose current user to page scripts (events_admin.js uses this)
       window.KWLR = window.KWLR || {};
       window.KWLR.currentUser = { name, email, oid, domain };
 
+      // NAVBAR: unhide + populate + wire logout
       try {
         if (nav) nav.classList.remove('d-none');
         if (navUser) navUser.textContent = name ? `${name} (${email})` : email;
@@ -634,6 +600,7 @@
         console.warn('[navbar] wiring issue:', e);
       }
 
+      // Decorate UI and open app
       if (badge) {
         badge.textContent = `${name || email} (${domain})`;
         badge.classList.remove('d-none');
@@ -643,12 +610,11 @@
     })();
   </script>
 
-  <!-- NEW: Locations hook + create-on-demand (must load before events_admin.js) -->
-  <script src="/js/events_admin_locations_vA.js" defer></script>
-
-  <!-- Existing Page Logic -->
+  <!-- Page Logic -->
   <script src="./js/events_admin.js" defer></script>
   <script src="./js/events_admin_regs.js" defer></script>
 
+  <!-- NEW: Populate Resource dropdown from Firestore (read-only) -->
+  <script src="/js/events_admin_resources_hook.js" defer></script>
 </body>
 </html>
