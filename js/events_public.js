@@ -455,7 +455,7 @@
 
   function renderList() {
     containerCal.style.display = "none";
-    containerList.style.display = "";
+    containerList.style.display = "grid";
 
     if (!filtered.length) {
       containerList.innerHTML = `<div class="text-center text-secondary py-5">No events found.</div>`;
