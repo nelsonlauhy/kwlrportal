@@ -57,7 +57,10 @@
 
   const evShortDescEl= document.getElementById("evShortDesc");
   const evDetailDescEl = document.getElementById("evDetailDesc");
+
+  // NOTE: We still query this element, but we'll always hide it (no seats display)
   const evCapacityEl = document.getElementById("evCapacity");
+
   const btnOpenRegister = document.getElementById("btnOpenRegister");
 
   // ---------- Config ----------
@@ -77,7 +80,7 @@
   const resourceCache = Object.create(null);
 
   // calendar state
-  let currentView = "list";
+  let currentView = "month";
   let cursorDate  = truncateToDay(new Date());
 
   // ---------- Utils ----------
@@ -373,11 +376,7 @@
     const start = toDate(e.start);
     const end   = toDate(e.end);
     const dateLine = `${fmtDateTime(start)} – ${fmtDateTime(end)}`;
-    const remaining = (typeof e.remaining === "number") ? e.remaining : null;
-    const capacity  = (typeof e.capacity === "number") ? e.capacity : null;
-    const remainTxt = (remaining != null && capacity != null)
-      ? `${remaining}/${capacity} seats left`
-      : (remaining != null ? `${remaining} seats left` : "");
+    // NOTE: We keep remaining/capacity for logic elsewhere, but DO NOT display.
     const color = normalizeHex(e.color || "#3b82f6");
 
     const bannerUrl = pickBannerUrl(e);
@@ -402,7 +401,7 @@
           ${e.description ? `<div class="mt-2 text-secondary">${esc(e.description)}</div>` : ""}
         </div>
         <div class="event-cta small text-primary d-flex align-items-start justify-content-end">
-          ${remainTxt ? `<div class="small text-muted me-3">${esc(remainTxt)}</div>` : ""}
+          <!-- Seats left intentionally hidden -->
           <div>Details &raquo;</div>
         </div>
       </div>
@@ -668,9 +667,7 @@
   function openEventDetails(ev) {
     const s = toDate(ev.start), e = toDate(ev.end);
     const dateLine = `${fmtDateTime(s)} – ${fmtDateTime(e)}`;
-    const remainTxt = (typeof ev.remaining === "number" && typeof ev.capacity === "number")
-      ? `${ev.remaining}/${ev.capacity} seats left`
-      : (typeof ev.remaining === "number" ? `${ev.remaining} seats left` : "");
+    // NOTE: remainTxt computed before, but we now deliberately do NOT show it.
     const canReg = canRegister(ev);
     const color = normalizeHex(ev.color || "#3b82f6");
 
@@ -738,7 +735,12 @@
       else { evDetailDescEl.style.display = "none"; }
     }
 
-    if (evCapacityEl) evCapacityEl.textContent = remainTxt || "";
+    // HIDE seats/capacity area in modal
+    if (evCapacityEl) {
+      evCapacityEl.textContent = "";
+      evCapacityEl.style.display = "none";
+      evCapacityEl.classList.add("d-none");
+    }
 
     if (btnOpenRegister) {
       btnOpenRegister.disabled = !canReg;
