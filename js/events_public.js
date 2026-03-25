@@ -854,8 +854,16 @@
 
   // ---------- Init ----------
   document.addEventListener("DOMContentLoaded", async () => {
-    if (!window.db) { containerList.innerHTML = `<div class="text-danger py-4 text-center">Firestore not initialized.</div>`; return; }
+    if (!window.db) {
+      containerList.innerHTML = `<div class="text-danger py-4 text-center">Firestore not initialized.</div>`;
+      return;
+    }
+
     injectPastEventStyles();
+
+    containerList.style.display = "none";
+    containerCal.style.display = "";
+
     showPastEvents = true;
     const pastToggle = document.getElementById("togglePastEvents");
     if (pastToggle) pastToggle.checked = true;
@@ -865,25 +873,29 @@
 
     // Filters/search
     branchFilter.addEventListener("change", applyFilter);
-    searchInput.addEventListener("input", () => { clearTimeout(searchInput._t); searchInput._t = setTimeout(applyFilter, 120); });
+    searchInput.addEventListener("input", () => {
+      clearTimeout(searchInput._t);
+      searchInput._t = setTimeout(applyFilter, 120);
+    });
 
     // View switch
-    btnMonth.addEventListener("click", () => { currentView="month"; render(); });
-    btnWeek .addEventListener("click", () => { currentView="week";  render(); });
-    btnDay  .addEventListener("click", () => { currentView="day";   render(); });
-    btnList .addEventListener("click", () => { currentView="list";  render(); });
+    btnMonth.addEventListener("click", () => { currentView = "month"; render(); });
+    btnWeek.addEventListener("click", () => { currentView = "week"; render(); });
+    btnDay.addEventListener("click", () => { currentView = "day"; render(); });
+    btnList.addEventListener("click", () => { currentView = "list"; render(); });
 
     // Date nav
     btnToday.addEventListener("click", gotoToday);
-    btnPrev .addEventListener("click", prevPeriod);
-    btnNext .addEventListener("click", nextPeriod);
+    btnPrev.addEventListener("click", prevPeriod);
+    btnNext.addEventListener("click", nextPeriod);
 
-    document.getElementById("togglePastEvents").addEventListener("change", function(e) {
-      showPastEvents = e.target.checked;
-      applyFilter();
-    });
+    if (pastToggle) {
+      pastToggle.addEventListener("change", function(e) {
+        showPastEvents = e.target.checked;
+        applyFilter();
+      });
+    }
 
     calLabel.textContent = showPastEvents ? "All Events" : "Upcoming";
-
   });
 })();
