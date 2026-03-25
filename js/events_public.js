@@ -555,7 +555,7 @@
       return s < end && ee > start;
     });
 
-    const hours = Array.from({ length: 24 }, (_, i) => i);
+    const hours = Array.from({ length: 13 }, (_, i) => i + 7);
 
     const cols = [];
     for (let d = 0; d < 7; d++) {
@@ -580,7 +580,7 @@
 
         const startHour = s.getHours() + s.getMinutes() / 60;
         const durHours = Math.max(0.5, (ee - s) / (1000 * 60 * 60));
-        const top = startHour * 44;
+        const top = (startHour - 7) * 44;
         const height = Math.max(20, durHours * 44 - 6);
 
         const display = getEventDisplayColors(e);
@@ -640,8 +640,8 @@
       return s < end && ee > start;
     }).sort((a, b) => (toDate(a.start)?.getTime() || 0) - (toDate(b.start)?.getTime() || 0));
 
-    const hours = Array.from({ length: 24 }, (_, i) => i);
-
+  
+    const hours = Array.from({ length: 13 }, (_, i) => i + 7);
     const slots = hours.map(() => `<div class="time-slot"></div>`).join("");
 
     const pills = evs.map(e => {
@@ -650,7 +650,7 @@
 
       const startHour = s.getHours() + s.getMinutes() / 60;
       const durHours = Math.max(0.5, (ee - s) / (1000 * 60 * 60));
-      const top = startHour * 44;
+      const top = (startHour - 7) * 44;
       const height = Math.max(20, durHours * 44 - 6);
 
       const display = getEventDisplayColors(e);
