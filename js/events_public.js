@@ -538,49 +538,88 @@
     containerList.style.display = "none";
     containerCal.style.display = "";
 
-    const wkStart = startOfWeek(cursorDate);
-    const wkEnd = addDays(wkStart, 7);
+    const start = new Date(cursorDate);
+    start.setDate(start.getDate() - start.getDay());
+    start.setHours(0, 0, 0, 0);
 
-    const events = filtered.filter(ev => overlaps(toDate(ev.start), toDate(ev.end)||toDate(ev.start), wkStart, wkEnd));
+    const end = new Date(start);
+    end.setDate(start.getDate() + 7);
 
-    let html = `<div class="week-wrap">`;
-    html += `<div class="time-col">` + Array.from({length:24}, (_,h)=>`<div class="time-slot-label">${String(h).padStart(2,"0")}:00</div>`).join("") + `</div>`;
+    calLabel.textContent =
+      `${start.toLocaleDateString(undefined, { month: "short", day: "numeric" })} – ${new Date(end - 1).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}`;
 
-    for (let day=0; day<7; day++) {
-      const date = addDays(wkStart, day);
-      const dayEvents = events.filter(ev => sameDay(toDate(ev.start), date));
+    const evs = filtered.filter(ev => {
+      const s = toDate(ev.start);
+      const ee = toDate(ev.end) || s;
+      if (!s || !ee) return false;
+      return s < end && ee > start;
+    });
 
-      html += `<div class="day-col">
-        <div class="day-col-head ${sameDay(date,new Date()) ? "today" : ""}">
-          <div>${date.toLocaleDateString(undefined,{weekday:"short"})}</div>
-          <div>${date.getMonth()+1}/${date.getDate()}</div>
-        </div>
-        <div class="day-grid">`;
+    const hours = Array.from({ length: 24 }, (_, i) => i);
 
-      for (let h=0; h<24; h++) html += `<div class="hour-line"></div>`;
+    const cols = [];
+    for (let d = 0; d < 7; d++) {
+      const dayDate = new Date(start);
+      dayDate.setDate(start.getDate() + d);
 
-      for (const e of dayEvents) {
-        const s = toDate(e.start), en = toDate(e.end) || new Date(s.getTime()+60*60*1000);
-        const top = ((s.getHours()*60 + s.getMinutes()) / 60) * 56;
-        const durMin = Math.max(30, Math.round((en - s)/60000));
-        const height = clamp((durMin/60)*56 - 4, 24, 56*24);
+      const dayStart = new Date(dayDate);
+      const dayEnd = new Date(dayDate);
+      dayEnd.setDate(dayEnd.getDate() + 1);
+
+      const dayEvents = evs.filter(e => {
+        const s = toDate(e.start);
+        const ee = toDate(e.end) || s;
+        return s && ee && s < dayEnd && ee > dayStart;
+      }).sort((a, b) => (toDate(a.start)?.getTime() || 0) - (toDate(b.start)?.getTime() || 0));
+
+      const slots = hours.map(() => `<div class="time-slot"></div>`).join("");
+
+      const pills = dayEvents.map(e => {
+        const s = toDate(e.start);
+        const ee = toDate(e.end) || new Date(s.getTime() + 60 * 60 * 1000);
+
+        const startHour = s.getHours() + s.getMinutes() / 60;
+        const durHours = Math.max(0.5, (ee - s) / (1000 * 60 * 60));
+        const top = startHour * 44;
+        const height = Math.max(20, durHours * 44 - 6);
+
         const display = getEventDisplayColors(e);
         const full = display.disabled ? "full" : "";
         const pastCls = display.past ? "past" : "";
 
-        html += `<button class="evt-pill ${full} ${pastCls}" data-id="${esc(e._id)}"
-              style="top:${top+2}px;height:${height}px;background:${esc(display.bg)};border-color:${esc(display.border)};color:${esc(display.text)}"
-              title="${esc(e.title || "")}">${esc(e.title || "Event")}</button>`;
-      }
+        return `<button class="evt-pill ${full} ${pastCls}" data-id="${esc(e._id)}"
+                      style="top:${top + 2}px;height:${height}px;background:${esc(display.bg)};border-color:${esc(display.border)};color:${esc(display.text)}"
+                      title="${esc(e.title || "")}">
+                  ${esc(e.title || "Event")}
+                </button>`;
+      }).join("");
 
-      html += `</div></div>`;
+      cols.push(`
+        <div class="time-col position-relative">
+          ${slots}
+          ${pills}
+        </div>
+      `);
     }
 
-    html += `</div>`;
-    containerCal.innerHTML = html;
+    const heads = ["", "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((name, idx) => {
+      if (idx === 0) return `<div class="time-head"></div>`;
+      const d = new Date(start);
+      d.setDate(start.getDate() + idx - 1);
+      return `<div class="time-head">${name}<br><span class="muted">${d.getMonth() + 1}/${d.getDate()}</span></div>`;
+    }).join("");
 
-    const endLabel = addDays(wkStart, 6);
-    calLabel.textContent = `${fmtDate(wkStart)} – ${fmtDate(endLabel)}`;
+    const labels = hours.map(h => `<div class="slot-label">${String(h).padStart(2, "0")}:00</div>`).join("");
+
+    containerCal.innerHTML = `
+      <div class="time-grid">
+        ${heads}
+        <div class="time-col">
+          ${labels}
+        </div>
+        ${cols.join("")}
+      </div>
+    `;
   }
 
   // ---------- Day render ----------
@@ -588,38 +627,63 @@
     containerList.style.display = "none";
     containerCal.style.display = "";
 
-    const dayStart = truncateToDay(cursorDate);
-    const dayEnd = addDays(dayStart, 1);
-    const events = filtered.filter(ev => overlaps(toDate(ev.start), toDate(ev.end)||toDate(ev.start), dayStart, dayEnd));
+    const start = truncateToDay(cursorDate);
+    const end = new Date(start);
+    end.setDate(start.getDate() + 1);
 
-    let html = `<div class="day-single-wrap">
-      <div class="time-col">` + Array.from({length:24}, (_,h)=>`<div class="time-slot-label">${String(h).padStart(2,"0")}:00</div>`).join("") + `</div>
-      <div class="day-single">
-        <div class="day-col-head ${sameDay(dayStart,new Date()) ? "today" : ""}">
-          <div>${dayStart.toLocaleDateString(undefined,{weekday:"long"})}</div>
-          <div>${dayStart.getMonth()+1}/${dayStart.getDate()}</div>
-        </div>
-        <div class="day-grid">`;
+    calLabel.textContent = fmtDate(start);
 
-    for (let h=0; h<24; h++) html += `<div class="hour-line"></div>`;
+    const evs = filtered.filter(ev => {
+      const s = toDate(ev.start);
+      const ee = toDate(ev.end) || s;
+      if (!s || !ee) return false;
+      return s < end && ee > start;
+    }).sort((a, b) => (toDate(a.start)?.getTime() || 0) - (toDate(b.start)?.getTime() || 0));
 
-    for (const e of events.sort((a,b)=> (toDate(a.start)?.getTime()||0) - (toDate(b.start)?.getTime()||0))) {
-      const s = toDate(e.start), en = toDate(e.end) || new Date(s.getTime()+60*60*1000);
-      const top = ((s.getHours()*60 + s.getMinutes()) / 60) * 56;
-      const durMin = Math.max(30, Math.round((en - s)/60000));
-      const height = clamp((durMin/60)*56 - 4, 24, 56*24);
+    const hours = Array.from({ length: 24 }, (_, i) => i);
+
+    const slots = hours.map(() => `<div class="time-slot"></div>`).join("");
+
+    const pills = evs.map(e => {
+      const s = toDate(e.start);
+      const ee = toDate(e.end) || new Date(s.getTime() + 60 * 60 * 1000);
+
+      const startHour = s.getHours() + s.getMinutes() / 60;
+      const durHours = Math.max(0.5, (ee - s) / (1000 * 60 * 60));
+      const top = startHour * 44;
+      const height = Math.max(20, durHours * 44 - 6);
+
       const display = getEventDisplayColors(e);
       const full = display.disabled ? "full" : "";
       const pastCls = display.past ? "past" : "";
 
-      html += `<button class="evt-pill ${full} ${pastCls}" data-id="${esc(e._id)}"
-            style="top:${top+2}px;height:${height}px;background:${esc(display.bg)};border-color:${esc(display.border)};color:${esc(display.text)}"
-            title="${esc(e.title || "")}">${esc(e.title || "Event")}</button>`;
-    }
+      return `<button class="evt-pill ${full} ${pastCls}" data-id="${esc(e._id)}"
+                    style="top:${top + 2}px;height:${height}px;background:${esc(display.bg)};border-color:${esc(display.border)};color:${esc(display.text)}"
+                    title="${esc(e.title || "")}">
+                ${esc(e.title || "Event")}
+              </button>`;
+    }).join("");
 
-    html += `</div></div></div>`;
-    containerCal.innerHTML = html;
-    calLabel.textContent = fmtDate(dayStart);
+    const head = `
+      <div class="time-head"></div>
+      <div class="time-head" style="grid-column: span 7; text-align:left;">
+        ${fmtDate(start)}
+      </div>`;
+
+    const labels = hours.map(h => `<div class="slot-label">${String(h).padStart(2, "0")}:00</div>`).join("");
+
+    containerCal.innerHTML = `
+      <div class="time-grid">
+        ${head}
+        <div class="time-col">
+          ${labels}
+        </div>
+        <div class="time-col position-relative" style="grid-column: span 7;">
+          ${slots}
+          ${pills}
+        </div>
+      </div>
+    `;
   }
 
   // ---------- Master render ----------
