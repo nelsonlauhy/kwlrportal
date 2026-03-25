@@ -241,6 +241,36 @@
       height:auto;
       object-fit:cover;
     }
+
+    .event-banner-wrap {
+      flex: 0 0 220px;
+      width: 220px;
+      max-width: 800px;
+      max-height: 800px;
+      border-radius: .5rem;
+      overflow: hidden;
+      background: #f8fafc;
+      border: 1px solid #e9ecef;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .event-banner-img {
+      display: block;
+      width: 100%;
+      height: auto;
+      max-width: 800px;
+      max-height: 800px;
+      object-fit: cover;
+    }
+
+    @media (max-width: 480px) {
+      .event-banner-wrap {
+        flex-basis: 110px;
+        width: 110px;
+      }
+    }
   </style>
 </head>
 <body class="bg-light">
