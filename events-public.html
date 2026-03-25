@@ -66,13 +66,20 @@
     .event-card:hover { background:#fafcff; }
 
     /* Thumbnail */
-    .event-thumb { flex:0 0 140px; width:140px; }
+    .event-thumb {
+      flex: 0 0 220px;
+      width: 220px;
+      max-width: 800px;
+      max-height: 800px;
+    }
     @media (max-width:480px){
       .event-thumb { flex-basis:110px; width:110px; }
     }
 
     .thumb-box{
       width:100%;
+      max-width: 800px;
+      max-height: 800px;
       aspect-ratio:4 / 3;
       border-radius:.5rem;
       overflow:hidden;
@@ -86,6 +93,8 @@
       display:block;
       width:100%;
       height:100%;
+      max-width: 800px;
+      max-height: 800px;
       object-fit:cover;
     }
     .thumb-fallback{
