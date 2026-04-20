@@ -1,8 +1,9 @@
 // Public Events (Firestore v8)
 // Views: Month / Week / Day / List
-// - Filter by branch (All locations), search
-// - Click event to open modal with address, reliable Google Maps LINK (hmapsUrl preferred),
-//   and optional inline EMBED only when we have placeId or lat/lng (or an Embed API key).
+// - Force default month view on load
+// - Reset view on pageshow to avoid browser restoring old list view
+// - Supports branch filter, search, modal detail, registration
+
 (function() {
   // ---------- DOM ----------
   const containerList = document.getElementById("eventsContainer");
@@ -22,7 +23,7 @@
 
   // Registration modal
   const regModalEl = document.getElementById("regModal");
-  const regModal   = new bootstrap.Modal(regModalEl);
+  const regModal   = regModalEl ? new bootstrap.Modal(regModalEl) : null;
   const regForm    = document.getElementById("regForm");
   const regEventSummary = document.getElementById("regEventSummary");
   const attendeeName  = document.getElementById("attendeeName");
@@ -35,7 +36,7 @@
 
   // Event Details modal
   const eventModalEl = document.getElementById("eventModal");
-  const eventModal   = new bootstrap.Modal(eventModalEl);
+  const eventModal   = eventModalEl ? new bootstrap.Modal(eventModalEl) : null;
   const evTitleEl    = document.getElementById("evTitle");
   const evMetaEl     = document.getElementById("evMeta");
   const evDateLineEl = document.getElementById("evDateLine");
@@ -43,7 +44,8 @@
   const evDetailDescEl = document.getElementById("evDetailDesc");
   const evCapacityEl = document.getElementById("evCapacity");
   const btnOpenRegister = document.getElementById("btnOpenRegister");
-  // NEW: Banner in modal
+
+  // Banner in modal
   const evBannerBox = document.getElementById("evBannerBox");
   const evBannerImg = document.getElementById("evBannerImg");
 
@@ -56,9 +58,11 @@
   const evMapIframe   = document.getElementById("evMapIframe");
 
   // ---------- Config ----------
-  // Optional: set in firebaseConfig.js to enable precise embed:
-  //   window.MAPS_EMBED_API_KEY = "YOUR_KEY";
-  const MAPS_EMBED_API_KEY = (typeof window !== "undefined" && window.MAPS_EMBED_API_KEY) ? String(window.MAPS_EMBED_API_KEY) : null;
+  const MAPS_EMBED_API_KEY =
+    (typeof window !== "undefined" && window.MAPS_EMBED_API_KEY)
+      ? String(window.MAPS_EMBED_API_KEY)
+      : null;
+
   const MAP_MODE = "auto"; // "auto" | "link"
 
   // ---------- State ----------
@@ -66,47 +70,114 @@
   let filtered  = [];
   let unsubscribeEvents = null;
 
-  // cache resources for address/mapping
   const resourceCache = Object.create(null);
 
-  // calendar state
+  // Force default state
   let currentView = "month";
   let cursorDate  = truncateToDay(new Date());
-
-  // ADD THIS NEW STATE
   let showPastEvents = false;
 
-  // registration target
   let regTarget = null;
 
   // ---------- Utils ----------
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, m => (
     { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[m]
   ));
-  function stripHtmlToText(html) { const tmp=document.createElement("div"); tmp.innerHTML=html||""; return (tmp.textContent||tmp.innerText||"").trim(); }
-  function toDate(ts){ if(!ts) return null; if(typeof ts.toDate==="function") return ts.toDate(); const d=new Date(ts); return isNaN(d)?null:d; }
-  function fmtDateTime(d){ if(!d) return ""; const pad=n=>String(n).padStart(2,"0"); return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;}
-  function fmtDate(d){ if(!d) return ""; return d.toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric",year:"numeric"});}
-  function truncateToDay(d){ const x=new Date(d); x.setHours(0,0,0,0); return x; }
-  function monthKey(d){ return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`; }
-  function monthLabel(d){ return d.toLocaleString(undefined,{month:"long",year:"numeric"}); }
-  function normalizeHex(c){ if(!c) return "#3b82f6"; let x=String(c).trim(); if(!x.startsWith("#")) x="#"+x; if(x.length===4) x="#"+x[1]+x[1]+x[2]+x[2]+x[3]+x[3]; return x.toLowerCase(); }
-  function idealTextColor(bgHex){ const h=normalizeHex(bgHex).slice(1); const r=parseInt(h.substring(0,2),16), g=parseInt(h.substring(2,4),16), b=parseInt(h.substring(4,6),16); const yiq=(r*299+g*587+b*114)/1000; return yiq>=150?"#000000":"#ffffff"; }
-  function ensureHttps(url){
-    let s=String(url||"").trim();
-    if(!s) return "";
-    if(s.startsWith("ttps://")) s="h"+s;
-    if(/^gs:\/\//i.test(s)) return ""; // skip Cloud Storage URIs unless handled elsewhere
-    if(!/^https?:\/\//i.test(s) && !s.startsWith("/")) s="https://"+s; // allow site-relative paths
+
+  function stripHtmlToText(html) {
+    const tmp = document.createElement("div");
+    tmp.innerHTML = html || "";
+    return (tmp.textContent || tmp.innerText || "").trim();
+  }
+
+  function toDate(ts) {
+    if (!ts) return null;
+    if (typeof ts.toDate === "function") return ts.toDate();
+    const d = new Date(ts);
+    return isNaN(d) ? null : d;
+  }
+
+  function fmtDateTime(d) {
+    if (!d) return "";
+    const pad = n => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+
+  function fmtDate(d) {
+    if (!d) return "";
+    return d.toLocaleDateString(undefined, {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      year: "numeric"
+    });
+  }
+
+  function truncateToDay(d) {
+    const x = new Date(d);
+    x.setHours(0,0,0,0);
+    return x;
+  }
+
+  function monthLabel(d) {
+    return d.toLocaleString(undefined, { month: "long", year: "numeric" });
+  }
+
+  function normalizeHex(c) {
+    if (!c) return "#3b82f6";
+    let x = String(c).trim();
+    if (!x.startsWith("#")) x = "#" + x;
+    if (x.length === 4) x = "#" + x[1]+x[1]+x[2]+x[2]+x[3]+x[3];
+    return x.toLowerCase();
+  }
+
+  function idealTextColor(bgHex) {
+    const h = normalizeHex(bgHex).slice(1);
+    const r = parseInt(h.substring(0,2),16);
+    const g = parseInt(h.substring(2,4),16);
+    const b = parseInt(h.substring(4,6),16);
+    const yiq = (r*299 + g*587 + b*114) / 1000;
+    return yiq >= 150 ? "#000000" : "#ffffff";
+  }
+
+  function ensureHttps(url) {
+    let s = String(url || "").trim();
+    if (!s) return "";
+    if (s.startsWith("ttps://")) s = "h" + s;
+    if (/^gs:\/\//i.test(s)) return "";
+    if (!/^https?:\/\//i.test(s) && !s.startsWith("/")) s = "https://" + s;
     return s;
   }
-  function clearRegAlerts(){ [regWarn, regErr, regOk].forEach(el => { el.classList.add("d-none"); el.textContent=""; }); }
-  function isPastEvent(ev){
+
+  function clearRegAlerts() {
+    [regWarn, regErr, regOk].forEach(el => {
+      if (!el) return;
+      el.classList.add("d-none");
+      el.textContent = "";
+    });
+  }
+
+  function isPastEvent(ev) {
     const now = new Date();
     const end = toDate(ev.end) || toDate(ev.start);
     return !!(end && end < now);
   }
-  function getEventDisplayColors(ev, fallbackDisabled=false){
+
+  function canRegister(ev) {
+    const now = new Date();
+    const opens = toDate(ev.regOpensAt);
+    const closes = toDate(ev.regClosesAt);
+    const start = toDate(ev.start);
+
+    if (ev.allowRegistration === false) return false;
+    if (opens && now < opens) return false;
+    if (closes && now > closes) return false;
+    if (start && now > start) return false;
+    if (typeof ev.remaining === "number" && ev.remaining <= 0) return false;
+    return true;
+  }
+
+  function getEventDisplayColors(ev, fallbackDisabled = false) {
     const past = isPastEvent(ev);
     if (past) {
       return { bg: "#e5e7eb", border: "#d1d5db", text: "#6b7280", past: true, disabled: true };
@@ -118,7 +189,8 @@
     const bg = normalizeHex(ev.color || "#3b82f6");
     return { bg, border: bg, text: idealTextColor(bg), past: false, disabled: false };
   }
-  function injectPastEventStyles(){
+
+  function injectPastEventStyles() {
     if (document.getElementById("past-event-style-patch")) return;
     const style = document.createElement("style");
     style.id = "past-event-style-patch";
@@ -150,12 +222,15 @@
     document.head.appendChild(style);
   }
 
-  // Choose a banner URL (thumbnail, used in list)
-  function pickBannerUrl(ev){
+  function pickBannerUrl(ev) {
     const nested = (obj, path) => {
-      try { return path.split(".").reduce((a,k) => (a && a[k] != null ? a[k] : undefined), obj); }
-      catch(_){ return undefined; }
+      try {
+        return path.split(".").reduce((a, k) => (a && a[k] != null ? a[k] : undefined), obj);
+      } catch (_) {
+        return undefined;
+      }
     };
+
     const candidates = [
       ev.bannerThumbUrl,
       ev.bannerUrl,
@@ -169,19 +244,22 @@
       ev.thumbnailUrl
     ].filter(Boolean);
 
-    for (const raw of candidates){
+    for (const raw of candidates) {
       const u = ensureHttps(raw);
       if (u) return u;
     }
     return "";
   }
 
-  // Prefer full-size for modal banner
-  function pickBannerUrlFull(ev){
+  function pickBannerUrlFull(ev) {
     const nested = (obj, path) => {
-      try { return path.split(".").reduce((a,k) => (a && a[k] != null ? a[k] : undefined), obj); }
-      catch(_){ return undefined; }
+      try {
+        return path.split(".").reduce((a, k) => (a && a[k] != null ? a[k] : undefined), obj);
+      } catch (_) {
+        return undefined;
+      }
     };
+
     const candidates = [
       ev.bannerUrl,
       nested(ev,"banner.url"),
@@ -195,7 +273,7 @@
       ev.thumbnail
     ].filter(Boolean);
 
-    for (const raw of candidates){
+    for (const raw of candidates) {
       const u = ensureHttps(raw);
       if (u) return u;
     }
@@ -213,10 +291,12 @@
       lng         : (ev.lng ?? res?.lng ?? null),
       label       : (ev.resourceName || ev.title || res?.name || "Location")
     };
+
     if (meta.lat != null) meta.lat = Number(meta.lat);
     if (meta.lng != null) meta.lng = Number(meta.lng);
     if (!meta.hmapsUrl) delete meta.hmapsUrl;
-    if (!meta.mapsUrl)  delete meta.mapsUrl;
+    if (!meta.mapsUrl) delete meta.mapsUrl;
+
     return meta;
   }
 
@@ -224,7 +304,6 @@
     const labelPart = meta.label ? encodeURIComponent(meta.label) : "";
     const addrPart  = meta.address ? encodeURIComponent(meta.address) : "";
 
-    // Link priority: hmapsUrl > mapsUrl > placeId > lat/lng > address
     let linkUrl = "";
     if (meta.hmapsUrl) linkUrl = meta.hmapsUrl;
     else if (meta.mapsUrl) linkUrl = meta.mapsUrl;
@@ -232,7 +311,6 @@
     else if (isFinite(meta.lat) && isFinite(meta.lng)) linkUrl = `https://www.google.com/maps?q=${meta.lat},${meta.lng}`;
     else if (meta.address) linkUrl = `https://www.google.com/maps?q=${labelPart ? labelPart + "%20" : ""}${addrPart}`;
 
-    // Embed target (optional)
     let embedUrl = null;
     if (MAP_MODE !== "link") {
       if (MAPS_EMBED_API_KEY && meta.mapsPlaceId) {
@@ -243,6 +321,7 @@
         embedUrl = `https://www.google.com/maps?q=${addrPart}&output=embed`;
       }
     }
+
     return { linkUrl, embedUrl, hasEmbed: !!embedUrl };
   }
 
@@ -255,15 +334,16 @@
 
     if (nothing) {
       evAddressRow.classList.add("d-none");
-      evAddressText.textContent = "";
-      evMapEmbed?.classList.add("d-none");
-      evMapToggle?.classList.add("d-none");
+      if (evAddressText) evAddressText.textContent = "";
+      if (evMapEmbed) evMapEmbed.classList.add("d-none");
+      if (evMapToggle) evMapToggle.classList.add("d-none");
       if (evMapIframe) evMapIframe.src = "about:blank";
       return;
     }
 
     evAddressRow.classList.remove("d-none");
-    evAddressText.textContent = meta.address || "Location available";
+    if (evAddressText) evAddressText.textContent = meta.address || "Location available";
+
     const { linkUrl, embedUrl, hasEmbed } = buildMapTargets(meta);
 
     if (evMapLink) {
@@ -276,6 +356,7 @@
       evMapToggle.classList.toggle("d-none", !hasEmbed);
       evMapToggle.onclick = null;
     }
+
     if (evMapEmbed) evMapEmbed.classList.add("d-none");
     if (evMapIframe) evMapIframe.src = "about:blank";
 
@@ -299,6 +380,7 @@
   async function fetchResourceDataByAny(ev) {
     const idsToTry = [];
     const namesToTry = [];
+
     if (ev.resourceId) idsToTry.push(String(ev.resourceId));
     if (ev.resourceID) idsToTry.push(String(ev.resourceID));
     if (ev.resourceName) namesToTry.push(String(ev.resourceName));
@@ -312,7 +394,7 @@
           resourceCache[id] = data;
           return data;
         }
-      } catch(_){}
+      } catch (_) {}
     }
 
     for (const name of namesToTry) {
@@ -325,15 +407,16 @@
           resourceCache[name] = data;
           return data;
         }
-      } catch(_){}
+      } catch (_) {}
     }
+
     return null;
   }
 
-  // ---------- Branch filter ----------
+  // ---------- Filter ----------
   function applyFilter() {
-    const q = (searchInput.value || "").toLowerCase().trim();
-    const brSel = (branchFilter.value || "ALL").toUpperCase();
+    const q = (searchInput?.value || "").toLowerCase().trim();
+    const brSel = (branchFilter?.value || "ALL").toUpperCase();
     const now = new Date();
 
     filtered = allEvents.filter(ev => {
@@ -345,58 +428,74 @@
       if (!showPastEvents && isPast) return false;
 
       if (!q) return true;
+
       const detailTxt = stripHtmlToText(ev.detailDescription || "");
       const hay = [ev.title, ev.description, ev.resourceName, ev.branch, detailTxt]
         .map(v => (v || "").toString().toLowerCase());
+
       return hay.some(v => v.includes(q));
     });
 
     render();
   }
 
-  // ---------- Helpers for calendar ranges ----------
-  function startOfWeek(d){
-    const x=truncateToDay(d);
-    const day=(x.getDay()+6)%7; // Monday=0
-    x.setDate(x.getDate()-day);
+  // ---------- Date helpers ----------
+  function startOfWeek(d) {
+    const x = truncateToDay(d);
+    const day = (x.getDay() + 6) % 7; // Monday = 0
+    x.setDate(x.getDate() - day);
     return x;
   }
-  function endOfWeek(d){
-    const x=startOfWeek(d);
-    x.setDate(x.getDate()+7);
-    return x; // exclusive
+
+  function addDays(d, n) {
+    const x = new Date(d);
+    x.setDate(x.getDate() + n);
+    return x;
   }
-  function addDays(d,n){ const x=new Date(d); x.setDate(x.getDate()+n); return x; }
-  function sameDay(a,b){ return a && b && a.getFullYear()===b.getFullYear() && a.getMonth()===b.getMonth() && a.getDate()===b.getDate(); }
-  function overlaps(evStart, evEnd, rangeStart, rangeEnd){
+
+  function sameDay(a, b) {
+    return a && b &&
+      a.getFullYear() === b.getFullYear() &&
+      a.getMonth() === b.getMonth() &&
+      a.getDate() === b.getDate();
+  }
+
+  function overlaps(evStart, evEnd, rangeStart, rangeEnd) {
     const s = evStart ? evStart.getTime() : 0;
-    const e = evEnd   ? evEnd.getTime()   : s;
+    const e = evEnd ? evEnd.getTime() : s;
     return s < rangeEnd.getTime() && e > rangeStart.getTime();
   }
-  function clamp(n, min, max){ return Math.max(min, Math.min(max, n)); }
 
-  function canRegister(ev) {
-    const now = new Date();
-    const opens = toDate(ev.regOpensAt);
-    const closes = toDate(ev.regClosesAt);
-    const start = toDate(ev.start);
+  function activeViewButton() {
+    [btnMonth, btnWeek, btnDay, btnList].forEach(b => {
+      if (b) b.classList.remove("active");
+    });
 
-    if (ev.allowRegistration === false) return false;
-    if (opens && now < opens) return false;
-    if (closes && now > closes) return false;
-    if (start && now > start) return false;
-    if (typeof ev.remaining === "number" && ev.remaining <= 0) return false;
-    return true;
+    const activeBtnMap = {
+      month: btnMonth,
+      week: btnWeek,
+      day: btnDay,
+      list: btnList
+    };
+
+    const activeBtn = activeBtnMap[currentView] || btnMonth;
+    if (activeBtn) activeBtn.classList.add("active");
   }
 
-  function activeViewButton(){
-    [btnMonth,btnWeek,btnDay,btnList].forEach(b=>b.classList.remove("active"));
-    ({month:btnMonth, week:btnWeek, day:btnDay, list:btnList}[currentView]||btnMonth).classList.add("active");
+  function forceDefaultMonthView() {
+    currentView = "month";
+    cursorDate = truncateToDay(new Date());
+
+    if (containerList) containerList.style.display = "none";
+    if (containerCal) containerCal.style.display = "";
+
+    render();
   }
 
-  // ---------- List render ----------
+  // ---------- List ----------
   function renderEventCard(e) {
-    const s = toDate(e.start), en = toDate(e.end);
+    const s = toDate(e.start);
+    const en = toDate(e.end);
     const dateLine = `${fmtDateTime(s)} – ${fmtDateTime(en)}`;
     const canReg = canRegister(e);
     const detailTxt = stripHtmlToText(e.detailDescription || "");
@@ -454,12 +553,14 @@
   }
 
   function renderList() {
-    containerCal.style.display = "none";
-    containerList.style.display = "grid";
+    if (containerCal) containerCal.style.display = "none";
+    if (containerList) containerList.style.display = "grid";
 
     if (!filtered.length) {
-      containerList.innerHTML = `<div class="text-center text-secondary py-5">No events found.</div>`;
-      calLabel.textContent = showPastEvents ? "All Events" : "Upcoming Events";
+      if (containerList) {
+        containerList.innerHTML = `<div class="text-center text-secondary py-5">No events found.</div>`;
+      }
+      if (calLabel) calLabel.textContent = showPastEvents ? "All Events" : "Upcoming Events";
       return;
     }
 
@@ -469,51 +570,59 @@
       .map(renderEventCard)
       .join("");
 
-    containerList.innerHTML = rows;
-    calLabel.textContent = showPastEvents ? "All Events" : "Upcoming Events";
+    if (containerList) containerList.innerHTML = rows;
+    if (calLabel) calLabel.textContent = showPastEvents ? "All Events" : "Upcoming Events";
   }
 
-  // ---------- Month render ----------
+  // ---------- Month ----------
   function renderMonth() {
-    containerList.style.display = "none";
-    containerCal.style.display = "";
+    if (containerList) containerList.style.display = "none";
+    if (containerCal) containerCal.style.display = "";
 
-    const y = cursorDate.getFullYear(), m = cursorDate.getMonth();
-    const first = new Date(y,m,1), next = new Date(y,m+1,1);
+    const y = cursorDate.getFullYear();
+    const m = cursorDate.getMonth();
+    const first = new Date(y, m, 1);
+    const next = new Date(y, m + 1, 1);
     const gridStart = startOfWeek(first);
-    const gridEnd   = addDays(startOfWeek(next), 7*6); // 6 weeks grid
+    const gridEnd = addDays(startOfWeek(next), 7 * 6);
 
-    const events = filtered.filter(ev => overlaps(toDate(ev.start), toDate(ev.end)||toDate(ev.start), gridStart, gridEnd));
+    const events = filtered.filter(ev =>
+      overlaps(toDate(ev.start), toDate(ev.end) || toDate(ev.start), gridStart, gridEnd)
+    );
 
     const byDay = Object.create(null);
     for (const ev of events) {
-      const s = toDate(ev.start), e = toDate(ev.end) || s;
+      const s = toDate(ev.start);
+      const e = toDate(ev.end) || s;
       let d = truncateToDay(s);
       const last = truncateToDay(e);
+
       while (d <= last) {
         const k = fmtDateTime(d).slice(0,10);
         (byDay[k] ||= []).push(ev);
-        d = addDays(d,1);
+        d = addDays(d, 1);
       }
     }
 
     let html = `<div class="month-grid">`;
 
     const weekdays = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
-    html += weekdays.map(w=>`<div class="month-weekday">${w}</div>`).join("");
+    html += weekdays.map(w => `<div class="month-weekday">${w}</div>`).join("");
 
-    for (let i=0; i<42; i++) {
+    for (let i = 0; i < 42; i++) {
       const d = addDays(gridStart, i);
       const inMonth = d.getMonth() === m;
       const today = sameDay(d, new Date());
       const k = fmtDateTime(d).slice(0,10);
+
       const items = (byDay[k] || []).slice()
         .sort((a,b)=> (toDate(a.start)?.getTime()||0) - (toDate(b.start)?.getTime()||0));
 
-      const evHtml = items.map(e=>{
+      const evHtml = items.map(e => {
         const display = getEventDisplayColors(e);
         const disable = display.disabled ? "full" : "";
         const pastCls = display.past ? "past" : "";
+
         return `<button class="month-evt ${disable} ${pastCls}" data-id="${esc(e._id)}"
                   title="${esc(e.title || "")}"
                   style="background:${esc(display.bg)};border-color:${esc(display.border)};color:${esc(display.text)};">
@@ -529,14 +638,14 @@
     }
 
     html += `</div>`;
-    containerCal.innerHTML = html;
-    calLabel.textContent = monthLabel(cursorDate);
+    if (containerCal) containerCal.innerHTML = html;
+    if (calLabel) calLabel.textContent = monthLabel(cursorDate);
   }
 
-  // ---------- Week render ----------
+  // ---------- Week ----------
   function renderWeek() {
-    containerList.style.display = "none";
-    containerCal.style.display = "";
+    if (containerList) containerList.style.display = "none";
+    if (containerCal) containerCal.style.display = "";
 
     const start = new Date(cursorDate);
     start.setDate(start.getDate() - start.getDay());
@@ -545,8 +654,10 @@
     const end = new Date(start);
     end.setDate(start.getDate() + 7);
 
-    calLabel.textContent =
-      `${start.toLocaleDateString(undefined, { month: "short", day: "numeric" })} – ${new Date(end - 1).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}`;
+    if (calLabel) {
+      calLabel.textContent =
+        `${start.toLocaleDateString(undefined, { month: "short", day: "numeric" })} – ${new Date(end - 1).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}`;
+    }
 
     const evs = filtered.filter(ev => {
       const s = toDate(ev.start);
@@ -570,14 +681,13 @@
         const s = toDate(e.start);
         const ee = toDate(e.end) || s;
         return s && ee && s < dayEnd && ee > dayStart;
-      }).sort((a, b) => (toDate(a.start)?.getTime() || 0) - (toDate(b.start)?.getTime() || 0));
+      }).sort((a,b)=> (toDate(a.start)?.getTime()||0) - (toDate(b.start)?.getTime()||0));
 
       const slots = hours.map(() => `<div class="time-slot"></div>`).join("");
 
       const pills = dayEvents.map(e => {
         const s = toDate(e.start);
         const ee = toDate(e.end) || new Date(s.getTime() + 60 * 60 * 1000);
-
         const startHour = s.getHours() + s.getMinutes() / 60;
         const durHours = Math.max(0.5, (ee - s) / (1000 * 60 * 60));
         const top = (startHour - 7) * 44;
@@ -606,48 +716,48 @@
       if (idx === 0) return `<div class="time-head"></div>`;
       const d = new Date(start);
       d.setDate(start.getDate() + idx - 1);
-      return `<div class="time-head">${name}<br><span class="muted">${d.getMonth() + 1}/${d.getDate()}</span></div>`;
+      return `<div class="time-head">${name}<br><span class="muted">${d.getMonth()+1}/${d.getDate()}</span></div>`;
     }).join("");
 
     const labels = hours.map(h => `<div class="slot-label">${String(h).padStart(2, "0")}:00</div>`).join("");
 
-    containerCal.innerHTML = `
-      <div class="time-grid">
-        ${heads}
-        <div class="time-col">
-          ${labels}
+    if (containerCal) {
+      containerCal.innerHTML = `
+        <div class="time-grid">
+          ${heads}
+          <div class="time-col">
+            ${labels}
+          </div>
+          ${cols.join("")}
         </div>
-        ${cols.join("")}
-      </div>
-    `;
+      `;
+    }
   }
 
-  // ---------- Day render ----------
+  // ---------- Day ----------
   function renderDay() {
-    containerList.style.display = "none";
-    containerCal.style.display = "";
+    if (containerList) containerList.style.display = "none";
+    if (containerCal) containerCal.style.display = "";
 
     const start = truncateToDay(cursorDate);
     const end = new Date(start);
     end.setDate(start.getDate() + 1);
 
-    calLabel.textContent = fmtDate(start);
+    if (calLabel) calLabel.textContent = fmtDate(start);
 
     const evs = filtered.filter(ev => {
       const s = toDate(ev.start);
       const ee = toDate(ev.end) || s;
       if (!s || !ee) return false;
       return s < end && ee > start;
-    }).sort((a, b) => (toDate(a.start)?.getTime() || 0) - (toDate(b.start)?.getTime() || 0));
+    }).sort((a,b)=> (toDate(a.start)?.getTime()||0) - (toDate(b.start)?.getTime()||0));
 
-  
     const hours = Array.from({ length: 13 }, (_, i) => i + 7);
     const slots = hours.map(() => `<div class="time-slot"></div>`).join("");
 
     const pills = evs.map(e => {
       const s = toDate(e.start);
       const ee = toDate(e.end) || new Date(s.getTime() + 60 * 60 * 1000);
-
       const startHour = s.getHours() + s.getMinutes() / 60;
       const durHours = Math.max(0.5, (ee - s) / (1000 * 60 * 60));
       const top = (startHour - 7) * 44;
@@ -672,37 +782,41 @@
 
     const labels = hours.map(h => `<div class="slot-label">${String(h).padStart(2, "0")}:00</div>`).join("");
 
-    containerCal.innerHTML = `
-      <div class="time-grid">
-        ${head}
-        <div class="time-col">
-          ${labels}
+    if (containerCal) {
+      containerCal.innerHTML = `
+        <div class="time-grid">
+          ${head}
+          <div class="time-col">
+            ${labels}
+          </div>
+          <div class="time-col position-relative" style="grid-column: span 7;">
+            ${slots}
+            ${pills}
+          </div>
         </div>
-        <div class="time-col position-relative" style="grid-column: span 7;">
-          ${slots}
-          ${pills}
-        </div>
-      </div>
-    `;
+      `;
+    }
   }
 
   // ---------- Master render ----------
   function render() {
     activeViewButton();
+
     if (currentView === "month") return renderMonth();
-    if (currentView === "week")  return renderWeek();
-    if (currentView === "day")   return renderDay();
+    if (currentView === "week") return renderWeek();
+    if (currentView === "day") return renderDay();
     return renderList();
   }
 
-  // ---------- Open event modal ----------
+  // ---------- Event detail ----------
   function openEventDetails(ev) {
-    const s = toDate(ev.start), e = toDate(ev.end) || s;
+    const s = toDate(ev.start);
+    const e = toDate(ev.end) || s;
     const canReg = canRegister(ev);
 
-    evTitleEl.textContent = ev.title || "Event";
-    evMetaEl.textContent = [ev.resourceName, ev.branch].filter(Boolean).join(" · ");
-    evDateLineEl.textContent = `${fmtDateTime(s)} – ${fmtDateTime(e)}`;
+    if (evTitleEl) evTitleEl.textContent = ev.title || "Event";
+    if (evMetaEl) evMetaEl.textContent = [ev.resourceName, ev.branch].filter(Boolean).join(" · ");
+    if (evDateLineEl) evDateLineEl.textContent = `${fmtDateTime(s)} – ${fmtDateTime(e)}`;
 
     const bannerFull = pickBannerUrlFull(ev);
     if (evBannerBox && evBannerImg) {
@@ -729,15 +843,23 @@
     }
 
     if (evShortDescEl) {
-      if (ev.description) { evShortDescEl.textContent = ev.description; evShortDescEl.style.display = ""; }
-      else { evShortDescEl.style.display = "none"; }
-    }
-    if (evDetailDescEl) {
-      if (ev.detailDescription) { evDetailDescEl.innerHTML = ev.detailDescription; evDetailDescEl.style.display = ""; }
-      else { evDetailDescEl.style.display = "none"; }
+      if (ev.description) {
+        evShortDescEl.textContent = ev.description;
+        evShortDescEl.style.display = "";
+      } else {
+        evShortDescEl.style.display = "none";
+      }
     }
 
-    // HIDE SEATS LEFT AREA IN MODAL
+    if (evDetailDescEl) {
+      if (ev.detailDescription) {
+        evDetailDescEl.innerHTML = ev.detailDescription;
+        evDetailDescEl.style.display = "";
+      } else {
+        evDetailDescEl.style.display = "none";
+      }
+    }
+
     if (evCapacityEl) {
       evCapacityEl.textContent = "";
       evCapacityEl.style.display = "none";
@@ -747,25 +869,42 @@
       btnOpenRegister.disabled = !canReg;
       btnOpenRegister.onclick = () => {
         regTarget = ev;
-        regEventSummary.innerHTML = `
-          <div><strong>${esc(ev.title || "")}</strong></div>
-          <div class="text-secondary small">${esc(ev.resourceName || "")} · ${esc(ev.branch || "")}</div>
-          <div class="text-secondary small">${esc(fmtDateTime(s))} – ${esc(fmtDateTime(e))}</div>`;
-        attendeeName.value = ""; attendeeEmail.value = "";
-        clearRegAlerts(); btnSubmitReg.disabled = false; regBusy.classList.add("d-none");
-        eventModal.hide(); regModal.show();
+
+        if (regEventSummary) {
+          regEventSummary.innerHTML = `
+            <div><strong>${esc(ev.title || "")}</strong></div>
+            <div class="text-secondary small">${esc(ev.resourceName || "")} · ${esc(ev.branch || "")}</div>
+            <div class="text-secondary small">${esc(fmtDateTime(s))} – ${esc(fmtDateTime(e))}</div>`;
+        }
+
+        if (attendeeName) attendeeName.value = "";
+        if (attendeeEmail) attendeeEmail.value = "";
+
+        clearRegAlerts();
+        if (btnSubmitReg) btnSubmitReg.disabled = false;
+        if (regBusy) regBusy.classList.add("d-none");
+
+        if (eventModal) eventModal.hide();
+        if (regModal) regModal.show();
       };
     }
-    eventModal.show();
+
+    if (eventModal) eventModal.show();
   }
 
-  // ---------- Data load ----------
+  // ---------- Data ----------
   async function loadBranches() {
     const set = new Set();
+
     try {
       const resSnap = await window.db.collection("resources").get();
-      resSnap.forEach(d => { const br=(d.data()?.branch||"").trim(); if (br) set.add(br); });
-    } catch (err) { console.warn("Failed to read resources for branches:", err); }
+      resSnap.forEach(d => {
+        const br = (d.data()?.branch || "").trim();
+        if (br) set.add(br);
+      });
+    } catch (err) {
+      console.warn("Failed to read resources for branches:", err);
+    }
 
     if (set.size === 0) {
       try {
@@ -773,22 +912,29 @@
           .where("visibility", "==", "public")
           .where("status", "==", "published")
           .get();
+
         evSnap.forEach(d => {
           const ev = d.data();
-          const br=(ev?.branch||"").trim();
+          const br = (ev?.branch || "").trim();
           if (br) set.add(br);
         });
-      } catch (err) { console.warn("Failed to read events for branches:", err); }
+      } catch (err) {
+        console.warn("Failed to read events for branches:", err);
+      }
     }
 
     const branches = Array.from(set).sort((a,b)=> a.localeCompare(b));
     const opts = [`<option value="ALL">All locations</option>`]
       .concat(branches.map(b => `<option value="${esc(b)}">${esc(b)}</option>`));
-    branchFilter.innerHTML = opts.join("");
+
+    if (branchFilter) branchFilter.innerHTML = opts.join("");
   }
 
   function attachEventsListener() {
-    if (typeof unsubscribeEvents === "function") { unsubscribeEvents(); unsubscribeEvents = null; }
+    if (typeof unsubscribeEvents === "function") {
+      unsubscribeEvents();
+      unsubscribeEvents = null;
+    }
 
     const col = window.db.collection("events");
     const query = col
@@ -818,11 +964,12 @@
         const rows = snap.docs.map(d => ({ _id: d.id, ...d.data() }));
         allEvents = rows
           .filter(ev => ev.visibility === "public" && ev.status === "published")
-          .sort((a, b) => {
+          .sort((a,b)=> {
             const da = toDate(a.start)?.getTime() || 0;
             const db = toDate(b.start)?.getTime() || 0;
             return db - da;
           });
+
         applyFilter();
       });
     } catch (err) {
@@ -830,103 +977,188 @@
     }
   }
 
-  // ---------- Registration submit ----------
-  regForm.addEventListener("submit", async (e) => {
-    e.preventDefault(); clearRegAlerts(); btnSubmitReg.disabled = true; regBusy.classList.remove("d-none");
-    try {
-      if (!regTarget) throw new Error("No event selected.");
-      const name = attendeeName.value.trim();
-      const email = attendeeEmail.value.trim().toLowerCase();
-      if (!name || !email || !/^\S+@\S+\.\S+$/.test(email)) throw new Error("Please enter a valid name and email.");
+  // ---------- Registration ----------
+  if (regForm) {
+    regForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      clearRegAlerts();
+      if (btnSubmitReg) btnSubmitReg.disabled = true;
+      if (regBusy) regBusy.classList.remove("d-none");
 
-      const eventRef = window.db.collection("events").doc(regTarget._id);
-      const regId = `${regTarget._id}_${email}`;
-      const regRef = window.db.collection("eventRegistrations").doc(regId);
+      try {
+        if (!regTarget) throw new Error("No event selected.");
 
-      await window.db.runTransaction(async (tx) => {
-        const [evSnap, regSnap] = await Promise.all([tx.get(eventRef), tx.get(regRef)]);
-        if (!evSnap.exists) throw new Error("Event not found.");
-        const ev = evSnap.data();
+        const name = attendeeName?.value.trim() || "";
+        const email = (attendeeEmail?.value || "").trim().toLowerCase();
 
-        if (ev.status !== "published" || ev.visibility !== "public") throw new Error("Registration is closed for this event.");
-        const now = new Date();
-        const opens = ev.regOpensAt?.toDate ? ev.regOpensAt.toDate() : (ev.regOpensAt ? new Date(ev.regOpensAt) : null);
-        const closes = ev.regClosesAt?.toDate ? ev.regClosesAt.toDate() : (ev.regClosesAt ? new Date(ev.regClosesAt) : null);
-        if (ev.allowRegistration === false) throw new Error("Registration is not allowed for this event.");
-        if (opens && now < opens) throw new Error("Registration has not opened yet.");
-        if (closes && now > closes) throw new Error("Registration has closed.");
-        const start = ev.start?.toDate ? ev.start.toDate() : (ev.start ? new Date(ev.start) : null);
-        if (start && now > start) throw new Error("This event has already started.");
+        if (!name || !email || !/^\S+@\S+\.\S+$/.test(email)) {
+          throw new Error("Please enter a valid name and email.");
+        }
 
-        if (regSnap.exists && regSnap.data().status === "registered") throw new Error("You're already registered for this event.");
-        if (typeof ev.remaining === "number" && ev.remaining <= 0) throw new Error("This event is full.");
+        const eventRef = window.db.collection("events").doc(regTarget._id);
+        const regId = `${regTarget._id}_${email}`;
+        const regRef = window.db.collection("eventRegistrations").doc(regId);
 
-        tx.set(regRef, {
-          eventId: eventRef.id,
-          eventTitle: ev.title || "",
-          start: ev.start || null,
-          attendeeEmail: email,
-          attendeeName: name,
-          status: "registered",
-          createdAt: new Date()
+        await window.db.runTransaction(async (tx) => {
+          const [evSnap, regSnap] = await Promise.all([
+            tx.get(eventRef),
+            tx.get(regRef)
+          ]);
+
+          if (!evSnap.exists) throw new Error("Event not found.");
+          const ev = evSnap.data();
+
+          if (ev.status !== "published" || ev.visibility !== "public") {
+            throw new Error("Registration is closed for this event.");
+          }
+
+          const now = new Date();
+          const opens = ev.regOpensAt?.toDate ? ev.regOpensAt.toDate() : (ev.regOpensAt ? new Date(ev.regOpensAt) : null);
+          const closes = ev.regClosesAt?.toDate ? ev.regClosesAt.toDate() : (ev.regClosesAt ? new Date(ev.regClosesAt) : null);
+
+          if (ev.allowRegistration === false) throw new Error("Registration is not allowed for this event.");
+          if (opens && now < opens) throw new Error("Registration has not opened yet.");
+          if (closes && now > closes) throw new Error("Registration has closed.");
+
+          const start = ev.start?.toDate ? ev.start.toDate() : (ev.start ? new Date(ev.start) : null);
+          if (start && now > start) throw new Error("This event has already started.");
+
+          if (regSnap.exists && regSnap.data().status === "registered") {
+            throw new Error("You're already registered for this event.");
+          }
+
+          if (typeof ev.remaining === "number" && ev.remaining <= 0) {
+            throw new Error("This event is full.");
+          }
+
+          tx.set(regRef, {
+            eventId: eventRef.id,
+            eventTitle: ev.title || "",
+            start: ev.start || null,
+            attendeeEmail: email,
+            attendeeName: name,
+            status: "registered",
+            createdAt: new Date()
+          });
+
+          if (typeof ev.remaining === "number") {
+            tx.update(eventRef, { remaining: ev.remaining - 1 });
+          }
         });
-        if (typeof ev.remaining === "number") tx.update(eventRef, { remaining: ev.remaining - 1 });
-      });
 
-      regOk.classList.remove("d-none"); regOk.textContent = "Registration successful! Check your email.";
-      regErr.classList.add("d-none");
-      window.dispatchEvent(new CustomEvent("event:registered", { detail: { event: regTarget, attendee: { name, email } } }));
-      setTimeout(() => regModal.hide(), 1200);
+        if (regOk) {
+          regOk.classList.remove("d-none");
+          regOk.textContent = "Registration successful! Check your email.";
+        }
 
-    } catch (err) {
-      console.error("registration error:", err);
-      regErr.textContent = err.message || "Registration failed. Please try again.";
-      regErr.classList.remove("d-none");
-    } finally {
-      regBusy.classList.add("d-none"); btnSubmitReg.disabled = false;
+        if (regErr) regErr.classList.add("d-none");
+
+        window.dispatchEvent(new CustomEvent("event:registered", {
+          detail: { event: regTarget, attendee: { name, email } }
+        }));
+
+        setTimeout(() => {
+          if (regModal) regModal.hide();
+        }, 1200);
+
+      } catch (err) {
+        console.error("registration error:", err);
+        if (regErr) {
+          regErr.textContent = err.message || "Registration failed. Please try again.";
+          regErr.classList.remove("d-none");
+        }
+      } finally {
+        if (regBusy) regBusy.classList.add("d-none");
+        if (btnSubmitReg) btnSubmitReg.disabled = false;
+      }
+    });
+  }
+
+  // ---------- Navigation ----------
+  function gotoToday() {
+    cursorDate = truncateToDay(new Date());
+    render();
+  }
+
+  function prevPeriod() {
+    if (currentView === "month") {
+      const d = new Date(cursorDate);
+      d.setMonth(d.getMonth() - 1);
+      cursorDate = truncateToDay(d);
+    } else if (currentView === "week") {
+      const d = new Date(cursorDate);
+      d.setDate(d.getDate() - 7);
+      cursorDate = truncateToDay(d);
+    } else if (currentView === "day") {
+      const d = new Date(cursorDate);
+      d.setDate(d.getDate() - 1);
+      cursorDate = truncateToDay(d);
     }
-  });
-
-  // ---------- View navigation ----------
-  function gotoToday(){ cursorDate = truncateToDay(new Date()); render(); }
-  function prevPeriod(){
-    if (currentView === "month"){ const d=new Date(cursorDate); d.setMonth(d.getMonth()-1); cursorDate=truncateToDay(d); }
-    else if (currentView === "week"){ const d=new Date(cursorDate); d.setDate(d.getDate()-7); cursorDate=truncateToDay(d); }
-    else if (currentView === "day"){ const d=new Date(cursorDate); d.setDate(d.getDate()-1); cursorDate=truncateToDay(d); }
-    render();
-  }
-  function nextPeriod(){
-    if (currentView === "month"){ const d=new Date(cursorDate); d.setMonth(d.getMonth()+1); cursorDate=truncateToDay(d); }
-    else if (currentView === "week"){ const d=new Date(cursorDate); d.setDate(d.getDate()+7); cursorDate=truncateToDay(d); }
-    else if (currentView === "day"){ const d=new Date(cursorDate); d.setDate(d.getDate()+1); cursorDate=truncateToDay(d); }
     render();
   }
 
-  // ---------- Event Delegation ----------
+  function nextPeriod() {
+    if (currentView === "month") {
+      const d = new Date(cursorDate);
+      d.setMonth(d.getMonth() + 1);
+      cursorDate = truncateToDay(d);
+    } else if (currentView === "week") {
+      const d = new Date(cursorDate);
+      d.setDate(d.getDate() + 7);
+      cursorDate = truncateToDay(d);
+    } else if (currentView === "day") {
+      const d = new Date(cursorDate);
+      d.setDate(d.getDate() + 1);
+      cursorDate = truncateToDay(d);
+    }
+    render();
+  }
+
+  // ---------- Delegation ----------
   document.addEventListener("click", (ev) => {
     const card = ev.target.closest(".event-card");
     const monthBtn = ev.target.closest(".month-evt");
     const pill = ev.target.closest(".evt-pill");
     const el = card || monthBtn || pill;
     if (!el) return;
+
     const id = el.getAttribute("data-id");
     if (!id) return;
+
     const eventObj = allEvents.find(x => x._id === id);
     if (!eventObj) return;
+
     openEventDetails(eventObj);
+  });
+
+  // ---------- Prevent restore old cached UI ----------
+  window.addEventListener("pageshow", function(event) {
+    if (event.persisted) {
+      forceDefaultMonthView();
+    }
+  });
+
+  window.addEventListener("popstate", function() {
+    forceDefaultMonthView();
   });
 
   // ---------- Init ----------
   document.addEventListener("DOMContentLoaded", async () => {
     if (!window.db) {
-      containerList.innerHTML = `<div class="text-danger py-4 text-center">Firestore not initialized.</div>`;
+      if (containerList) {
+        containerList.innerHTML = `<div class="text-danger py-4 text-center">Firestore not initialized.</div>`;
+      }
       return;
     }
 
     injectPastEventStyles();
 
-    containerList.style.display = "none";
-    containerCal.style.display = "";
+    // Force month view every fresh load
+    currentView = "month";
+    cursorDate = truncateToDay(new Date());
+
+    if (containerList) containerList.style.display = "none";
+    if (containerCal) containerCal.style.display = "";
 
     showPastEvents = true;
     const pastToggle = document.getElementById("togglePastEvents");
@@ -935,23 +1167,25 @@
     await loadBranches();
     attachEventsListener();
 
-    // Filters/search
-    branchFilter.addEventListener("change", applyFilter);
-    searchInput.addEventListener("input", () => {
-      clearTimeout(searchInput._t);
-      searchInput._t = setTimeout(applyFilter, 120);
-    });
+    if (branchFilter) {
+      branchFilter.addEventListener("change", applyFilter);
+    }
 
-    // View switch
-    btnMonth.addEventListener("click", () => { currentView = "month"; render(); });
-    btnWeek.addEventListener("click", () => { currentView = "week"; render(); });
-    btnDay.addEventListener("click", () => { currentView = "day"; render(); });
-    btnList.addEventListener("click", () => { currentView = "list"; render(); });
+    if (searchInput) {
+      searchInput.addEventListener("input", () => {
+        clearTimeout(searchInput._t);
+        searchInput._t = setTimeout(applyFilter, 120);
+      });
+    }
 
-    // Date nav
-    btnToday.addEventListener("click", gotoToday);
-    btnPrev.addEventListener("click", prevPeriod);
-    btnNext.addEventListener("click", nextPeriod);
+    if (btnMonth) btnMonth.addEventListener("click", () => { currentView = "month"; render(); });
+    if (btnWeek)  btnWeek.addEventListener("click",  () => { currentView = "week"; render(); });
+    if (btnDay)   btnDay.addEventListener("click",   () => { currentView = "day"; render(); });
+    if (btnList)  btnList.addEventListener("click",  () => { currentView = "list"; render(); });
+
+    if (btnToday) btnToday.addEventListener("click", gotoToday);
+    if (btnPrev)  btnPrev.addEventListener("click", prevPeriod);
+    if (btnNext)  btnNext.addEventListener("click", nextPeriod);
 
     if (pastToggle) {
       pastToggle.addEventListener("change", function(e) {
@@ -960,6 +1194,6 @@
       });
     }
 
-    calLabel.textContent = showPastEvents ? "All Events" : "Upcoming";
+    render();
   });
 })();
